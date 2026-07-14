@@ -1,0 +1,47 @@
+services:
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    restart: unless-stopped
+    environment:
+      - CONTAINERS=1
+      - NETWORKS=1
+      - SERVICES=1
+      - TASKS=1
+      - LOG_LEVEL=warning
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - socket-proxy
+    read_only: true
+    tmpfs:
+      - /run
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+
+  traefik:
+    image: traefik:v3.3
+    restart: unless-stopped
+    user: "1000:1000"
+    depends_on:
+      - socket-proxy
+    ports:
+      - "80:8080"
+      - "443:8443"
+    volumes:
+      - ./traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./letsencrypt:/letsencrypt
+    networks:
+      - socket-proxy
+      - traefik-public
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+
+networks:
+  socket-proxy:
+    internal: true
+  traefik-public:
+    external: true

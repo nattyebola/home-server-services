@@ -1,0 +1,27 @@
+log:
+  level: INFO
+
+entryPoints:
+  web:
+    address: ":8080"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+  websecure:
+    address: ":8443"
+
+providers:
+  docker:
+    endpoint: "tcp://socket-proxy:2375"
+    exposedByDefault: false
+    network: traefik-public
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: "2381461+nattyebola@users.noreply.github.com"
+      storage: "/letsencrypt/acme.json"
+      httpChallenge:
+        entryPoint: web

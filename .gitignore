@@ -1,0 +1,10 @@
+# local tooling config (machine/session-specific)
+.claude/settings.local.json
+
+# secrets
+.env
+**/.env
+
+# runtime data / state (not infra-as-code)
+traefik/letsencrypt/
+portainer/data/

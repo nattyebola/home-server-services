@@ -1,0 +1,27 @@
+services:
+  portainer:
+    image: portainer/portainer-ce:latest
+    restart: unless-stopped
+    # Portainer a besoin d'un accès direct au socket Docker pour gérer les
+    # containers/stacks : c'est une exception assumée à la règle "rootless",
+    # inhérente à son rôle (cet accès équivaut de toute façon à root sur l'hôte).
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/data
+    networks:
+      - traefik-public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.portainer.rule=Host(`portainer.example.com`)"
+      - "traefik.http.routers.portainer.entrypoints=websecure"
+      - "traefik.http.routers.portainer.tls.certresolver=letsencrypt"
+      - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+      - "traefik.docker.network=traefik-public"
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+
+networks:
+  traefik-public:
+    external: true

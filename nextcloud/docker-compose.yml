@@ -1,0 +1,75 @@
+services:
+  db-next:
+    image: postgres:15-alpine
+    restart: always
+    volumes:
+      - /data/.nextcloud/db-next:/var/lib/postgresql/data:Z
+    env_file:
+      - .env
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+
+  app:
+    build: ./app
+    restart: always
+    user: "1000:1000"
+    volumes:
+      - /data/.nextcloud/nexcloud:/var/www/html
+      - /home/ebola/Images/photos:/mountedImages
+      - /data/.transmission/data/completed:/mountedDownloaded
+      - /home/ebola/Vidéos:/mountedVideos
+    environment:
+      - POSTGRES_HOST=db-next
+      - POSTGRES_DB=nextcloud
+    env_file:
+      - .env
+    depends_on:
+      - db-next
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+
+  web:
+    build: ./web
+    restart: always
+    volumes:
+      - /data/.nextcloud/nexcloud:/var/www/html:ro
+    depends_on:
+      - app
+    networks:
+      - default
+      - traefik-public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nextcloud.rule=Host(`www.example.com`)"
+      - "traefik.http.routers.nextcloud.entrypoints=websecure"
+      - "traefik.http.routers.nextcloud.tls.certresolver=letsencrypt"
+      - "traefik.http.services.nextcloud.loadbalancer.server.port=8080"
+      - "traefik.docker.network=traefik-public"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+
+  news-updater:
+    image: kr3ssh/nextcloud-news-updater
+    restart: always
+    depends_on:
+      - app
+    environment:
+      - NEXTCLOUD_URL=https://www.example.com
+      - NEXTCLOUD_ADMIN_USER=${NEXTCLOUD_ADMIN_USER}
+      - NEXTCLOUD_ADMIN_PASSWORD=${NEXTCLOUD_ADMIN_PASSWORD}
+    env_file:
+      - .env
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+
+networks:
+  traefik-public:
+    external: true
