@@ -15,18 +15,23 @@ Ce dossier (`server`) est le projet de migration/refonte des services home serve
 - **Supervision** : Portainer, avec son intégration native "Docker provider" pour piloter/visualiser Traefik et les stacks.
 - **Infra as code** : toute la configuration (compose files, labels Traefik, config Portainer) doit être versionnable en fichiers texte dans ce dépôt — pas de configuration faite uniquement via une UI qui ne serait pas reflétée dans le repo. `server/` est un dépôt git initialisé.
 - **Secrets** : fichiers `.env` par stack, non versionnés (exclus via `.gitignore`), avec un `.env.example` versionné à côté pour documenter les clés attendues.
+- **Valeurs partagées non secrètes** (PUID/PGID, GID du groupe `render`, domaine, racine des données) : source unique dans `server/.env.shared` (versionné), référencées dans chaque compose file via `${PUID}`, `${DOMAIN}`, `${DATA_ROOT}`, etc. `docker compose` ne charge pas ce fichier tout seul (il ne cherche un `.env` que dans le dossier de la stack) : on passe donc toujours par le `Makefile` (`make up STACK=<nom>`, `make down STACK=<nom>`, `make config STACK=<nom>` pour valider le rendu, `make logs STACK=<nom>`) plutôt que par `docker compose` en direct dans un dossier de stack.
 - **Nextcloud** : image communautaire classique (pas Nextcloud AIO) — AIO pilote ses propres containers via le socket Docker et sa config vit dans son UI, incompatible avec les exigences rootless/infra-as-code ci-dessus.
 
 ### Structure du dépôt
 
 ```
 server/
+├── .env.shared         # PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT — source unique, versionné, pas de secret
+├── Makefile             # up/down/config/logs STACK=<nom> — charge .env.shared + le .env local de la stack
 ├── traefik/            # reverse proxy + TLS (Let's Encrypt), remplace proxy + letsencrypt-companion
 │   ├── docker-compose.yml   # services: socket-proxy, traefik
 │   ├── traefik.yml          # config statique (entrypoints, provider docker, resolver ACME)
 │   └── letsencrypt/         # acme.json (non versionné)
 ├── portainer/
 │   └── docker-compose.yml
+├── jellyfin/
+│   └── docker-compose.yml   # accès GPU (/dev/dri/renderD128), bibliothèque sur /data
 └── nextcloud/
     ├── docker-compose.yml   # db-next, app, web, news-updater (proxy/letsencrypt-companion supprimés)
     ├── .env / .env.example
@@ -34,7 +39,7 @@ server/
     └── web/Dockerfile, nginx.conf  # nginxinc/nginx-unprivileged, écoute 8080 (au lieu de 80)
 ```
 
-Réseau externe partagé requis avant tout déploiement : `docker network create traefik-public` (Traefik + tout service exposé via labels doivent le rejoindre).
+Réseau externe partagé requis avant tout déploiement : `make network` (crée `traefik-public` s'il n'existe pas déjà — Traefik + tout service exposé via labels doivent le rejoindre).
 
 **État** : fichiers de la stack Traefik + Portainer + Nextcloud créés, pas encore déployés (le service Nextcloud actuel dans `~/docker` tourne toujours en prod sur les ports 80/443 — la bascule doit être confirmée explicitement avant d'arrêter l'ancien stack et de démarrer le nouveau).
 

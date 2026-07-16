@@ -2,25 +2,25 @@ services:
   jellyfin:
     image: jellyfin/jellyfin:latest
     restart: unless-stopped
-    user: "1000:1000"
+    user: "${PUID}:${PGID}"
     devices:
       - /dev/dri/renderD128:/dev/dri/renderD128
     group_add:
-      - "105"
+      - "${RENDER_GID}"
     dns:
       - 1.1.1.1
       - 1.0.0.1
     volumes:
-      - /data/.jellyfin/cache:/cache
-      - /data/.jellyfin/config:/config
+      - ${DATA_ROOT}/.jellyfin/cache:/cache
+      - ${DATA_ROOT}/.jellyfin/config:/config
       - /home/ebola:/hosthome
-      - /data/.transmission/data/completed:/media
-      - /data/.transmission/data/completed/.trou:/trou
+      - ${DATA_ROOT}/.transmission/data/completed:/media
+      - ${DATA_ROOT}/.transmission/data/completed/.trou:/trou
     networks:
       - traefik-public
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.jellyfin.rule=Host(`jellyfin.example.com`)"
+      - "traefik.http.routers.jellyfin.rule=Host(`jellyfin.${DOMAIN}`)"
       - "traefik.http.routers.jellyfin.entrypoints=websecure"
       - "traefik.http.routers.jellyfin.tls.certresolver=letsencrypt"
       - "traefik.http.services.jellyfin.loadbalancer.server.port=8096"

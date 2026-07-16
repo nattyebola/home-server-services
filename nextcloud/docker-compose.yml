@@ -1,9 +1,9 @@
 services:
   db-next:
     image: postgres:15-alpine
-    restart: always
+    restart: unless-stopped
     volumes:
-      - /data/.nextcloud/db-next:/var/lib/postgresql/data:Z
+      - ${DATA_ROOT}/.nextcloud/db-next:/var/lib/postgresql/data:Z
     env_file:
       - .env
     logging:
@@ -13,15 +13,15 @@ services:
 
   app:
     build: ./app
-    restart: always
-    user: "1000:1000"
+    restart: unless-stopped
+    user: "${PUID}:${PGID}"
     volumes:
-      - /data/.nextcloud/nexcloud:/var/www/html
+      - ${DATA_ROOT}/.nextcloud/nexcloud:/var/www/html
       - /home/ebola/Images/photos:/mountedImages
-      - /data/.transmission/data/completed:/mountedDownloaded
+      - ${DATA_ROOT}/.transmission/data/completed:/mountedDownloaded
       - /home/ebola/Vidéos:/mountedVideos
     extra_hosts:
-      - "www.example.com:host-gateway"
+      - "www.${DOMAIN}:host-gateway"
     environment:
       - POSTGRES_HOST=db-next
       - POSTGRES_DB=nextcloud
@@ -36,9 +36,9 @@ services:
 
   web:
     build: ./web
-    restart: always
+    restart: unless-stopped
     volumes:
-      - /data/.nextcloud/nexcloud:/var/www/html:ro
+      - ${DATA_ROOT}/.nextcloud/nexcloud:/var/www/html:ro
     depends_on:
       - app
     networks:
@@ -46,7 +46,7 @@ services:
       - traefik-public
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.nextcloud.rule=Host(`www.example.com`)"
+      - "traefik.http.routers.nextcloud.rule=Host(`www.${DOMAIN}`)"
       - "traefik.http.routers.nextcloud.entrypoints=websecure"
       - "traefik.http.routers.nextcloud.tls.certresolver=letsencrypt"
       - "traefik.http.routers.nextcloud.middlewares=nextcloud-hsts"
@@ -62,11 +62,11 @@ services:
 
   news-updater:
     image: kr3ssh/nextcloud-news-updater
-    restart: always
+    restart: unless-stopped
     depends_on:
       - app
     environment:
-      - NEXTCLOUD_URL=https://www.example.com
+      - NEXTCLOUD_URL=https://www.${DOMAIN}
       - NEXTCLOUD_ADMIN_USER=${NEXTCLOUD_ADMIN_USER}
       - NEXTCLOUD_ADMIN_PASSWORD=${NEXTCLOUD_ADMIN_PASSWORD}
     env_file:

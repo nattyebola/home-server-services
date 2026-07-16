@@ -24,7 +24,7 @@ services:
   traefik:
     image: traefik:v3.7
     restart: unless-stopped
-    user: "1000:1000"
+    user: "${PUID}:${PGID}"
     depends_on:
       - socket-proxy
     ports:
