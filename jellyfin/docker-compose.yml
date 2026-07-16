@@ -12,7 +12,7 @@ services:
       - 1.0.0.1
     volumes:
       - /data/.jellyfin/cache:/cache
-      - ./config:/config
+      - /data/.jellyfin/config:/config
       - /home/ebola:/hosthome
       - /data/.transmission/data/completed:/media
       - /data/.transmission/data/completed/.trou:/trou
