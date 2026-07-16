@@ -8,3 +8,4 @@
 # runtime data / state (not infra-as-code)
 traefik/letsencrypt/
 portainer/data/
+jellyfin/config/
