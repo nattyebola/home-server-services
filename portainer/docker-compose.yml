@@ -17,6 +17,10 @@ services:
       - "traefik.http.routers.portainer.tls.certresolver=letsencrypt"
       - "traefik.http.services.portainer.loadbalancer.server.port=9000"
       - "traefik.docker.network=traefik-public"
+      # Portainer donne un contrôle équivalent root sur l'hôte : jamais exposé au WAN,
+      # seul le LAN (192.168.0.0/24) peut atteindre ce routeur Traefik.
+      - "traefik.http.routers.portainer.middlewares=portainer-lan-only"
+      - "traefik.http.middlewares.portainer-lan-only.ipallowlist.sourcerange=192.168.0.0/24"
     logging:
       driver: json-file
       options:

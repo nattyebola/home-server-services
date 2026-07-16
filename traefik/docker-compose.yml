@@ -15,13 +15,14 @@ services:
     read_only: true
     tmpfs:
       - /run
+      - /tmp
     logging:
       driver: json-file
       options:
         max-size: 1m
 
   traefik:
-    image: traefik:v3.3
+    image: traefik:v3.6
     restart: unless-stopped
     user: "1000:1000"
     depends_on:

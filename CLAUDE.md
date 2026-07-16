@@ -81,4 +81,4 @@ Stack à plusieurs conteneurs :
 
 ## Notes de sécurité pour la migration
 
-Les fichiers compose actuels contiennent des mots de passe et identifiants en clair (VPN, PostgreSQL, admin Nextcloud). Lors de la migration vers `server/`, ces secrets doivent être extraits vers un mécanisme dédié (fichiers `.env` hors dépôt, secrets manager, etc.) plutôt que recopiés tels quels.
+Les fichiers _compose_ actuels contiennent des mots de passe et identifiants en clair (VPN, PostgreSQL, admin Nextcloud). Lors de la migration vers `server/`, ces secrets doivent être extraits vers un mécanisme dédié (fichiers `.env` hors dépôt, secrets manager, etc.) plutôt que recopiés tels quels.
