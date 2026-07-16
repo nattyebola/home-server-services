@@ -41,7 +41,7 @@ server/
 
 Réseau externe partagé requis avant tout déploiement : `make network` (crée `traefik-public` s'il n'existe pas déjà — Traefik + tout service exposé via labels doivent le rejoindre).
 
-**État** : fichiers de la stack Traefik + Portainer + Nextcloud créés, pas encore déployés (le service Nextcloud actuel dans `~/docker` tourne toujours en prod sur les ports 80/443 — la bascule doit être confirmée explicitement avant d'arrêter l'ancien stack et de démarrer le nouveau).
+**État** : Traefik, Portainer, Jellyfin et Nextcloud sont déployés et tournent depuis `server/` (bascule depuis `~/docker` effectuée — les anciens containers `proxy`, `letsencrypt-companion` et l'ancien `jellyfin` en `network_mode: host` ne sont plus lancés). Seule la stack `vpn/` (Transmission) n'est pas encore migrée et tourne toujours depuis `~/docker/vpn`.
 
 ## Matériel (relevé le 2026-07-14)
 
