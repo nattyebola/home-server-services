@@ -1,0 +1,117 @@
+services:
+  transmission-vpn:
+    restart: unless-stopped
+    image: haugene/transmission-openvpn:latest
+    # Doit démarrer en root : configure iptables/ufw et le tunnel OpenVPN
+    # (cap NET_ADMIN + /dev/net/tun) avant de faire tourner le daemon
+    # Transmission sous PUID/PGID. Exception rootless documentée, comme Portainer.
+    #
+    # Reste sur un unique réseau dédié (vpn-internal) : OpenVPN pousse une route
+    # "redirect-gateway def1" qui scinde 0.0.0.0/0 en deux /1 couvrant quasiment
+    # tout l'espace IPv4. Attacher ce conteneur à un second réseau docker (ex.
+    # traefik-public) casse le routing (DNS/ping ne sortent plus par le tunnel) :
+    # testé et confirmé pendant la migration du 2026-07-17. D'où le sidecar
+    # transmission-proxy, qui fait le pont vers Traefik sans jamais toucher au tunnel.
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=0
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
+    volumes:
+      - '${DATA_ROOT}/.transmission/config:/config'
+      - '${DATA_ROOT}/.transmission/data:/data'
+      - '/etc/localtime:/etc/localtime:ro'
+      - './custom:/etc/openvpn/custom'
+    environment:
+      - PGID=${PGID}
+      - PUID=${PUID}
+      - ENABLE_UFW=true
+      # Ouvre le port RPC à tout le sous-réseau connecté (vpn-internal, où vit le
+      # sidecar transmission-proxy) sans passer par LOCAL_NETWORK : cette dernière
+      # fait un `ip route replace <subnet> via <gw>` qui, appliqué au sous-réseau
+      # sur lequel le conteneur est déjà connecté, casse le routing sortant vers
+      # le tunnel (DNS/ping ne sortent plus) — testé et confirmé le 2026-07-17.
+      - UFW_ALLOW_GW_NET=true
+      - OPENVPN_PROVIDER=CUSTOM
+      - OPENVPN_OPTS=--inactive 3600 --ping 10 --ping-exit 60
+      - TRANSMISSION_PEER_PORT=40125
+      - TRANSMISSION_PORT_FORWARDING_ENABLED=true
+      - TRANSMISSION_PEER_LIMIT_GLOBAL=500
+      - TRANSMISSION_PEER_LIMIT_PER_TORRENT=100
+      - TRANSMISSION_UPLOAD_SLOTS_PER_TORRENT=14
+      - TRANSMISSION_UTP_ENABLED=true
+      - TRANSMISSION_DHT_ENABLED=true
+      - TRANSMISSION_PEX_ENABLED=true
+      - TRANSMISSION_LPD_ENABLED=false
+      - TRANSMISSION_SCRAPE_PAUSED_TORRENTS_ENABLED=false
+      - TRANSMISSION_CACHE_SIZE_MB=256
+      # L'UI n'est plus jointe en direct : contrôle d'accès délégué au middleware LAN-only de Traefik.
+      - TRANSMISSION_RPC_HOST_WHITELIST_ENABLED=false
+      - TRANSMISSION_RPC_WHITELIST_ENABLED=false
+    env_file:
+      - .env
+    networks:
+      - vpn-internal
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - MKNOD
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+      - KILL
+      - SETPCAP
+      - SETFCAP
+      - SYS_CHROOT
+      - AUDIT_WRITE
+      - FSETID
+    devices:
+      - /dev/net/tun
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+
+  transmission-proxy:
+    image: nginxinc/nginx-unprivileged:alpine
+    restart: unless-stopped
+    depends_on:
+      transmission-vpn:
+        condition: service_healthy
+    volumes:
+      - ./proxy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - vpn-internal
+      - traefik-public
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.transmission.rule=Host(`transmission.${DOMAIN}`)"
+      - "traefik.http.routers.transmission.entrypoints=websecure"
+      - "traefik.http.routers.transmission.tls.certresolver=letsencrypt"
+      # Client torrent : jamais exposé au WAN, seul le LAN (192.168.0.0/24) peut l'atteindre.
+      - "traefik.http.routers.transmission.middlewares=transmission-lan-only"
+      - "traefik.http.middlewares.transmission-lan-only.ipallowlist.sourcerange=192.168.0.0/24"
+      - "traefik.http.services.transmission.loadbalancer.server.port=8080"
+      - "traefik.docker.network=traefik-public"
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+
+networks:
+  vpn-internal:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+  traefik-public:
+    external: true

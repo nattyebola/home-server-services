@@ -2,7 +2,7 @@
 # no single `docker compose down` can delete a network the other stacks depend on.
 # It must therefore be created once, out-of-band, before any stack is started.
 NETWORK := traefik-public
-STACKS := traefik portainer jellyfin nextcloud
+STACKS := traefik portainer jellyfin nextcloud vpn
 
 .PHONY: network up down config logs
 

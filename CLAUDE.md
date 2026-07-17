@@ -33,22 +33,34 @@ server/
 │   └── docker-compose.yml
 ├── jellyfin/
 │   └── docker-compose.yml   # accès GPU (/dev/dri/renderD128), bibliothèque sur /data ; montages ciblés (Musique, Images/photos) plutôt que tout /home/ebola
-└── nextcloud/
-    ├── docker-compose.yml   # db-next, app, web, news-updater (proxy/letsencrypt-companion supprimés)
-    ├── .env / .env.example
-    ├── app/Dockerfile       # nextcloud:fpm-alpine + ffmpeg
-    └── web/Dockerfile, nginx.conf  # nginxinc/nginx-unprivileged, écoute 8080 (au lieu de 80) ; plus de proxy_pass cms_pico (plugin retiré)
+├── nextcloud/
+│   ├── docker-compose.yml   # db-next, app, web, news-updater (proxy/letsencrypt-companion supprimés)
+│   ├── .env / .env.example
+│   ├── app/Dockerfile       # nextcloud:fpm-alpine + ffmpeg
+│   └── web/Dockerfile, nginx.conf  # nginxinc/nginx-unprivileged, écoute 8080 (au lieu de 80) ; plus de proxy_pass cms_pico (plugin retiré)
+└── vpn/
+    ├── docker-compose.yml   # transmission-vpn (haugene/transmission-openvpn) + sidecar transmission-proxy (nginx)
+    ├── .env / .env.example  # OPENVPN_USERNAME/PASSWORD
+    ├── custom/default.ovpn  # config AirVPN custom
+    └── proxy/nginx.conf     # sidecar : proxy_pass vers transmission-vpn:9091, seul pont vers traefik-public
 ```
 
 Réseau externe partagé requis avant tout déploiement : `make network` (crée `traefik-public` s'il n'existe pas déjà — Traefik + tout service exposé via labels doivent le rejoindre).
 
-**État** : Traefik, Portainer, Jellyfin et Nextcloud sont déployés et tournent depuis `server/` (bascule depuis `~/docker` effectuée — les anciens containers `proxy`, `letsencrypt-companion` et l'ancien `jellyfin` en `network_mode: host` ne sont plus lancés). Seule la stack `vpn/` (Transmission) n'est pas encore migrée et tourne toujours depuis `~/docker/vpn`.
+**État** : Traefik, Portainer, Jellyfin, Nextcloud et vpn/Transmission sont déployés et tournent depuis `server/` — la bascule depuis `~/docker` est terminée (les anciens containers `proxy`, `letsencrypt-companion`, l'ancien `jellyfin` en `network_mode: host` et `transmission-vpn-container` ne sont plus lancés). `~/docker` reste en lecture seule, référence historique uniquement.
 
 **Passe de durcissement du 2026-07-17** (suite à une revue de sécurité des stacks déployées) :
 - `security_opt: no-new-privileges:true` + `cap_drop: ALL` ajoutés à tous les services (cf. bullet dédié plus haut).
 - Mount Jellyfin `/home/ebola:/hosthome` (home entier exposé) restreint aux deux sous-dossiers réellement utilisés par ses bibliothèques (`Musique`, `Images/photos`), en lecture seule.
 - Règle `location /sites/` (proxy_pass hairpin vers `https://www.example.com/` pour le plugin cms_pico, plus utilisé) retirée de `nextcloud/web/nginx.conf`.
 - Incident résolu : `jellyfin.example.com` et `portainer.example.com` servaient le certificat auto-signé par défaut de Traefik car leur DNS était en NXDOMAIN au moment des tentatives ACME précédentes. Le DNS a été corrigé côté OVH puis Traefik redémarré pour relancer l'obtention des certificats Let's Encrypt — à surveiller si le problème revient (Traefik ne retente pas seul un certificat en échec, un restart est nécessaire après correction DNS).
+
+**Migration `vpn/` (Transmission) du 2026-07-17** — dernière stack basculée depuis `~/docker`. Piège rencontré, à connaître avant de retoucher cette stack :
+- `haugene/transmission-openvpn` pousse une route `redirect-gateway def1` qui scinde `0.0.0.0/0` en deux routes `/1` (`0.0.0.0/1` + `128.0.0.0/1`) couvrant la quasi-totalité de l'espace IPv4 — y compris les plages `172.16.0.0/12` que Docker utilise par défaut pour ses réseaux (donc `traefik-public` et tout réseau créé sans IPAM explicite).
+- **Attacher ce container à un second réseau docker (ex. `traefik-public`) casse le routing sortant du tunnel** (DNS/ping ne sortent plus, `sitnl_send: rtnl: generic error (-101)` dans les logs) — reproduit de façon fiable, que ce soit en hot-attach (`docker network connect`, qui échoue explicitement avec "cannot program address ... conflicts with existing route") ou en déclarant les deux réseaux dès la création du container. **Solution : le garder sur un unique réseau dédié** (`vpn-internal`, subnet pinné) et faire pont vers Traefik via un **sidecar** (`transmission-proxy`, nginx sur `vpn-internal` + `traefik-public`) qui ne touche jamais au tunnel.
+- Autre piège lié : la variable `LOCAL_NETWORK` fait un `ip route replace <subnet> via <gw>` pour chaque entrée — si on y met le **propre sous-réseau du container** (celui sur lequel il est déjà connecté), ça casse aussi le routing sortant (même symptôme). Pour autoriser un pair du même réseau docker (ici le sidecar) à atteindre le port RPC sans toucher au routage, utiliser `UFW_ALLOW_GW_NET=true` à la place (ne fait qu'une lecture de route + une règle ufw, pas de `route replace`).
+- Contrôle d'accès : whitelist RPC de Transmission (host + IP) désactivée (`TRANSMISSION_RPC_HOST_WHITELIST_ENABLED=false`, `TRANSMISSION_RPC_WHITELIST_ENABLED=false`) — l'accès est filtré en amont par le middleware LAN-only de Traefik, même principe que Portainer.
+- Durcissement (`cap_drop: ALL` etc.) appliqué et validé une fois le problème réseau isolé — `db-next`-like : le container démarre en root (configure iptables/ufw/tun avant de descendre en PUID/PGID), `cap_add` nécessaire : `NET_ADMIN`, `NET_RAW` (sinon `iptables-restore` échoue), `MKNOD` (création du device tun), `CHOWN`/`DAC_OVERRIDE`/`FOWNER`/`SETGID`/`SETUID` (écriture fichiers + drop de privilège), `KILL`/`SETPCAP`/`SETFCAP`/`SYS_CHROOT`/`AUDIT_WRITE`/`FSETID` (scripts internes de l'image, sans quoi `kill`/ufw échouent par endroits).
 
 ## Matériel (relevé le 2026-07-14)
 
@@ -64,9 +76,9 @@ Réseau externe partagé requis avant tout déploiement : `make network` (crée 
 
 Cette machine a largement les ressources pour du transcodage vidéo, plusieurs conteneurs simultanés et du stockage de fichiers — la contrainte n'est pas la puissance mais plutôt le fait qu'elle sert aussi de PC de jeu/media (attention à ne pas saturer le GPU/CPU quand elle est utilisée en salon).
 
-## Services actuellement décrits dans `~/docker` (à migrer)
+## Services historiquement décrits dans `~/docker` (migration terminée)
 
-Le dossier `~/docker` contient 3 sous-dossiers, chacun avec son `docker-compose.yml` :
+Le dossier `~/docker` contient 3 sous-dossiers, chacun avec son `docker-compose.yml` — conservés ici comme référence de l'ancienne config, la migration vers `server/` est terminée pour les 3 :
 
 ### 1. `vpn/` — Transmission via VPN
 - **Image** : `haugene/transmission-openvpn`
