@@ -4,7 +4,7 @@ services:
     image: haugene/transmission-openvpn:latest
     # Doit démarrer en root : configure iptables/ufw et le tunnel OpenVPN
     # (cap NET_ADMIN + /dev/net/tun) avant de faire tourner le daemon
-    # Transmission sous PUID/PGID. Exception rootless documentée, comme Portainer.
+    # Transmission sous PUID/PGID. Exception rootless documentée, comme db-next.
     #
     # Reste sur un unique réseau dédié (vpn-internal) : OpenVPN pousse une route
     # "redirect-gateway def1" qui scinde 0.0.0.0/0 en deux /1 couvrant quasiment
