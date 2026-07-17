@@ -6,6 +6,11 @@ services:
       - ${DATA_ROOT}/.nextcloud/db-next:/var/lib/postgresql/data:Z
     env_file:
       - .env
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d nextcloud"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -38,7 +43,8 @@ services:
     env_file:
       - .env
     depends_on:
-      - db-next
+      db-next:
+        condition: service_healthy
     security_opt:
       - no-new-privileges:true
     cap_drop:
