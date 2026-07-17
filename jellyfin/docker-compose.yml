@@ -18,6 +18,10 @@ services:
       - ${DATA_ROOT}/.transmission/data/completed/.trou:/trou
     networks:
       - traefik-public
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.jellyfin.rule=Host(`jellyfin.${DOMAIN}`)"

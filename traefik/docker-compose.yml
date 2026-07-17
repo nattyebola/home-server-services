@@ -16,6 +16,10 @@ services:
     tmpfs:
       - /run
       - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     logging:
       driver: json-file
       options:
@@ -36,6 +40,10 @@ services:
     networks:
       - socket-proxy
       - traefik-public
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     logging:
       driver: json-file
       options:

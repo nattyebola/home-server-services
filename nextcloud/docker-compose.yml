@@ -6,6 +6,16 @@ services:
       - ${DATA_ROOT}/.nextcloud/db-next:/var/lib/postgresql/data:Z
     env_file:
       - .env
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
     logging:
       driver: "json-file"
       options:
@@ -29,6 +39,10 @@ services:
       - .env
     depends_on:
       - db-next
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     logging:
       driver: "json-file"
       options:
@@ -41,6 +55,10 @@ services:
       - ${DATA_ROOT}/.nextcloud/nexcloud:/var/www/html:ro
     depends_on:
       - app
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     networks:
       - default
       - traefik-public
@@ -71,6 +89,10 @@ services:
       - NEXTCLOUD_ADMIN_PASSWORD=${NEXTCLOUD_ADMIN_PASSWORD}
     env_file:
       - .env
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     logging:
       driver: "json-file"
       options:
