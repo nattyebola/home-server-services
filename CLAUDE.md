@@ -11,6 +11,7 @@ Ce dossier (`server`) est le projet de migration/refonte des services home serve
 
 - **Runtime** : Docker (pas Podman — choix assumé par familiarité, malgré l'intérêt de Podman pour le rootless natif et Quadlet/systemd).
 - **Containers rootless** : chaque container doit exécuter son process avec un utilisateur non-root à l'intérieur (pas de daemon Docker rootless complet — le démon reste classique/root, seul le process dans le container est non-root). Exception assumée et documentée : **Portainer**, qui a besoin d'un accès direct au socket Docker pour fonctionner (équivalent à root sur l'hôte de toute façon).
+- **Durcissement systématique des containers** : tous les services ont `security_opt: no-new-privileges:true` et `cap_drop: ALL`. Seul `db-next` (Postgres) a un `cap_add` ciblé (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETGID`, `SETUID`), nécessaire car son entrypoint démarre encore en root avant de descendre en privilège via `gosu` — aucun autre service n'a besoin de capacité ajoutée. Les montages de volumes doivent aussi rester au plus près du besoin réel (ex : ne jamais monter un `$HOME` entier si un seul sous-dossier est utilisé).
 - **Reverse proxy** : Traefik, avec découverte automatique des containers via labels — un seul point d'entrée HTTPS (443) pour faire cohabiter tous les services sur le même nom de domaine (`example.com`, un sous-domaine par service). Traefik ne lit jamais le socket Docker en direct : il passe par un `docker-socket-proxy` (accès lecture seule, restreint) pour rester lui aussi non-root.
 - **Supervision** : Portainer, avec son intégration native "Docker provider" pour piloter/visualiser Traefik et les stacks.
 - **Infra as code** : toute la configuration (compose files, labels Traefik, config Portainer) doit être versionnable en fichiers texte dans ce dépôt — pas de configuration faite uniquement via une UI qui ne serait pas reflétée dans le repo. `server/` est un dépôt git initialisé.
@@ -31,17 +32,23 @@ server/
 ├── portainer/
 │   └── docker-compose.yml
 ├── jellyfin/
-│   └── docker-compose.yml   # accès GPU (/dev/dri/renderD128), bibliothèque sur /data
+│   └── docker-compose.yml   # accès GPU (/dev/dri/renderD128), bibliothèque sur /data ; montages ciblés (Musique, Images/photos) plutôt que tout /home/ebola
 └── nextcloud/
     ├── docker-compose.yml   # db-next, app, web, news-updater (proxy/letsencrypt-companion supprimés)
     ├── .env / .env.example
     ├── app/Dockerfile       # nextcloud:fpm-alpine + ffmpeg
-    └── web/Dockerfile, nginx.conf  # nginxinc/nginx-unprivileged, écoute 8080 (au lieu de 80)
+    └── web/Dockerfile, nginx.conf  # nginxinc/nginx-unprivileged, écoute 8080 (au lieu de 80) ; plus de proxy_pass cms_pico (plugin retiré)
 ```
 
 Réseau externe partagé requis avant tout déploiement : `make network` (crée `traefik-public` s'il n'existe pas déjà — Traefik + tout service exposé via labels doivent le rejoindre).
 
 **État** : Traefik, Portainer, Jellyfin et Nextcloud sont déployés et tournent depuis `server/` (bascule depuis `~/docker` effectuée — les anciens containers `proxy`, `letsencrypt-companion` et l'ancien `jellyfin` en `network_mode: host` ne sont plus lancés). Seule la stack `vpn/` (Transmission) n'est pas encore migrée et tourne toujours depuis `~/docker/vpn`.
+
+**Passe de durcissement du 2026-07-17** (suite à une revue de sécurité des stacks déployées) :
+- `security_opt: no-new-privileges:true` + `cap_drop: ALL` ajoutés à tous les services (cf. bullet dédié plus haut).
+- Mount Jellyfin `/home/ebola:/hosthome` (home entier exposé) restreint aux deux sous-dossiers réellement utilisés par ses bibliothèques (`Musique`, `Images/photos`), en lecture seule.
+- Règle `location /sites/` (proxy_pass hairpin vers `https://www.example.com/` pour le plugin cms_pico, plus utilisé) retirée de `nextcloud/web/nginx.conf`.
+- Incident résolu : `jellyfin.example.com` et `portainer.example.com` servaient le certificat auto-signé par défaut de Traefik car leur DNS était en NXDOMAIN au moment des tentatives ACME précédentes. Le DNS a été corrigé côté OVH puis Traefik redémarré pour relancer l'obtention des certificats Let's Encrypt — à surveiller si le problème revient (Traefik ne retente pas seul un certificat en échec, un restart est nécessaire après correction DNS).
 
 ## Matériel (relevé le 2026-07-14)
 
