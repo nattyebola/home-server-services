@@ -92,7 +92,7 @@ Le dossier `~/docker` contient 3 sous-dossiers, chacun avec son `docker-compose.
 - Mode réseau `host`, accès direct au GPU (`/dev/dri/renderD128`) pour le transcodage matériel
 - Bibliothèque pointée sur `/data/.transmission/data/completed` (les fichiers téléchargés par Transmission)
 - Config/cache stockés localement dans `jellyfin/{config,cache}`
-- Contient aussi un dossier `caddy_data` (reverse proxy Caddy, présent sur le disque mais pas dans le compose actuel — à vérifier)
+- Contenait aussi un dossier `caddy_data` (8K, appartenant à `root`) : reliquat d'un ancien reverse-proxy Caddy antérieur à Traefik, absent du compose actuel — vérifié le 2026-07-17, sans usage, sans action requise
 
 ### 3. `nextcloud/` — Nextcloud + reverse proxy
 Stack à plusieurs conteneurs :
