@@ -8,3 +8,6 @@
 # runtime data / state (not infra-as-code)
 traefik/letsencrypt/
 portainer/data/
+
+# VPN client credentials (private key + certs, not infra-as-code)
+vpn/custom/
