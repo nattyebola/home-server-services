@@ -1,11 +1,10 @@
 # Serveur maison — ebola-salon
 
-Ce dossier (`server`) est le projet de migration/refonte des services home server actuellement décrits dans `~/docker` (dossier en lecture seule, référence uniquement — ne jamais y écrire).
+Ce dossier (`server`) contient l'infra as code des services home server tournant sur `ebola-salon`.
 
 ## Contexte
 
 - Cette machine est un PC de salon 3-en-1 : home server, PC de jeu et media center, branché sur la TV du salon.
-- Quels services garder/jeter/remplacer parmi ceux listés plus bas sera décidé au fur et à mesure.
 
 ## Décisions d'architecture cible
 
@@ -47,7 +46,7 @@ server/
 
 Réseau externe partagé requis avant tout déploiement : `make network` (crée `traefik-public` s'il n'existe pas déjà — Traefik + tout service exposé via labels doivent le rejoindre).
 
-**État** : Traefik, Portainer, Jellyfin, Nextcloud et vpn/Transmission sont déployés et tournent depuis `server/` — la bascule depuis `~/docker` est terminée (les anciens containers `proxy`, `letsencrypt-companion`, l'ancien `jellyfin` en `network_mode: host` et `transmission-vpn-container` ne sont plus lancés). `~/docker` reste en lecture seule, référence historique uniquement.
+**État** : Traefik, Portainer, Jellyfin, Nextcloud et vpn/Transmission sont déployés et tournent depuis `server/`.
 
 **Passe de durcissement du 2026-07-17** (suite à une revue de sécurité des stacks déployées) :
 - `security_opt: no-new-privileges:true` + `cap_drop: ALL` ajoutés à tous les services (cf. bullet dédié plus haut).
@@ -55,7 +54,7 @@ Réseau externe partagé requis avant tout déploiement : `make network` (crée 
 - Règle `location /sites/` (proxy_pass hairpin vers `https://www.example.com/` pour le plugin cms_pico, plus utilisé) retirée de `nextcloud/web/nginx.conf`.
 - Incident résolu : `jellyfin.example.com` et `portainer.example.com` servaient le certificat auto-signé par défaut de Traefik car leur DNS était en NXDOMAIN au moment des tentatives ACME précédentes. Le DNS a été corrigé côté OVH puis Traefik redémarré pour relancer l'obtention des certificats Let's Encrypt — à surveiller si le problème revient (Traefik ne retente pas seul un certificat en échec, un restart est nécessaire après correction DNS).
 
-**Migration `vpn/` (Transmission) du 2026-07-17** — dernière stack basculée depuis `~/docker`. Piège rencontré, à connaître avant de retoucher cette stack :
+**Stack `vpn/` (Transmission)** — piège rencontré à la mise en place, à connaître avant de retoucher cette stack :
 - `haugene/transmission-openvpn` pousse une route `redirect-gateway def1` qui scinde `0.0.0.0/0` en deux routes `/1` (`0.0.0.0/1` + `128.0.0.0/1`) couvrant la quasi-totalité de l'espace IPv4 — y compris les plages `172.16.0.0/12` que Docker utilise par défaut pour ses réseaux (donc `traefik-public` et tout réseau créé sans IPAM explicite).
 - **Attacher ce container à un second réseau docker (ex. `traefik-public`) casse le routing sortant du tunnel** (DNS/ping ne sortent plus, `sitnl_send: rtnl: generic error (-101)` dans les logs) — reproduit de façon fiable, que ce soit en hot-attach (`docker network connect`, qui échoue explicitement avec "cannot program address ... conflicts with existing route") ou en déclarant les deux réseaux dès la création du container. **Solution : le garder sur un unique réseau dédié** (`vpn-internal`, subnet pinné) et faire pont vers Traefik via un **sidecar** (`transmission-proxy`, nginx sur `vpn-internal` + `traefik-public`) qui ne touche jamais au tunnel.
 - Autre piège lié : la variable `LOCAL_NETWORK` fait un `ip route replace <subnet> via <gw>` pour chaque entrée — si on y met le **propre sous-réseau du container** (celui sur lequel il est déjà connecté), ça casse aussi le routing sortant (même symptôme). Pour autoriser un pair du même réseau docker (ici le sidecar) à atteindre le port RPC sans toucher au routage, utiliser `UFW_ALLOW_GW_NET=true` à la place (ne fait qu'une lecture de route + une règle ufw, pas de `route replace`).
@@ -76,33 +75,3 @@ Réseau externe partagé requis avant tout déploiement : `make network` (crée 
 
 Cette machine a largement les ressources pour du transcodage vidéo, plusieurs conteneurs simultanés et du stockage de fichiers — la contrainte n'est pas la puissance mais plutôt le fait qu'elle sert aussi de PC de jeu/media (attention à ne pas saturer le GPU/CPU quand elle est utilisée en salon).
 
-## Services historiquement décrits dans `~/docker` (migration terminée)
-
-Le dossier `~/docker` contient 3 sous-dossiers, chacun avec son `docker-compose.yml` — conservés ici comme référence de l'ancienne config, la migration vers `server/` est terminée pour les 3 :
-
-### 1. `vpn/` — Transmission via VPN
-- **Image** : `haugene/transmission-openvpn`
-- Client torrent Transmission dont tout le trafic passe par un tunnel OpenVPN custom (config dans `vpn/custom/default.ovpn`)
-- Port UI : 9091
-- Données sur `/data/.transmission/{config,data}`
-- Contient des identifiants VPN en clair dans le compose (à traiter comme secret lors de la migration)
-
-### 2. `jellyfin/` — Serveur média
-- **Image** : `jellyfin/jellyfin`
-- Mode réseau `host`, accès direct au GPU (`/dev/dri/renderD128`) pour le transcodage matériel
-- Bibliothèque pointée sur `/data/.transmission/data/completed` (les fichiers téléchargés par Transmission)
-- Config/cache stockés localement dans `jellyfin/{config,cache}`
-- Contenait aussi un dossier `caddy_data` (8K, appartenant à `root`) : reliquat d'un ancien reverse-proxy Caddy antérieur à Traefik, absent du compose actuel — vérifié le 2026-07-17, sans usage, sans action requise
-
-### 3. `nextcloud/` — Nextcloud + reverse proxy
-Stack à plusieurs conteneurs :
-- `db-next` : PostgreSQL 15 (données sur `/data/.nextcloud/db-next`)
-- `app` : Nextcloud (build custom dans `nextcloud/app/`), monte les photos, vidéos et téléchargements de l'utilisateur en plus de sa propre donnée
-- `web` : frontend nginx (build custom), exposé en tant que `www.example.com`
-- `proxy` + `letsencrypt-companion` : reverse proxy nginx + génération auto de certificats Let's Encrypt
-- `news-updater` : rafraîchit périodiquement l'app Nextcloud News
-- Contient des secrets en clair dans le compose / `db.env` (mots de passe DB et admin Nextcloud) — à sécuriser lors de la migration
-
-## Notes de sécurité pour la migration
-
-Les fichiers _compose_ actuels contiennent des mots de passe et identifiants en clair (VPN, PostgreSQL, admin Nextcloud). Lors de la migration vers `server/`, ces secrets doivent être extraits vers un mécanisme dédié (fichiers `.env` hors dépôt, secrets manager, etc.) plutôt que recopiés tels quels.
