@@ -6,6 +6,9 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+set -a
+source "$REPO_ROOT/.env.shared"
+set +a
 BACKUP_DIR="$REPO_ROOT/sauvegarde"
 STAGING_DIR="$BACKUP_DIR/.staging"
 export RESTIC_REPOSITORY="$BACKUP_DIR/restic-repo"
@@ -54,7 +57,7 @@ restic backup \
 	"$REPO_ROOT/.env.shared" \
 	"$REPO_ROOT/nextcloud/.env" \
 	"$REPO_ROOT/vpn/.env" \
-	"${DATA_ROOT:-/data}/.nextcloud/nexcloud" \
+	"$DATA_ROOT/.nextcloud/nexcloud" \
 	"$STAGING_DIR" \
 	--tag weekly --tag "commit-$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 

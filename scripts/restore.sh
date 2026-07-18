@@ -6,6 +6,9 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+set -a
+source "$REPO_ROOT/.env.shared"
+set +a
 BACKUP_DIR="$REPO_ROOT/sauvegarde"
 export RESTIC_REPOSITORY="$BACKUP_DIR/restic-repo"
 export RESTIC_PASSWORD_FILE="$BACKUP_DIR/restic-password"
@@ -41,7 +44,7 @@ echo "2. Pin the images above (docker-compose.override.yml with the digests"
 echo "   from image-manifest.txt) so the restored DB dump isn't opened by a"
 echo "   newer/older Nextcloud than the one that made it."
 echo "3. Stop nextcloud, then restore the webroot (data+config+apps):"
-echo "     rsync -a --delete ${TARGET}${DATA_ROOT:-/data}/.nextcloud/nexcloud/ \${DATA_ROOT:-/data}/.nextcloud/nexcloud/"
+echo "     rsync -a --delete ${TARGET}${DATA_ROOT}/.nextcloud/nexcloud/ \${DATA_ROOT}/.nextcloud/nexcloud/"
 echo "4. Start only db-next, then import the dump:"
 echo "     make up STACK=nextcloud   # after commenting out app/web/news-updater, or scale them to 0"
 echo "     docker compose ... exec -T db-next sh -c 'psql -U \"\$POSTGRES_USER\" \"\${POSTGRES_DB:-\$POSTGRES_USER}\"' < $staging/nextcloud-db.sql"

@@ -98,8 +98,8 @@ server/
 - Mot de passe restic dans `sauvegarde/restic-password` (gitignoré,
   généré au premier `make backup`) — pas de copie ailleurs = dépôt
   illisible en cas de perte.
-- Résilience visée : perte de `/data` → restauration depuis
-  `sauvegarde/` (sur `/home`, disque différent). Perte de `/home` → seul
+- Résilience visée : perte du disque `DATA_ROOT` → restauration depuis
+  `sauvegarde/` (sur un disque différent). Perte de celui-ci → seul
   l'infra-as-code est récupérable depuis GitHub, la sauvegarde restic est
   perdue avec (accepté pour l'instant, pas d'offsite).
 
