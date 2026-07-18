@@ -1,6 +1,6 @@
-# Serveur maison — ebola-salon
+# Serveur maison
 
-Ce dossier (`server`) contient l'infra as code des services home server tournant sur `ebola-salon`.
+Ce dossier (`server`) contient l'infra as code des services home server.
 
 ## Contexte
 
@@ -11,7 +11,7 @@ Ce dossier (`server`) contient l'infra as code des services home server tournant
 - **Runtime** : Docker (pas Podman — choix assumé par familiarité, malgré l'intérêt de Podman pour le rootless natif et Quadlet/systemd).
 - **Containers rootless** : chaque container doit exécuter son process avec un utilisateur non-root à l'intérieur (pas de daemon Docker rootless complet — le démon reste classique/root, seul le process dans le container est non-root).
 - **Durcissement systématique des containers** : tous les services ont `security_opt: no-new-privileges:true` et `cap_drop: ALL`. Seul `db-next` (Postgres) a un `cap_add` ciblé (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETGID`, `SETUID`), nécessaire car son entrypoint démarre encore en root avant de descendre en privilège via `gosu` — aucun autre service n'a besoin de capacité ajoutée (exception : `vpn/transmission-vpn`, cf. plus bas, qui a des besoins réseau spécifiques). Les montages de volumes doivent aussi rester au plus près du besoin réel (ex : ne jamais monter un `$HOME` entier si un seul sous-dossier est utilisé).
-- **Reverse proxy** : Traefik, avec découverte automatique des containers via labels — un seul point d'entrée HTTPS (443) pour faire cohabiter tous les services sur le même nom de domaine (`example.com`, un sous-domaine par service). Traefik ne lit jamais le socket Docker en direct : il passe par un `docker-socket-proxy` (accès lecture seule, restreint) pour rester lui aussi non-root.
+- **Reverse proxy** : Traefik, avec découverte automatique des containers via labels — un seul point d'entrée HTTPS (443) pour faire cohabiter tous les services sur le même nom de domaine (valeur de `${DOMAIN}`, un sous-domaine par service). Traefik ne lit jamais le socket Docker en direct : il passe par un `docker-socket-proxy` (accès lecture seule, restreint) pour rester lui aussi non-root.
 - **Infra as code** : toute la configuration (compose files, labels Traefik) doit être versionnable en fichiers texte dans ce dépôt — pas de configuration faite uniquement via une UI qui ne serait pas reflétée dans le repo. `server/` est un dépôt git initialisé, avec un remote privé `git@github.com:nattyebola/home-server-services.git` (poussé via une **deploy key dédiée**, `~/.ssh/id_ed25519_server_backup` + alias SSH `github-server-backup`, accès limité à ce seul repo plutôt que la clé perso de l'utilisateur).
 - **Secrets** : fichiers `.env` par stack, non versionnés (exclus via `.gitignore`), avec un `.env.example` versionné à côté pour documenter les clés attendues.
 - **Valeurs partagées non secrètes** (PUID/PGID, GID du groupe `render`, domaine, racine des données) : source unique dans `server/.env.shared` (versionné), référencées dans chaque compose file via `${PUID}`, `${DOMAIN}`, `${DATA_ROOT}`, etc. `docker compose` ne charge pas ce fichier tout seul (il ne cherche un `.env` que dans le dossier de la stack) : on passe donc toujours par le `Makefile` (`make up STACK=<nom>`, `make down STACK=<nom>`, `make config STACK=<nom>` pour valider le rendu, `make logs STACK=<nom>`) plutôt que par `docker compose` en direct dans un dossier de stack.
@@ -22,7 +22,7 @@ Ce dossier (`server`) contient l'infra as code des services home server tournant
 
 ```
 server/
-├── .env.shared         # PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT — source unique, versionné, pas de secret
+├── .env.shared         # PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT/HOME_ROOT — source unique, versionné, pas de secret
 ├── Makefile             # up/down/config/logs/update/update-all/backup/restore/cron-install STACK=<nom>
 ├── scripts/
 │   ├── crontab              # source de vérité du crontab hôte — installé via `make cron-install`
@@ -32,9 +32,10 @@ server/
 ├── traefik/            # reverse proxy + TLS (Let's Encrypt), remplace proxy + letsencrypt-companion
 │   ├── docker-compose.yml   # services: socket-proxy, traefik
 │   ├── traefik.yml          # config statique (entrypoints, provider docker, resolver ACME)
+│   ├── .env / .env.example  # ACME_EMAIL (contact Let's Encrypt)
 │   └── letsencrypt/         # acme.json (non versionné)
 ├── jellyfin/
-│   └── docker-compose.yml   # accès GPU (/dev/dri/renderD128), bibliothèque sur /data ; montages ciblés (Musique, Images/photos) plutôt que tout /home/ebola
+│   └── docker-compose.yml   # accès GPU (/dev/dri/renderD128), bibliothèque sur /data ; montages ciblés (Musique, Images/photos) plutôt que tout `${HOME_ROOT}`
 ├── nextcloud/
 │   ├── docker-compose.yml   # db-next, app, web, news-updater (proxy/letsencrypt-companion supprimés)
 │   ├── .env / .env.example
@@ -55,9 +56,9 @@ Réseau externe partagé requis avant tout déploiement : `make network` (crée 
 
 **Passe de durcissement du 2026-07-17** (suite à une revue de sécurité des stacks déployées) :
 - `security_opt: no-new-privileges:true` + `cap_drop: ALL` ajoutés à tous les services (cf. bullet dédié plus haut).
-- Mount Jellyfin `/home/ebola:/hosthome` (home entier exposé) restreint aux deux sous-dossiers réellement utilisés par ses bibliothèques (`Musique`, `Images/photos`), en lecture seule.
-- Règle `location /sites/` (proxy_pass hairpin vers `https://www.example.com/` pour le plugin cms_pico, plus utilisé) retirée de `nextcloud/web/nginx.conf`.
-- Incident résolu : `jellyfin.example.com` et `portainer.example.com` servaient le certificat auto-signé par défaut de Traefik car leur DNS était en NXDOMAIN au moment des tentatives ACME précédentes. Le DNS a été corrigé côté OVH puis Traefik redémarré pour relancer l'obtention des certificats Let's Encrypt — à surveiller si le problème revient (Traefik ne retente pas seul un certificat en échec, un restart est nécessaire après correction DNS).
+- Mount Jellyfin `${HOME_ROOT}:/hosthome` (home entier exposé) restreint aux deux sous-dossiers réellement utilisés par ses bibliothèques (`Musique`, `Images/photos`), en lecture seule.
+- Règle `location /sites/` (proxy_pass hairpin vers `https://www.${DOMAIN}/` pour le plugin cms_pico, plus utilisé) retirée de `nextcloud/web/nginx.conf`.
+- Incident résolu : `jellyfin.${DOMAIN}` et `portainer.${DOMAIN}` servaient le certificat auto-signé par défaut de Traefik car leur DNS était en NXDOMAIN au moment des tentatives ACME précédentes. Le DNS a été corrigé côté OVH puis Traefik redémarré pour relancer l'obtention des certificats Let's Encrypt — à surveiller si le problème revient (Traefik ne retente pas seul un certificat en échec, un restart est nécessaire après correction DNS).
 
 **Stack `vpn/` (Transmission)** — piège rencontré à la mise en place, à connaître avant de retoucher cette stack :
 - `haugene/transmission-openvpn` pousse une route `redirect-gateway def1` qui scinde `0.0.0.0/0` en deux routes `/1` (`0.0.0.0/1` + `128.0.0.0/1`) couvrant la quasi-totalité de l'espace IPv4 — y compris les plages `172.16.0.0/12` que Docker utilise par défaut pour ses réseaux (donc `traefik-public` et tout réseau créé sans IPAM explicite).
@@ -65,7 +66,7 @@ Réseau externe partagé requis avant tout déploiement : `make network` (crée 
 - Autre piège lié : la variable `LOCAL_NETWORK` fait un `ip route replace <subnet> via <gw>` pour chaque entrée — si on y met le **propre sous-réseau du container** (celui sur lequel il est déjà connecté), ça casse aussi le routing sortant (même symptôme). Pour autoriser un pair du même réseau docker (ici le sidecar) à atteindre le port RPC sans toucher au routage, utiliser `UFW_ALLOW_GW_NET=true` à la place (ne fait qu'une lecture de route + une règle ufw, pas de `route replace`).
 - Contrôle d'accès : whitelist RPC de Transmission (host + IP) désactivée (`TRANSMISSION_RPC_HOST_WHITELIST_ENABLED=false`, `TRANSMISSION_RPC_WHITELIST_ENABLED=false`) — l'accès est filtré en amont par le middleware LAN-only de Traefik (`ipallowlist.sourcerange=192.168.0.0/24`).
 - Durcissement (`cap_drop: ALL` etc.) appliqué et validé une fois le problème réseau isolé — `db-next`-like : le container démarre en root (configure iptables/ufw/tun avant de descendre en PUID/PGID), `cap_add` nécessaire : `NET_ADMIN`, `NET_RAW` (sinon `iptables-restore` échoue), `MKNOD` (création du device tun), `CHOWN`/`DAC_OVERRIDE`/`FOWNER`/`SETGID`/`SETUID` (écriture fichiers + drop de privilège), `KILL`/`SETPCAP`/`SETFCAP`/`SYS_CHROOT`/`AUDIT_WRITE`/`FSETID` (scripts internes de l'image, sans quoi `kill`/ufw échouent par endroits).
-- **Accès RPC client torrent** : `localhost:9091` ne fonctionne plus depuis la migration (le container n'a plus de port publié sur l'hôte, cf. isolation réseau ci-dessus). Le client torrent doit pointer vers `https://transmission.${DOMAIN}/transmission/rpc` (donc `https://transmission.example.com/transmission/rpc`), joignable uniquement depuis le LAN (`192.168.0.0/24`, middleware Traefik). Validé fonctionnel le 2026-07-17.
+- **Accès RPC client torrent** : `localhost:9091` ne fonctionne plus depuis la migration (le container n'a plus de port publié sur l'hôte, cf. isolation réseau ci-dessus). Le client torrent doit pointer vers `https://transmission.${DOMAIN}/transmission/rpc`, joignable uniquement depuis le LAN (`192.168.0.0/24`, middleware Traefik). Validé fonctionnel le 2026-07-17.
 
 ## Sauvegarde (mise en place le 2026-07-18)
 
@@ -75,7 +76,7 @@ Politique volontairement simple : **restic**, hebdomadaire, incrémental/dédupl
 - Nextcloud : dump `pg_dump` cohérent de la DB (pas une copie brute du dossier `db-next`, qui tourne en live) + webroot `${DATA_ROOT}/.nextcloud/nexcloud` (fichiers/config/apps).
 - `.env` de chaque stack (secrets non versionnés dans git).
 - Un manifeste des digests d'images exactes en cours d'exécution (voir bullet "Versions des images" plus haut) + le commit git courant — capturés dans `sauvegarde/.staging/` et inclus dans le snapshot restic, pour pouvoir restaurer fidèlement même si `:latest` a bougé depuis.
-- **Explicitement exclu** : Musique/Photos (`/home/ebola/Musique`, `/home/ebola/Images/photos` — déjà sauvegardées ailleurs), `.transmission` (791G, contenu re-téléchargeable), cache Jellyfin.
+- **Explicitement exclu** : Musique/Photos (`${HOME_ROOT}/Musique`, `${HOME_ROOT}/Images/photos` — déjà sauvegardées ailleurs), `.transmission` (791G, contenu re-téléchargeable), cache Jellyfin.
 
 **Résilience visée** : perte de `/data` → restauration depuis `sauvegarde/` sur `/home`. Perte de `/home` → seul l'infra-as-code (compose files, ce CLAUDE.md, scripts) est récupérable depuis le remote GitHub ; la sauvegarde restic elle-même est perdue dans ce cas (même disque) — accepté pour l'instant, à corriger le jour où un stockage offsite est ajouté.
 
@@ -84,17 +85,7 @@ Politique volontairement simple : **restic**, hebdomadaire, incrémental/dédupl
 - Mot de passe du dépôt restic : généré au premier `make backup` dans `sauvegarde/restic-password` (gitignoré) — **à copier ailleurs (gestionnaire de mots de passe)**, sans lui le dépôt est illisible.
 - `make cron-install` : installe `scripts/crontab` comme crontab de l'hôte (job Nextcloud `cron.php` + backup hebdo dimanche 3h) — le crontab vit dans ce fichier versionné plutôt que seulement dans `crontab -e`, pour ne pas perdre cette info en cas de migration/réinstallation.
 
-## Matériel (relevé le 2026-07-14)
+## Remarques matérielles
 
-- **Modèle** : ASRock B550 Phantom Gaming-ITX/ax
-- **CPU** : AMD Ryzen 9 5900X, 12 cœurs / 24 threads, jusqu'à ~4,95 GHz
-- **RAM** : 30 Gi au total (swap 8 Gi)
-- **GPU** : AMD Radeon RX 9070 XT (Navi 48) — pas de GPU Nvidia, pas de `nvidia-smi`. Le GPU est utilisé par Jellyfin pour le transcodage (`/dev/dri/renderD128`) et par la session de jeu/TV.
-- **Stockage** :
-  - `nvme0n1` (NVMe, 1,8T) : partitionné en `/` (194G), `/home` (1,6T), `/boot/efi`
-  - `sda` (1,8T) monté sur `/data` (ext4) — sert de stockage de données pour transmission et nextcloud
-- **OS** : Ubuntu 26.04 LTS (Resolute Raccoon), noyau 7.0.0-27-generic
-- Hostname : `ebola-salon`
-
-Cette machine a largement les ressources pour du transcodage vidéo, plusieurs conteneurs simultanés et du stockage de fichiers — la contrainte n'est pas la puissance mais plutôt le fait qu'elle sert aussi de PC de jeu/media (attention à ne pas saturer le GPU/CPU quand elle est utilisée en salon).
+Machine 3-en-1 (home server / PC de jeu / media center) avec largement les ressources pour du transcodage vidéo (GPU dédié, `/dev/dri/renderD128` utilisé par Jellyfin), plusieurs conteneurs simultanés et du stockage de fichiers — la contrainte n'est pas la puissance mais le fait qu'elle sert aussi de PC de jeu/media en salon (attention à ne pas saturer le GPU/CPU quand elle est utilisée ainsi).
 

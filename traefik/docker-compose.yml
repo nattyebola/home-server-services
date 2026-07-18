@@ -31,6 +31,8 @@ services:
     user: "${PUID}:${PGID}"
     depends_on:
       - socket-proxy
+    environment:
+      - TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT_ACME_EMAIL=${ACME_EMAIL}
     ports:
       - "80:8080"
       - "443:8443"

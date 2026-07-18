@@ -32,9 +32,9 @@ services:
     user: "${PUID}:${PGID}"
     volumes:
       - ${DATA_ROOT}/.nextcloud/nexcloud:/var/www/html
-      - /home/ebola/Images/photos:/mountedImages
+      - ${HOME_ROOT}/Images/photos:/mountedImages
       - ${DATA_ROOT}/.transmission/data/completed:/mountedDownloaded
-      - /home/ebola/Vidéos:/mountedVideos
+      - ${HOME_ROOT}/Vidéos:/mountedVideos
     extra_hosts:
       - "www.${DOMAIN}:host-gateway"
     environment:

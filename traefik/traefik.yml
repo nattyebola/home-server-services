@@ -21,7 +21,8 @@ providers:
 certificatesResolvers:
   letsencrypt:
     acme:
-      email: "2381461+nattyebola@users.noreply.github.com"
+      # email supplied via TRAEFIK_CERTIFICATESRESOLVERS_LETSENCRYPT_ACME_EMAIL
+      # (traefik/.env, not versioned — see traefik/.env.example)
       storage: "/letsencrypt/acme.json"
       httpChallenge:
         entryPoint: web

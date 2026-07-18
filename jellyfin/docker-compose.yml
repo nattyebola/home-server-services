@@ -13,8 +13,8 @@ services:
     volumes:
       - ${DATA_ROOT}/.jellyfin/cache:/cache
       - ${DATA_ROOT}/.jellyfin/config:/config
-      - /home/ebola/Musique:/hosthome/Musique:ro
-      - /home/ebola/Images/photos:/hosthome/Images/photos:ro
+      - ${HOME_ROOT}/Musique:/hosthome/Musique:ro
+      - ${HOME_ROOT}/Images/photos:/hosthome/Images/photos:ro
       - ${DATA_ROOT}/.transmission/data/completed:/media
       - ${DATA_ROOT}/.transmission/data/completed/.trou:/trou
     networks:
