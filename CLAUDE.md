@@ -12,17 +12,23 @@ Ce dossier (`server`) contient l'infra as code des services home server tournant
 - **Containers rootless** : chaque container doit exécuter son process avec un utilisateur non-root à l'intérieur (pas de daemon Docker rootless complet — le démon reste classique/root, seul le process dans le container est non-root).
 - **Durcissement systématique des containers** : tous les services ont `security_opt: no-new-privileges:true` et `cap_drop: ALL`. Seul `db-next` (Postgres) a un `cap_add` ciblé (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETGID`, `SETUID`), nécessaire car son entrypoint démarre encore en root avant de descendre en privilège via `gosu` — aucun autre service n'a besoin de capacité ajoutée (exception : `vpn/transmission-vpn`, cf. plus bas, qui a des besoins réseau spécifiques). Les montages de volumes doivent aussi rester au plus près du besoin réel (ex : ne jamais monter un `$HOME` entier si un seul sous-dossier est utilisé).
 - **Reverse proxy** : Traefik, avec découverte automatique des containers via labels — un seul point d'entrée HTTPS (443) pour faire cohabiter tous les services sur le même nom de domaine (`example.com`, un sous-domaine par service). Traefik ne lit jamais le socket Docker en direct : il passe par un `docker-socket-proxy` (accès lecture seule, restreint) pour rester lui aussi non-root.
-- **Infra as code** : toute la configuration (compose files, labels Traefik) doit être versionnable en fichiers texte dans ce dépôt — pas de configuration faite uniquement via une UI qui ne serait pas reflétée dans le repo. `server/` est un dépôt git initialisé.
+- **Infra as code** : toute la configuration (compose files, labels Traefik) doit être versionnable en fichiers texte dans ce dépôt — pas de configuration faite uniquement via une UI qui ne serait pas reflétée dans le repo. `server/` est un dépôt git initialisé, avec un remote privé `git@github.com:nattyebola/home-server-services.git` (poussé via une **deploy key dédiée**, `~/.ssh/id_ed25519_server_backup` + alias SSH `github-server-backup`, accès limité à ce seul repo plutôt que la clé perso de l'utilisateur).
 - **Secrets** : fichiers `.env` par stack, non versionnés (exclus via `.gitignore`), avec un `.env.example` versionné à côté pour documenter les clés attendues.
 - **Valeurs partagées non secrètes** (PUID/PGID, GID du groupe `render`, domaine, racine des données) : source unique dans `server/.env.shared` (versionné), référencées dans chaque compose file via `${PUID}`, `${DOMAIN}`, `${DATA_ROOT}`, etc. `docker compose` ne charge pas ce fichier tout seul (il ne cherche un `.env` que dans le dossier de la stack) : on passe donc toujours par le `Makefile` (`make up STACK=<nom>`, `make down STACK=<nom>`, `make config STACK=<nom>` pour valider le rendu, `make logs STACK=<nom>`) plutôt que par `docker compose` en direct dans un dossier de stack.
 - **Nextcloud** : image communautaire classique (pas Nextcloud AIO) — AIO pilote ses propres containers via le socket Docker et sa config vit dans son UI, incompatible avec les exigences rootless/infra-as-code ci-dessus.
+- **Versions des images** : décision assumée de rester sur `:latest` (ou tag flottant) partout plutôt que de figer les versions — l'utilisateur veut toujours les dernières versions et accepte le risque de casse. La reproductibilité d'une restauration (cf. sauvegarde plus bas) ne passe donc pas par des tags fixes dans les compose files, mais par un **manifeste des digests exacts** capturé à chaque sauvegarde.
 
 ### Structure du dépôt
 
 ```
 server/
 ├── .env.shared         # PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT — source unique, versionné, pas de secret
-├── Makefile             # up/down/config/logs STACK=<nom> — charge .env.shared + le .env local de la stack
+├── Makefile             # up/down/config/logs/update/update-all/backup/restore/cron-install STACK=<nom>
+├── scripts/
+│   ├── crontab              # source de vérité du crontab hôte — installé via `make cron-install`
+│   ├── backup.sh             # sauvegarde restic hebdomadaire — cf. section Sauvegarde plus bas
+│   └── restore.sh            # restauration guidée d'un snapshot restic
+├── sauvegarde/          # non versionné (.gitignore) — dépôt restic + mot de passe + staging (dump DB, manifeste images)
 ├── traefik/            # reverse proxy + TLS (Let's Encrypt), remplace proxy + letsencrypt-companion
 │   ├── docker-compose.yml   # services: socket-proxy, traefik
 │   ├── traefik.yml          # config statique (entrypoints, provider docker, resolver ACME)
@@ -60,6 +66,23 @@ Réseau externe partagé requis avant tout déploiement : `make network` (crée 
 - Contrôle d'accès : whitelist RPC de Transmission (host + IP) désactivée (`TRANSMISSION_RPC_HOST_WHITELIST_ENABLED=false`, `TRANSMISSION_RPC_WHITELIST_ENABLED=false`) — l'accès est filtré en amont par le middleware LAN-only de Traefik (`ipallowlist.sourcerange=192.168.0.0/24`).
 - Durcissement (`cap_drop: ALL` etc.) appliqué et validé une fois le problème réseau isolé — `db-next`-like : le container démarre en root (configure iptables/ufw/tun avant de descendre en PUID/PGID), `cap_add` nécessaire : `NET_ADMIN`, `NET_RAW` (sinon `iptables-restore` échoue), `MKNOD` (création du device tun), `CHOWN`/`DAC_OVERRIDE`/`FOWNER`/`SETGID`/`SETUID` (écriture fichiers + drop de privilège), `KILL`/`SETPCAP`/`SETFCAP`/`SYS_CHROOT`/`AUDIT_WRITE`/`FSETID` (scripts internes de l'image, sans quoi `kill`/ufw échouent par endroits).
 - **Accès RPC client torrent** : `localhost:9091` ne fonctionne plus depuis la migration (le container n'a plus de port publié sur l'hôte, cf. isolation réseau ci-dessus). Le client torrent doit pointer vers `https://transmission.${DOMAIN}/transmission/rpc` (donc `https://transmission.example.com/transmission/rpc`), joignable uniquement depuis le LAN (`192.168.0.0/24`, middleware Traefik). Validé fonctionnel le 2026-07-17.
+
+## Sauvegarde (mise en place le 2026-07-18)
+
+Politique volontairement simple : **restic**, hebdomadaire, incrémental/dédupliqué, rétention **8 snapshots (~2 mois)**, stockée en local sur `~/server/sauvegarde/restic-repo` (disque `/home`, nvme — donc un support différent de `/data`). Le cloud/offsite est explicitement remis à plus tard.
+
+**Périmètre** (uniquement ce qui n'est pas déjà géré ailleurs ni re-générable) :
+- Nextcloud : dump `pg_dump` cohérent de la DB (pas une copie brute du dossier `db-next`, qui tourne en live) + webroot `${DATA_ROOT}/.nextcloud/nexcloud` (fichiers/config/apps).
+- `.env` de chaque stack (secrets non versionnés dans git).
+- Un manifeste des digests d'images exactes en cours d'exécution (voir bullet "Versions des images" plus haut) + le commit git courant — capturés dans `sauvegarde/.staging/` et inclus dans le snapshot restic, pour pouvoir restaurer fidèlement même si `:latest` a bougé depuis.
+- **Explicitement exclu** : Musique/Photos (`/home/ebola/Musique`, `/home/ebola/Images/photos` — déjà sauvegardées ailleurs), `.transmission` (791G, contenu re-téléchargeable), cache Jellyfin.
+
+**Résilience visée** : perte de `/data` → restauration depuis `sauvegarde/` sur `/home`. Perte de `/home` → seul l'infra-as-code (compose files, ce CLAUDE.md, scripts) est récupérable depuis le remote GitHub ; la sauvegarde restic elle-même est perdue dans ce cas (même disque) — accepté pour l'instant, à corriger le jour où un stockage offsite est ajouté.
+
+- `make backup` (aussi via cron, cf. `scripts/crontab`) : dump DB, manifeste d'images, `restic backup`, `restic forget --keep-weekly 8 --prune`, puis crée un tag git `backup-YYYY-MM-DD` **seulement si l'infra a changé** depuis le dernier tag de ce type (évite le bruit), et le pousse sur `origin`.
+- `make restore SNAPSHOT=<id|latest>` : restaure dans `sauvegarde/restore-<id>/` et affiche les étapes manuelles (checkout du commit infra, pin des digests, restauration du webroot, import `psql` du dump) — ne touche jamais les données live automatiquement, une restauration reste un geste manuel assisté.
+- Mot de passe du dépôt restic : généré au premier `make backup` dans `sauvegarde/restic-password` (gitignoré) — **à copier ailleurs (gestionnaire de mots de passe)**, sans lui le dépôt est illisible.
+- `make cron-install` : installe `scripts/crontab` comme crontab de l'hôte (job Nextcloud `cron.php` + backup hebdo dimanche 3h) — le crontab vit dans ce fichier versionné plutôt que seulement dans `crontab -e`, pour ne pas perdre cette info en cas de migration/réinstallation.
 
 ## Matériel (relevé le 2026-07-14)
 
