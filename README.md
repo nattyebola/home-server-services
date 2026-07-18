@@ -123,12 +123,14 @@ moment du backup pour être fidèle.
   `cap_add` ciblé, documenté en commentaire dans leur compose file — ils
   démarrent en root (pour configurer permissions/réseau) avant de
   descendre en privilège.
-- **Secrets** : un `.env` par stack (gitignoré) + un `.env.example`
-  versionné à côté pour documenter les clés attendues. Valeurs partagées
-  non secrètes (PUID/PGID, `DOMAIN`, `DATA_ROOT`...) dans `.env.shared` à
-  la racine. `docker compose` ne charge pas ces fichiers tout seul (il ne
-  cherche un `.env` que dans le dossier de la stack) : passer par le
-  `Makefile` plutôt que par `docker compose` en direct.
+- **Secrets et valeurs propres au déploiement** : un `.env` par stack
+  (gitignoré) + un `.env.example` versionné à côté pour documenter les
+  clés attendues — même chose pour les valeurs partagées entre stacks
+  (PUID/PGID, `DOMAIN`, `DATA_ROOT`...) dans `.env.shared`/
+  `.env.shared.example` à la racine. `docker compose` ne charge pas ces
+  fichiers tout seul (il ne cherche un `.env` que dans le dossier de la
+  stack) : passer par le `Makefile` plutôt que par `docker compose` en
+  direct.
 - **Portabilité des montages hôte** : tout montage qui reflète un choix
   personnel (quelles bibliothèques exposer, sous quel chemin) vit dans un
   `docker-compose.override.yml` gitignoré, templaté par un
@@ -204,11 +206,15 @@ moment du backup pour être fidèle.
    git clone <url-du-repo> server && cd server
    ```
 
-2. **Adapter les valeurs partagées** dans `.env.shared` (versionné, pas
-   de secret) : `PUID`/`PGID` (uid/gid de l'utilisateur qui doit posséder
-   les fichiers créés), `RENDER_GID` (`getent group render` si vous avez
-   un GPU), `DOMAIN` (le vôtre), `DATA_ROOT` (où stocker les données
-   applicatives — idéalement un disque avec de la place).
+2. **Créer et adapter les valeurs partagées** — copier l'exemple et le
+   remplir :
+   ```sh
+   cp .env.shared.example .env.shared
+   ```
+   `PUID`/`PGID` (uid/gid de l'utilisateur qui doit posséder les fichiers
+   créés), `RENDER_GID` (`getent group render` si vous avez un GPU),
+   `DOMAIN` (le vôtre), `DATA_ROOT` (où stocker les données applicatives —
+   idéalement un disque avec de la place).
 
 3. **Créer le réseau Docker partagé**
    ```sh

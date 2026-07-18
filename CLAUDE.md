@@ -22,11 +22,14 @@ explicitement :
   toujours les dernières versions. La reproductibilité d'une restauration
   passe par le manifeste de digests capturé à chaque `make backup`
   (`scripts/backup.sh`), pas par des tags fixes dans les compose files.
-- **Secrets** : `.env` par stack (gitignoré) + `.env.example` versionné.
-  Valeurs non secrètes partagées (`PUID`/`PGID`/`RENDER_GID`/`DOMAIN`/
-  `DATA_ROOT`) dans `.env.shared` à la racine. Toujours passer par le
-  `Makefile` (`make <target> STACK=<nom>`), jamais `docker compose` en
-  direct dans un dossier de stack (il ne chargerait pas `.env.shared`).
+- **Secrets et valeurs propres au déploiement** : `.env` par stack
+  (gitignoré) + `.env.example` versionné — même chose pour les valeurs
+  partagées entre stacks (`PUID`/`PGID`/`RENDER_GID`/`DOMAIN`/
+  `DATA_ROOT`) dans `.env.shared`/`.env.shared.example` à la racine
+  (`.env.shared` gitignoré depuis le 2026-07-18, il identifiait ce
+  déploiement — domaine, chemins). Toujours passer par le `Makefile`
+  (`make <target> STACK=<nom>`), jamais `docker compose` en direct dans
+  un dossier de stack (il ne chargerait pas `.env.shared`).
 - **Montages host-specific** (bibliothèques Jellyfin, external storage
   Nextcloud) : dans `docker-compose.override.yml` par stack (gitignoré,
   chargé automatiquement par le Makefile s'il existe) + `.example`
@@ -39,11 +42,11 @@ explicitement :
   `origin` via deploy key dédiée `~/.ssh/id_ed25519_server_backup` / alias
   SSH `github-server-backup`, pas la clé perso de l'utilisateur). Ne
   jamais committer un secret ou une info identifiante en dur (email,
-  chemin perso...) — toujours via `.env`/`.env.shared`, jamais dans un
-  fichier versionné. `DOMAIN=example.com` et le username Unix `ebola`
-  dans les valeurs restent volontairement en clair (déjà publics/peu
-  sensibles, décision explicite de l'utilisateur) — ça ne couvre que les
-  *nouveaux* ajouts.
+  domaine, chemin perso...) dans un fichier versionné — toujours via
+  `.env`/`.env.shared` (gitignorés) + leur `.example` (placeholders
+  génériques). Le username Unix `ebola` reste en clair dans les
+  `docker-compose.override.yml` gitignorés (pas versionnés, donc pas
+  concernés) — décision explicite de l'utilisateur.
 
 ## Pièges à ne pas répéter
 
@@ -67,7 +70,7 @@ explicitement :
 
 ```
 server/
-├── .env.shared              # PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT — versionné, pas de secret
+├── .env.shared(.example)     # PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT — réel gitignoré, .example versionné
 ├── Makefile                  # network/up/down/config/logs/update/update-all/backup/restore/cron-install STACK=<nom>
 ├── README.md                  # doc humaine : services, choix, problèmes rencontrés, install
 ├── scripts/
