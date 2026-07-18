@@ -14,7 +14,10 @@ network:
 # .env.shared is the single source of truth for PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT,
 # used by every stack. docker compose never reads it unless told to, so up/down/config/logs
 # always go through this Makefile instead of calling `docker compose` directly in a stack dir.
-compose = docker compose --env-file .env.shared $(if $(wildcard $(STACK)/.env),--env-file $(STACK)/.env,) -f $(STACK)/docker-compose.yml
+# docker-compose.override.yml (gitignored, host-specific bind mounts — see
+# */docker-compose.override.yml.example) is loaded when present so the base
+# compose files stay free of any one deployment's folder layout.
+compose = docker compose --env-file .env.shared $(if $(wildcard $(STACK)/.env),--env-file $(STACK)/.env,) -f $(STACK)/docker-compose.yml $(if $(wildcard $(STACK)/docker-compose.override.yml),-f $(STACK)/docker-compose.override.yml,)
 
 up: network
 	@test -n "$(STACK)" || (echo "usage: make up STACK=<$(STACKS)>" >&2 && exit 1)

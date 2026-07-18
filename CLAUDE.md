@@ -17,12 +17,13 @@ Ce dossier (`server`) contient l'infra as code des services home server.
 - **Valeurs partagées non secrètes** (PUID/PGID, GID du groupe `render`, domaine, racine des données) : source unique dans `server/.env.shared` (versionné), référencées dans chaque compose file via `${PUID}`, `${DOMAIN}`, `${DATA_ROOT}`, etc. `docker compose` ne charge pas ce fichier tout seul (il ne cherche un `.env` que dans le dossier de la stack) : on passe donc toujours par le `Makefile` (`make up STACK=<nom>`, `make down STACK=<nom>`, `make config STACK=<nom>` pour valider le rendu, `make logs STACK=<nom>`) plutôt que par `docker compose` en direct dans un dossier de stack.
 - **Nextcloud** : image communautaire classique (pas Nextcloud AIO) — AIO pilote ses propres containers via le socket Docker et sa config vit dans son UI, incompatible avec les exigences rootless/infra-as-code ci-dessus.
 - **Versions des images** : décision assumée de rester sur `:latest` (ou tag flottant) partout plutôt que de figer les versions — l'utilisateur veut toujours les dernières versions et accepte le risque de casse. La reproductibilité d'une restauration (cf. sauvegarde plus bas) ne passe donc pas par des tags fixes dans les compose files, mais par un **manifeste des digests exacts** capturé à chaque sauvegarde.
+- **Portabilité des montages hôte** : les compose files de base ne doivent contenir que les montages génériques, réutilisables tels quels par n'importe quel déploiement (ex. `${DATA_ROOT}/.jellyfin/config`). Tout montage qui reflète un choix personnel (quelles bibliothèques exposer, sous quel chemin hôte) va dans un `docker-compose.override.yml` par stack, non versionné (`.gitignore`), avec un `docker-compose.override.yml.example` versionné à côté comme modèle — même logique que `.env`/`.env.example`. Le `Makefile` le charge automatiquement s'il existe (cf. variable `compose`). Objectif : que quelqu'un d'autre puisse reprendre une stack sans dépendre des conventions de chemins de cette machine.
 
 ### Structure du dépôt
 
 ```
 server/
-├── .env.shared         # PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT/HOME_ROOT — source unique, versionné, pas de secret
+├── .env.shared         # PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT — source unique, versionné, pas de secret
 ├── Makefile             # up/down/config/logs/update/update-all/backup/restore/cron-install STACK=<nom>
 ├── scripts/
 │   ├── crontab              # source de vérité du crontab hôte — installé via `make cron-install`
@@ -35,9 +36,11 @@ server/
 │   ├── .env / .env.example  # ACME_EMAIL (contact Let's Encrypt)
 │   └── letsencrypt/         # acme.json (non versionné)
 ├── jellyfin/
-│   └── docker-compose.yml   # accès GPU (/dev/dri/renderD128), bibliothèque sur /data ; montages ciblés (Musique, Images/photos) plutôt que tout `${HOME_ROOT}`
+│   ├── docker-compose.yml   # accès GPU (/dev/dri/renderD128) ; cache/config sur ${DATA_ROOT}
+│   └── docker-compose.override.yml(.example)  # bibliothèques (Musique, Photos...) — host-specific, non versionné
 ├── nextcloud/
 │   ├── docker-compose.yml   # db-next, app, web, news-updater (proxy/letsencrypt-companion supprimés)
+│   ├── docker-compose.override.yml(.example)  # external storage (Photos, Vidéos...) — host-specific, non versionné
 │   ├── .env / .env.example
 │   ├── app/Dockerfile       # nextcloud:fpm-alpine + ffmpeg
 │   └── web/Dockerfile, nginx.conf  # nginxinc/nginx-unprivileged, écoute 8080 (au lieu de 80) ; plus de proxy_pass cms_pico (plugin retiré)
@@ -56,7 +59,7 @@ Réseau externe partagé requis avant tout déploiement : `make network` (crée 
 
 **Passe de durcissement du 2026-07-17** (suite à une revue de sécurité des stacks déployées) :
 - `security_opt: no-new-privileges:true` + `cap_drop: ALL` ajoutés à tous les services (cf. bullet dédié plus haut).
-- Mount Jellyfin `${HOME_ROOT}:/hosthome` (home entier exposé) restreint aux deux sous-dossiers réellement utilisés par ses bibliothèques (`Musique`, `Images/photos`), en lecture seule.
+- Mount Jellyfin `$HOME:/hosthome` (home entier exposé) restreint aux deux sous-dossiers réellement utilisés par ses bibliothèques (`Musique`, `Images/photos`), en lecture seule — depuis le 2026-07-18 ces montages vivent dans `jellyfin/docker-compose.override.yml` (cf. bullet "Portabilité des montages hôte" plus haut).
 - Règle `location /sites/` (proxy_pass hairpin vers `https://www.${DOMAIN}/` pour le plugin cms_pico, plus utilisé) retirée de `nextcloud/web/nginx.conf`.
 - Incident résolu : `jellyfin.${DOMAIN}` et `portainer.${DOMAIN}` servaient le certificat auto-signé par défaut de Traefik car leur DNS était en NXDOMAIN au moment des tentatives ACME précédentes. Le DNS a été corrigé côté OVH puis Traefik redémarré pour relancer l'obtention des certificats Let's Encrypt — à surveiller si le problème revient (Traefik ne retente pas seul un certificat en échec, un restart est nécessaire après correction DNS).
 
@@ -76,7 +79,7 @@ Politique volontairement simple : **restic**, hebdomadaire, incrémental/dédupl
 - Nextcloud : dump `pg_dump` cohérent de la DB (pas une copie brute du dossier `db-next`, qui tourne en live) + webroot `${DATA_ROOT}/.nextcloud/nexcloud` (fichiers/config/apps).
 - `.env` de chaque stack (secrets non versionnés dans git).
 - Un manifeste des digests d'images exactes en cours d'exécution (voir bullet "Versions des images" plus haut) + le commit git courant — capturés dans `sauvegarde/.staging/` et inclus dans le snapshot restic, pour pouvoir restaurer fidèlement même si `:latest` a bougé depuis.
-- **Explicitement exclu** : Musique/Photos (`${HOME_ROOT}/Musique`, `${HOME_ROOT}/Images/photos` — déjà sauvegardées ailleurs), `.transmission` (791G, contenu re-téléchargeable), cache Jellyfin.
+- **Explicitement exclu** : Musique/Photos (déjà sauvegardées ailleurs), `.transmission` (791G, contenu re-téléchargeable), cache Jellyfin.
 
 **Résilience visée** : perte de `/data` → restauration depuis `sauvegarde/` sur `/home`. Perte de `/home` → seul l'infra-as-code (compose files, ce CLAUDE.md, scripts) est récupérable depuis le remote GitHub ; la sauvegarde restic elle-même est perdue dans ce cas (même disque) — accepté pour l'instant, à corriger le jour où un stockage offsite est ajouté.
 

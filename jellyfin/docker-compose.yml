@@ -13,10 +13,8 @@ services:
     volumes:
       - ${DATA_ROOT}/.jellyfin/cache:/cache
       - ${DATA_ROOT}/.jellyfin/config:/config
-      - ${HOME_ROOT}/Musique:/hosthome/Musique:ro
-      - ${HOME_ROOT}/Images/photos:/hosthome/Images/photos:ro
-      - ${DATA_ROOT}/.transmission/data/completed:/media
-      - ${DATA_ROOT}/.transmission/data/completed/.trou:/trou
+      # media library mounts (host-specific) go in a local
+      # docker-compose.override.yml — see docker-compose.override.yml.example
     networks:
       - traefik-public
     security_opt:

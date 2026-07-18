@@ -32,9 +32,8 @@ services:
     user: "${PUID}:${PGID}"
     volumes:
       - ${DATA_ROOT}/.nextcloud/nexcloud:/var/www/html
-      - ${HOME_ROOT}/Images/photos:/mountedImages
-      - ${DATA_ROOT}/.transmission/data/completed:/mountedDownloaded
-      - ${HOME_ROOT}/Vidéos:/mountedVideos
+      # extra external-storage mounts (host-specific) go in a local
+      # docker-compose.override.yml — see docker-compose.override.yml.example
     extra_hosts:
       - "www.${DOMAIN}:host-gateway"
     environment:

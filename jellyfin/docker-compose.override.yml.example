@@ -1,0 +1,10 @@
+# Copy this file to docker-compose.override.yml (gitignored, host-specific)
+# to point Jellyfin at your own media libraries. Optional — Jellyfin works
+# fine with none of these, you just won't have anything to watch yet.
+# ${DATA_ROOT} is available here too (from .env.shared) if useful.
+services:
+  jellyfin:
+    volumes:
+      - /path/to/your/music:/hosthome/Musique:ro
+      - /path/to/your/photos:/hosthome/Images/photos:ro
+      - /path/to/completed/downloads:/media

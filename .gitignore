@@ -5,6 +5,10 @@
 .env
 **/.env
 
+# host-specific bind mounts (folder layout only makes sense on this
+# deployment) — see */docker-compose.override.yml.example
+**/docker-compose.override.yml
+
 # runtime data / state (not infra-as-code)
 traefik/letsencrypt/
 

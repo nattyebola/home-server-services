@@ -1,0 +1,10 @@
+# Copy this file to docker-compose.override.yml (gitignored, host-specific)
+# to expose extra host folders to Nextcloud as external storage. Optional —
+# Nextcloud works fine with none of these; only add what you actually use.
+# ${DATA_ROOT} is available here too (from .env.shared) if useful.
+services:
+  app:
+    volumes:
+      - /path/to/your/photos:/mountedImages
+      - /path/to/your/videos:/mountedVideos
+      - /path/to/completed/downloads:/mountedDownloaded
