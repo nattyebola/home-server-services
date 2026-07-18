@@ -1,94 +1,103 @@
-# Serveur maison
+# server/ — instructions pour Claude
 
-Ce dossier (`server`) contient l'infra as code des services home server.
+Infra as code de services home server (Docker Compose + Traefik + Makefile).
+Description des services, choix d'architecture expliqués, problèmes
+rencontrés et guide d'installation : **voir `README.md`**, destiné aux
+humains. Ce fichier ne garde que ce qui sert à retravailler sur ce repo
+sans relitiger des décisions déjà prises ou répéter des pièges déjà
+rencontrés.
 
-## Contexte
+## Décisions à respecter
 
-- Cette machine est un PC de salon 3-en-1 : home server, PC de jeu et media center, branché sur la TV du salon.
+Ne pas proposer de revenir dessus sans que l'utilisateur le redemande
+explicitement :
 
-## Décisions d'architecture cible
+- **Rootless par container**, pas de daemon Docker rootless. `cap_drop:
+  ALL` + `security_opt: no-new-privileges:true` partout ; `cap_add` ciblé
+  seulement sur `db-next` et `vpn/transmission-vpn` (démarrent root puis
+  descendent en privilège), justifié en commentaire dans leur compose
+  file — ne pas en ajouter ailleurs sans le même genre de nécessité.
+- **Images toujours en `:latest`** (jamais de tag figé) — voulu
+  explicitement, l'utilisateur accepte le risque de casse pour avoir
+  toujours les dernières versions. La reproductibilité d'une restauration
+  passe par le manifeste de digests capturé à chaque `make backup`
+  (`scripts/backup.sh`), pas par des tags fixes dans les compose files.
+- **Secrets** : `.env` par stack (gitignoré) + `.env.example` versionné.
+  Valeurs non secrètes partagées (`PUID`/`PGID`/`RENDER_GID`/`DOMAIN`/
+  `DATA_ROOT`) dans `.env.shared` à la racine. Toujours passer par le
+  `Makefile` (`make <target> STACK=<nom>`), jamais `docker compose` en
+  direct dans un dossier de stack (il ne chargerait pas `.env.shared`).
+- **Montages host-specific** (bibliothèques Jellyfin, external storage
+  Nextcloud) : dans `docker-compose.override.yml` par stack (gitignoré,
+  chargé automatiquement par le Makefile s'il existe) + `.example`
+  versionné à côté. Jamais dans le compose file de base — objectif :
+  qu'un autre déploiement puisse reprendre la stack sans dépendre des
+  chemins de cette machine.
+- **Nextcloud** : image communautaire (pas AIO — incompatible avec
+  rootless/infra-as-code, cf. README).
+- **Repo public** sur GitHub (`nattyebola/home-server-services`, remote
+  `origin` via deploy key dédiée `~/.ssh/id_ed25519_server_backup` / alias
+  SSH `github-server-backup`, pas la clé perso de l'utilisateur). Ne
+  jamais committer un secret ou une info identifiante en dur (email,
+  chemin perso...) — toujours via `.env`/`.env.shared`, jamais dans un
+  fichier versionné. `DOMAIN=example.com` et le username Unix `ebola`
+  dans les valeurs restent volontairement en clair (déjà publics/peu
+  sensibles, décision explicite de l'utilisateur) — ça ne couvre que les
+  *nouveaux* ajouts.
 
-- **Runtime** : Docker (pas Podman — choix assumé par familiarité, malgré l'intérêt de Podman pour le rootless natif et Quadlet/systemd).
-- **Containers rootless** : chaque container doit exécuter son process avec un utilisateur non-root à l'intérieur (pas de daemon Docker rootless complet — le démon reste classique/root, seul le process dans le container est non-root).
-- **Durcissement systématique des containers** : tous les services ont `security_opt: no-new-privileges:true` et `cap_drop: ALL`. Seul `db-next` (Postgres) a un `cap_add` ciblé (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETGID`, `SETUID`), nécessaire car son entrypoint démarre encore en root avant de descendre en privilège via `gosu` — aucun autre service n'a besoin de capacité ajoutée (exception : `vpn/transmission-vpn`, cf. plus bas, qui a des besoins réseau spécifiques). Les montages de volumes doivent aussi rester au plus près du besoin réel (ex : ne jamais monter un `$HOME` entier si un seul sous-dossier est utilisé).
-- **Reverse proxy** : Traefik, avec découverte automatique des containers via labels — un seul point d'entrée HTTPS (443) pour faire cohabiter tous les services sur le même nom de domaine (valeur de `${DOMAIN}`, un sous-domaine par service). Traefik ne lit jamais le socket Docker en direct : il passe par un `docker-socket-proxy` (accès lecture seule, restreint) pour rester lui aussi non-root.
-- **Infra as code** : toute la configuration (compose files, labels Traefik) doit être versionnable en fichiers texte dans ce dépôt — pas de configuration faite uniquement via une UI qui ne serait pas reflétée dans le repo. `server/` est un dépôt git initialisé, avec un remote privé `git@github.com:nattyebola/home-server-services.git` (poussé via une **deploy key dédiée**, `~/.ssh/id_ed25519_server_backup` + alias SSH `github-server-backup`, accès limité à ce seul repo plutôt que la clé perso de l'utilisateur).
-- **Secrets** : fichiers `.env` par stack, non versionnés (exclus via `.gitignore`), avec un `.env.example` versionné à côté pour documenter les clés attendues.
-- **Valeurs partagées non secrètes** (PUID/PGID, GID du groupe `render`, domaine, racine des données) : source unique dans `server/.env.shared` (versionné), référencées dans chaque compose file via `${PUID}`, `${DOMAIN}`, `${DATA_ROOT}`, etc. `docker compose` ne charge pas ce fichier tout seul (il ne cherche un `.env` que dans le dossier de la stack) : on passe donc toujours par le `Makefile` (`make up STACK=<nom>`, `make down STACK=<nom>`, `make config STACK=<nom>` pour valider le rendu, `make logs STACK=<nom>`) plutôt que par `docker compose` en direct dans un dossier de stack.
-- **Nextcloud** : image communautaire classique (pas Nextcloud AIO) — AIO pilote ses propres containers via le socket Docker et sa config vit dans son UI, incompatible avec les exigences rootless/infra-as-code ci-dessus.
-- **Versions des images** : décision assumée de rester sur `:latest` (ou tag flottant) partout plutôt que de figer les versions — l'utilisateur veut toujours les dernières versions et accepte le risque de casse. La reproductibilité d'une restauration (cf. sauvegarde plus bas) ne passe donc pas par des tags fixes dans les compose files, mais par un **manifeste des digests exacts** capturé à chaque sauvegarde.
-- **Portabilité des montages hôte** : les compose files de base ne doivent contenir que les montages génériques, réutilisables tels quels par n'importe quel déploiement (ex. `${DATA_ROOT}/.jellyfin/config`). Tout montage qui reflète un choix personnel (quelles bibliothèques exposer, sous quel chemin hôte) va dans un `docker-compose.override.yml` par stack, non versionné (`.gitignore`), avec un `docker-compose.override.yml.example` versionné à côté comme modèle — même logique que `.env`/`.env.example`. Le `Makefile` le charge automatiquement s'il existe (cf. variable `compose`). Objectif : que quelqu'un d'autre puisse reprendre une stack sans dépendre des conventions de chemins de cette machine.
+## Pièges à ne pas répéter
 
-### Structure du dépôt
+- **`vpn/transmission-vpn` ne doit jamais rejoindre un second réseau
+  Docker** (ex. `traefik-public`) et sa variable `LOCAL_NETWORK` ne doit
+  jamais contenir son propre sous-réseau — les deux cassent le routing
+  sortant du tunnel (route `redirect-gateway def1` qui couvre
+  `172.16.0.0/12`, la plage par défaut des réseaux Docker). Toujours
+  passer par le sidecar `transmission-proxy` pour exposer le RPC ; pour
+  autoriser un pair du même réseau Docker sans casser le routage, utiliser
+  `UFW_ALLOW_GW_NET=true`, pas `LOCAL_NETWORK`. Détails complets : README.
+- **Traefik ne retente pas seul un certificat ACME resté en échec** (ex.
+  après un DNS temporairement en NXDOMAIN) — un restart du container est
+  nécessaire une fois le problème sous-jacent corrigé.
+- Avant de modifier un des trois `docker-compose.override.yml` réels
+  (gitignorés, contiennent les vrais chemins `/home/ebola/...`), se rappeler
+  qu'ils ne sont pas versionnés : toute évolution structurelle doit aussi
+  se refléter dans le `.example` correspondant.
+
+## Repo
 
 ```
 server/
-├── .env.shared         # PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT — source unique, versionné, pas de secret
-├── Makefile             # up/down/config/logs/update/update-all/backup/restore/cron-install STACK=<nom>
+├── .env.shared              # PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT — versionné, pas de secret
+├── Makefile                  # network/up/down/config/logs/update/update-all/backup/restore/cron-install STACK=<nom>
+├── README.md                  # doc humaine : services, choix, problèmes rencontrés, install
 ├── scripts/
-│   ├── crontab              # source de vérité du crontab hôte — installé via `make cron-install`
-│   ├── backup.sh             # sauvegarde restic hebdomadaire — cf. section Sauvegarde plus bas
-│   └── restore.sh            # restauration guidée d'un snapshot restic
-├── sauvegarde/          # non versionné (.gitignore) — dépôt restic + mot de passe + staging (dump DB, manifeste images)
-├── traefik/            # reverse proxy + TLS (Let's Encrypt), remplace proxy + letsencrypt-companion
-│   ├── docker-compose.yml   # services: socket-proxy, traefik
-│   ├── traefik.yml          # config statique (entrypoints, provider docker, resolver ACME)
-│   ├── .env / .env.example  # ACME_EMAIL (contact Let's Encrypt)
-│   └── letsencrypt/         # acme.json (non versionné)
-├── jellyfin/
-│   ├── docker-compose.yml   # accès GPU (/dev/dri/renderD128) ; cache/config sur ${DATA_ROOT}
-│   └── docker-compose.override.yml(.example)  # bibliothèques (Musique, Photos...) — host-specific, non versionné
-├── nextcloud/
-│   ├── docker-compose.yml   # db-next, app, web, news-updater (proxy/letsencrypt-companion supprimés)
-│   ├── docker-compose.override.yml(.example)  # external storage (Photos, Vidéos...) — host-specific, non versionné
-│   ├── .env / .env.example
-│   ├── app/Dockerfile       # nextcloud:fpm-alpine + ffmpeg
-│   └── web/Dockerfile, nginx.conf  # nginxinc/nginx-unprivileged, écoute 8080 (au lieu de 80) ; plus de proxy_pass cms_pico (plugin retiré)
-└── vpn/
-    ├── docker-compose.yml   # transmission-vpn (haugene/transmission-openvpn) + sidecar transmission-proxy (nginx)
-    ├── .env / .env.example  # OPENVPN_USERNAME/PASSWORD
-    ├── custom/default.ovpn  # config AirVPN custom
-    └── proxy/nginx.conf     # sidecar : proxy_pass vers transmission-vpn:9091, seul pont vers traefik-public
+│   ├── crontab                    # source de vérité du crontab hôte — `make cron-install`
+│   ├── backup.sh                   # sauvegarde restic hebdomadaire
+│   └── restore.sh                  # restauration guidée d'un snapshot restic
+├── sauvegarde/                # non versionné — dépôt restic + mot de passe + staging
+├── traefik/                  # socket-proxy + traefik ; .env(ACME_EMAIL)/.example
+├── jellyfin/                 # docker-compose.yml + override.yml(.example) pour les bibliothèques
+├── nextcloud/                 # db-next/app/web/news-updater ; .env/.example ; override.yml(.example)
+└── vpn/                       # transmission-vpn (réseau isolé) + sidecar transmission-proxy ; .env/.example
 ```
 
-Réseau externe partagé requis avant tout déploiement : `make network` (crée `traefik-public` s'il n'existe pas déjà — Traefik + tout service exposé via labels doivent le rejoindre).
+`make network` (crée `traefik-public` si absent) avant tout `make up`.
 
-**État** : Traefik, Jellyfin, Nextcloud et vpn/Transmission sont déployés et tournent depuis `server/`.
+## Sauvegarde — repères rapides
 
-**Portainer retiré le 2026-07-17** : stack supprimée (pas de besoin identifié). Le container et son bind mount `portainer/data/` (contenant des fichiers root-owned, écrits via l'accès direct au socket Docker) ont été supprimés. Si un besoin de supervision réapparaît, le compose file reste consultable dans l'historique git (commits antérieurs à sa suppression).
+- `make backup` (aussi via cron dimanche 3h, `scripts/crontab`) : dump
+  `pg_dump` Nextcloud + manifeste des digests d'images en cours
+  d'exécution + `restic backup` + `restic forget --keep-weekly 8
+  --prune` + tag git `backup-YYYY-MM-DD` si l'infra a changé depuis le
+  dernier tag de ce type, poussé sur `origin`.
+- `make restore SNAPSHOT=<id|latest>` : restaure dans un dossier à part et
+  affiche les étapes manuelles — ne touche jamais le live automatiquement.
+- Mot de passe restic dans `sauvegarde/restic-password` (gitignoré,
+  généré au premier `make backup`) — pas de copie ailleurs = dépôt
+  illisible en cas de perte.
+- Résilience visée : perte de `/data` → restauration depuis
+  `sauvegarde/` (sur `/home`, disque différent). Perte de `/home` → seul
+  l'infra-as-code est récupérable depuis GitHub, la sauvegarde restic est
+  perdue avec (accepté pour l'instant, pas d'offsite).
 
-**Passe de durcissement du 2026-07-17** (suite à une revue de sécurité des stacks déployées) :
-- `security_opt: no-new-privileges:true` + `cap_drop: ALL` ajoutés à tous les services (cf. bullet dédié plus haut).
-- Mount Jellyfin `$HOME:/hosthome` (home entier exposé) restreint aux deux sous-dossiers réellement utilisés par ses bibliothèques (`Musique`, `Images/photos`), en lecture seule — depuis le 2026-07-18 ces montages vivent dans `jellyfin/docker-compose.override.yml` (cf. bullet "Portabilité des montages hôte" plus haut).
-- Règle `location /sites/` (proxy_pass hairpin vers `https://www.${DOMAIN}/` pour le plugin cms_pico, plus utilisé) retirée de `nextcloud/web/nginx.conf`.
-- Incident résolu : `jellyfin.${DOMAIN}` et `portainer.${DOMAIN}` servaient le certificat auto-signé par défaut de Traefik car leur DNS était en NXDOMAIN au moment des tentatives ACME précédentes. Le DNS a été corrigé côté OVH puis Traefik redémarré pour relancer l'obtention des certificats Let's Encrypt — à surveiller si le problème revient (Traefik ne retente pas seul un certificat en échec, un restart est nécessaire après correction DNS).
-
-**Stack `vpn/` (Transmission)** — piège rencontré à la mise en place, à connaître avant de retoucher cette stack :
-- `haugene/transmission-openvpn` pousse une route `redirect-gateway def1` qui scinde `0.0.0.0/0` en deux routes `/1` (`0.0.0.0/1` + `128.0.0.0/1`) couvrant la quasi-totalité de l'espace IPv4 — y compris les plages `172.16.0.0/12` que Docker utilise par défaut pour ses réseaux (donc `traefik-public` et tout réseau créé sans IPAM explicite).
-- **Attacher ce container à un second réseau docker (ex. `traefik-public`) casse le routing sortant du tunnel** (DNS/ping ne sortent plus, `sitnl_send: rtnl: generic error (-101)` dans les logs) — reproduit de façon fiable, que ce soit en hot-attach (`docker network connect`, qui échoue explicitement avec "cannot program address ... conflicts with existing route") ou en déclarant les deux réseaux dès la création du container. **Solution : le garder sur un unique réseau dédié** (`vpn-internal`, subnet pinné) et faire pont vers Traefik via un **sidecar** (`transmission-proxy`, nginx sur `vpn-internal` + `traefik-public`) qui ne touche jamais au tunnel.
-- Autre piège lié : la variable `LOCAL_NETWORK` fait un `ip route replace <subnet> via <gw>` pour chaque entrée — si on y met le **propre sous-réseau du container** (celui sur lequel il est déjà connecté), ça casse aussi le routing sortant (même symptôme). Pour autoriser un pair du même réseau docker (ici le sidecar) à atteindre le port RPC sans toucher au routage, utiliser `UFW_ALLOW_GW_NET=true` à la place (ne fait qu'une lecture de route + une règle ufw, pas de `route replace`).
-- Contrôle d'accès : whitelist RPC de Transmission (host + IP) désactivée (`TRANSMISSION_RPC_HOST_WHITELIST_ENABLED=false`, `TRANSMISSION_RPC_WHITELIST_ENABLED=false`) — l'accès est filtré en amont par le middleware LAN-only de Traefik (`ipallowlist.sourcerange=192.168.0.0/24`).
-- Durcissement (`cap_drop: ALL` etc.) appliqué et validé une fois le problème réseau isolé — `db-next`-like : le container démarre en root (configure iptables/ufw/tun avant de descendre en PUID/PGID), `cap_add` nécessaire : `NET_ADMIN`, `NET_RAW` (sinon `iptables-restore` échoue), `MKNOD` (création du device tun), `CHOWN`/`DAC_OVERRIDE`/`FOWNER`/`SETGID`/`SETUID` (écriture fichiers + drop de privilège), `KILL`/`SETPCAP`/`SETFCAP`/`SYS_CHROOT`/`AUDIT_WRITE`/`FSETID` (scripts internes de l'image, sans quoi `kill`/ufw échouent par endroits).
-- **Accès RPC client torrent** : `localhost:9091` ne fonctionne plus depuis la migration (le container n'a plus de port publié sur l'hôte, cf. isolation réseau ci-dessus). Le client torrent doit pointer vers `https://transmission.${DOMAIN}/transmission/rpc`, joignable uniquement depuis le LAN (`192.168.0.0/24`, middleware Traefik). Validé fonctionnel le 2026-07-17.
-
-## Sauvegarde (mise en place le 2026-07-18)
-
-Politique volontairement simple : **restic**, hebdomadaire, incrémental/dédupliqué, rétention **8 snapshots (~2 mois)**, stockée en local sur `~/server/sauvegarde/restic-repo` (disque `/home`, nvme — donc un support différent de `/data`). Le cloud/offsite est explicitement remis à plus tard.
-
-**Périmètre** (uniquement ce qui n'est pas déjà géré ailleurs ni re-générable) :
-- Nextcloud : dump `pg_dump` cohérent de la DB (pas une copie brute du dossier `db-next`, qui tourne en live) + webroot `${DATA_ROOT}/.nextcloud/nexcloud` (fichiers/config/apps).
-- `.env` de chaque stack (secrets non versionnés dans git).
-- Un manifeste des digests d'images exactes en cours d'exécution (voir bullet "Versions des images" plus haut) + le commit git courant — capturés dans `sauvegarde/.staging/` et inclus dans le snapshot restic, pour pouvoir restaurer fidèlement même si `:latest` a bougé depuis.
-- **Explicitement exclu** : Musique/Photos (déjà sauvegardées ailleurs), `.transmission` (791G, contenu re-téléchargeable), cache Jellyfin.
-
-**Résilience visée** : perte de `/data` → restauration depuis `sauvegarde/` sur `/home`. Perte de `/home` → seul l'infra-as-code (compose files, ce CLAUDE.md, scripts) est récupérable depuis le remote GitHub ; la sauvegarde restic elle-même est perdue dans ce cas (même disque) — accepté pour l'instant, à corriger le jour où un stockage offsite est ajouté.
-
-- `make backup` (aussi via cron, cf. `scripts/crontab`) : dump DB, manifeste d'images, `restic backup`, `restic forget --keep-weekly 8 --prune`, puis crée un tag git `backup-YYYY-MM-DD` **seulement si l'infra a changé** depuis le dernier tag de ce type (évite le bruit), et le pousse sur `origin`.
-- `make restore SNAPSHOT=<id|latest>` : restaure dans `sauvegarde/restore-<id>/` et affiche les étapes manuelles (checkout du commit infra, pin des digests, restauration du webroot, import `psql` du dump) — ne touche jamais les données live automatiquement, une restauration reste un geste manuel assisté.
-- Mot de passe du dépôt restic : généré au premier `make backup` dans `sauvegarde/restic-password` (gitignoré) — **à copier ailleurs (gestionnaire de mots de passe)**, sans lui le dépôt est illisible.
-- `make cron-install` : installe `scripts/crontab` comme crontab de l'hôte (job Nextcloud `cron.php` + backup hebdo dimanche 3h) — le crontab vit dans ce fichier versionné plutôt que seulement dans `crontab -e`, pour ne pas perdre cette info en cas de migration/réinstallation.
-
-## Remarques matérielles
-
-Machine 3-en-1 (home server / PC de jeu / media center) avec largement les ressources pour du transcodage vidéo (GPU dédié, `/dev/dri/renderD128` utilisé par Jellyfin), plusieurs conteneurs simultanés et du stockage de fichiers — la contrainte n'est pas la puissance mais le fait qu'elle sert aussi de PC de jeu/media en salon (attention à ne pas saturer le GPU/CPU quand elle est utilisée ainsi).
-
+Détails, rationale et guide d'installation complet : `README.md`.
