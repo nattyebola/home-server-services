@@ -1,0 +1,12 @@
+# Installed via `make cron-install` (see Makefile) — this file is the
+# source of truth for this host's crontab. Editing the live crontab
+# directly (crontab -e) will silently be overwritten on the next install;
+# edit this file and re-run the target instead.
+MAILTO=""
+
+# Nextcloud background jobs, every 5 minutes (occ background:cron via cron.php)
+*/5 * * * * docker exec -u 1000 nextcloud-app-1 php -f /var/www/html/cron.php
+
+# Weekly restic backup (Nextcloud DB dump + data + .env secrets + image
+# digest manifest) — see scripts/backup.sh
+0 3 * * 0 /home/ebola/server/scripts/backup.sh >> /home/ebola/server/sauvegarde/backup.log 2>&1

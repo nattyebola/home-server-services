@@ -10,3 +10,7 @@ traefik/letsencrypt/
 
 # VPN client credentials (private key + certs, not infra-as-code)
 vpn/custom/
+
+# restic backup repository + staging data (large/binary, not infra-as-code —
+# see scripts/backup.sh; the repo password lives here too, never commit it)
+sauvegarde/

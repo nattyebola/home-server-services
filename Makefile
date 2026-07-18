@@ -4,7 +4,9 @@
 NETWORK := traefik-public
 STACKS := traefik jellyfin nextcloud vpn
 
-.PHONY: network up down config logs
+UPDATE_STACKS := nextcloud vpn jellyfin
+
+.PHONY: network up down config logs update update-all backup restore cron-install
 
 network:
 	@docker network inspect $(NETWORK) >/dev/null 2>&1 || docker network create $(NETWORK)
@@ -29,3 +31,47 @@ config:
 logs:
 	@test -n "$(STACK)" || (echo "usage: make logs STACK=<$(STACKS)>" >&2 && exit 1)
 	$(compose) logs -f
+
+# pull the latest image for each service, rebuild the ones with a local
+# Dockerfile (nextcloud app/web), then recreate. nextcloud additionally needs
+# its post-upgrade occ maintenance run every time app: gets a new image.
+update: network
+	@test -n "$(STACK)" || (echo "usage: make update STACK=<$(STACKS)>" >&2 && exit 1)
+	$(compose) pull
+	@if [ "$(STACK)" = "nextcloud" ]; then $(compose) build -q; fi
+	$(compose) up -d --remove-orphans
+	@if [ "$(STACK)" = "nextcloud" ]; then \
+		$(compose) exec app ./occ app:update --all -n && \
+		$(compose) exec app ./occ db:add-missing-columns && \
+		$(compose) exec app ./occ db:add-missing-indices && \
+		$(compose) exec app ./occ db:add-missing-primary-keys && \
+		$(compose) exec app ./occ maintenance:mimetype:update-js && \
+		$(compose) exec app ./occ maintenance:mimetype:update-db; \
+	fi
+
+# runs `update` for every stack that had update logic in the old ~/docker
+# script (nextcloud, vpn, jellyfin — traefik was never part of it, but can
+# still be updated on its own with `make update STACK=traefik`).
+update-all:
+	@for s in $(UPDATE_STACKS); do \
+		echo "\n======================== update $$s ========================\n"; \
+		$(MAKE) update STACK=$$s || exit 1; \
+	done
+
+# weekly restic backup (nextcloud DB dump + data + .env secrets + image
+# digest manifest) — see scripts/backup.sh. Also run by cron, see CLAUDE.md.
+backup:
+	@scripts/backup.sh
+
+# restore a restic snapshot to sauvegarde/restore-<snapshot>/ and print the
+# manual steps to bring it back — see scripts/restore.sh.
+restore:
+	@scripts/restore.sh $(if $(SNAPSHOT),$(SNAPSHOT),latest)
+
+# installs scripts/crontab as this host's crontab (nextcloud cron.php +
+# weekly backup) — versioned here instead of only living in the live
+# crontab, where it would otherwise vanish silently (migration, reinstall...).
+cron-install:
+	crontab scripts/crontab
+	@echo "installed crontab:"
+	@crontab -l
