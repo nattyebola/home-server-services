@@ -72,10 +72,14 @@ current_commit="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 
 if [ "$last_tag_commit" != "$current_commit" ]; then
 	new_tag="backup-$(date +%F)"
+	if git -C "$REPO_ROOT" tag --list "$new_tag" | grep -q .; then
+		echo "tag $new_tag already exists for an earlier commit today — moving it to HEAD"
+		git -C "$REPO_ROOT" tag -d "$new_tag" >/dev/null
+	fi
 	git -C "$REPO_ROOT" tag -a "$new_tag" -m "Infra state at backup $(date +%F)"
 	echo "created git tag $new_tag"
 	if git -C "$REPO_ROOT" remote get-url origin >/dev/null 2>&1; then
-		git -C "$REPO_ROOT" push origin "$new_tag"
+		git -C "$REPO_ROOT" push --force origin "$new_tag"
 	else
 		echo "no 'origin' remote configured yet — tag stays local for now" >&2
 	fi
