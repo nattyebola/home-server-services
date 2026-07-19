@@ -5,8 +5,12 @@
 MAILTO=""
 
 # Nextcloud background jobs, every 5 minutes (occ background:cron via cron.php)
-*/5 * * * * docker exec -u 1000 nextcloud-app-1 php -f /var/www/html/cron.php
+# the placeholder below is substituted by `make cron-install` with PUID from
+# .env.shared — never hardcode a literal uid here.
+*/5 * * * * docker exec -u __PUID__ nextcloud-app-1 php -f /var/www/html/cron.php
 
 # Weekly restic backup (Nextcloud DB dump + data + .env secrets + image
 # digest manifest) — see scripts/backup.sh
-0 3 * * 0 /home/ebola/server/scripts/backup.sh >> /home/ebola/server/sauvegarde/backup.log 2>&1
+# the placeholder below is substituted by `make cron-install` with this
+# checkout's absolute path — never hardcode a literal path here.
+0 3 * * 0 __REPO_ROOT__/scripts/backup.sh >> __REPO_ROOT__/sauvegarde/backup.log 2>&1

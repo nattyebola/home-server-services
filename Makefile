@@ -74,7 +74,13 @@ restore:
 # installs scripts/crontab as this host's crontab (nextcloud cron.php +
 # weekly backup) — versioned here instead of only living in the live
 # crontab, where it would otherwise vanish silently (migration, reinstall...).
+# __REPO_ROOT__ and __PUID__ in scripts/crontab are substituted with this
+# checkout's absolute path and .env.shared's PUID (cron never loads
+# .env.shared itself) so the file stays portable across machines/users.
 cron-install:
-	crontab scripts/crontab
+	@test -f .env.shared || (echo ".env.shared missing — see .env.shared.example" >&2 && exit 1)
+	$(eval PUID := $(shell grep '^PUID=' .env.shared | cut -d= -f2))
+	@test -n "$(PUID)" || (echo "PUID not set in .env.shared" >&2 && exit 1)
+	sed -e "s|__REPO_ROOT__|$(CURDIR)|g" -e "s|__PUID__|$(PUID)|g" scripts/crontab | crontab -
 	@echo "installed crontab:"
 	@crontab -l
