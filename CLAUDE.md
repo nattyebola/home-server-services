@@ -61,6 +61,21 @@ explicitement :
 - **Traefik ne retente pas seul un certificat ACME resté en échec** (ex.
   après un DNS temporairement en NXDOMAIN) — un restart du container est
   nécessaire une fois le problème sous-jacent corrigé.
+- **`jellyfin.db` corrompue (`SQLite Error 11: database disk image is
+  malformed`)** : ne pas juste supprimer le fichier pour forcer une
+  régénération — `config/config/system.xml` garde
+  `IsStartupWizardCompleted=true`, donc Jellyfin se croit en mise à
+  niveau et plante en boucle sur d'anciennes migrations qui supposent un
+  schéma déjà existant. Avant de reset : essayer une réparation
+  (`sqlite3 <copie>.db ".recover" > dump.sql`, réimporter dans un fichier
+  neuf, `PRAGMA integrity_check`/`foreign_key_check`, `REINDEX; VACUUM;`)
+  — a fonctionné sans perte de données le 2026-07-20 malgré la
+  corruption. Si reset complet malgré tout : repasser aussi
+  `IsStartupWizardCompleted` à `false` dans `system.xml` pour repartir
+  sur le vrai chemin "nouvelle installation". Le dossier
+  `data/SQLiteBackups/` (backups auto intégrés à Jellyfin) était vide au
+  moment de l'incident — vérifier de temps en temps qu'il se remplit
+  réellement.
 - Avant de modifier un des trois `docker-compose.override.yml` réels
   (gitignorés, contiennent les vrais chemins `/home/ebola/...`), se rappeler
   qu'ils ne sont pas versionnés : toute évolution structurelle doit aussi
