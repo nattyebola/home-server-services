@@ -1,5 +1,6 @@
 # local tooling config (machine/session-specific)
 .claude/settings.local.json
+server.geany
 
 # secrets / deployment-identifying values
 .env
