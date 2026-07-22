@@ -38,6 +38,10 @@ explicitement :
   chemins de cette machine.
 - **Nextcloud** : image communautaire (pas AIO — incompatible avec
   rootless/infra-as-code, cf. README).
+- **Seerr (`seerr/`, image `ghcr.io/seerr-team/seerr`)** pour la recherche/
+  requête unifiée, pas Jellyseerr/Overseerr — les deux projets ont fusionné
+  dans Seerr et sont dépréciés depuis (voir docs.seerr.dev). Ne pas proposer
+  de revenir sur l'ancienne image.
 - **Repo public** sur GitHub (`nattyebola/home-server-services`, remote
   `origin` via deploy key dédiée `~/.ssh/id_ed25519_server_backup` / alias
   SSH `github-server-backup`, pas la clé perso de l'utilisateur). Ne
@@ -125,6 +129,24 @@ explicitement :
   présent (vérifié le 2026-07-22 en interrogeant directement l'API RPC de
   `transmission-vpn`). Le job périodique "inject" ne rattrape pas ces
   échecs non plus tant que ce réglage manque.
+- **`seerr` (image `ghcr.io/seerr-team/seerr`) ne chown pas lui-même son
+  volume `/app/config`** — contrairement aux images linuxserver.io (`arr/`),
+  il tourne nativement en UID 1000 sans étape root-puis-drop, donc si
+  `${DATA_ROOT}/.seerr/config` n'existe pas encore, Docker le crée en
+  `root:root` et le container crash en boucle (`EACCES` sur
+  `/app/config/logs`). Avant le premier `make up STACK=seerr` : `sudo chown
+  -R 1000:1000 ${DATA_ROOT}/.seerr` (1000 = PUID/PGID par défaut).
+- **Seerr ne détecte les films/séries déjà téléchargés par Sonarr/Radarr
+  comme "disponibles" qu'en scannant les bibliothèques Jellyfin** — pas en
+  interrogeant Sonarr/Radarr directement pour l'existant. Sans bibliothèque
+  Jellyfin pointant sur `${DATA_ROOT}/library` (montage ajouté le
+  2026-07-22 à `jellyfin/docker-compose.yml`, absent par défaut), tout
+  apparaît comme non disponible et Seerr propose de re-demander du contenu
+  déjà présent. Fix : ajouter les bibliothèques Jellyfin (`/library/film` en
+  type Films, `/library/series` en type Séries — noms de dossiers réels,
+  pas de traduction anglaise), puis lancer manuellement le job "Jellyfin
+  Full Library Scan" côté Seerr (Settings → Jobs & Cache) au lieu d'attendre
+  le cron périodique.
 
 ## Repo
 
@@ -142,7 +164,8 @@ server/
 ├── jellyfin/                 # docker-compose.yml + override.yml(.example) pour les bibliothèques
 ├── nextcloud/                 # db-next/app/web/news-updater ; .env/.example ; override.yml(.example)
 ├── vpn/                       # transmission-vpn (réseau isolé) + sidecar transmission-proxy ; .env/.example
-└── arr/                       # prowlarr/sonarr/radarr/cross-seed/recyclarr ; .env/.example ; override.yml.example (optionnel)
+├── arr/                       # prowlarr/sonarr/radarr/cross-seed/recyclarr ; .env/.example ; override.yml.example (optionnel)
+└── seerr/                     # recherche/requête unifiée (successeur Jellyseerr/Overseerr) ; pas de .env (config via son assistant web)
 ```
 
 `make network` (crée `traefik-public` si absent) avant tout `make up`.

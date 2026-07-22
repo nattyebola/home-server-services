@@ -13,6 +13,11 @@ services:
     volumes:
       - ${DATA_ROOT}/.jellyfin/cache:/cache
       - ${DATA_ROOT}/.jellyfin/config:/config
+      # bibliothèque organisée par Sonarr/Radarr (arr/docker-compose.yml) —
+      # chemin générique de ce repo, pas un choix propre à une machine,
+      # donc dans le compose file de base (contrairement aux montages
+      # personnels ci-dessous, qui vont dans l'override).
+      - ${DATA_ROOT}/library:/library:ro
       # media library mounts (host-specific) go in a local
       # docker-compose.override.yml — see docker-compose.override.yml.example
     networks:

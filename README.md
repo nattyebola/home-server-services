@@ -35,6 +35,11 @@ flowchart LR
     Sonarr -->|"vpn-internal"| VPN
     Radarr -->|"vpn-internal"| VPN
     CrossSeed[cross-seed] -->|"vpn-internal"| VPN
+
+    Traefik -->|"seerr.DOMAIN"| Seerr
+    Seerr -->|"arr-internal"| Sonarr
+    Seerr -->|"arr-internal"| Radarr
+    Seerr -->|"traefik-public"| Jellyfin
 ```
 
 Un seul point d'entrée HTTPS (Traefik, port 443) pour tous les services,
@@ -61,11 +66,17 @@ variable d'env (`traefik/.env`, voir plus bas), jamais en dur dans le YAML.
 
 Media server, accès GPU pour le transcodage (`/dev/dri/renderD128` +
 `group_add` sur le GID du groupe `render`). Cache et config sous
-`${DATA_ROOT}/.jellyfin/`. Les bibliothèques (musique, photos, dossier de
-téléchargements complétés...) ne sont **pas** dans le compose file de
-base : elles vont dans `jellyfin/docker-compose.override.yml` (voir
+`${DATA_ROOT}/.jellyfin/`. Les bibliothèques personnelles (musique, photos,
+dossier de téléchargements complétés...) ne sont **pas** dans le compose
+file de base : elles vont dans `jellyfin/docker-compose.override.yml` (voir
 [Installation](#installation)), pour ne pas coupler ce fichier aux dossiers
-d'une machine en particulier.
+d'une machine en particulier. `${DATA_ROOT}/library` (bibliothèque organisée
+par Sonarr/Radarr, voir [Arr](#arr-arr)) est monté en lecture seule dans le
+compose file de base à `/library` — chemin déjà générique à ce repo, pas un
+choix propre à une machine. Ajoutez ensuite deux bibliothèques dans l'UI
+Jellyfin (type Films → `/library/film`, type Séries → `/library/series`) :
+sans ça, [Seerr](#seerr-seerr) ne peut pas savoir qu'un film/une série est
+déjà téléchargé et le propose à tort en requête.
 
 ### Nextcloud (`nextcloud/`)
 
@@ -183,6 +194,47 @@ que le reste de `DATA_ROOT` (vérifiable avec `df` sur les deux chemins),
 les imports Sonarr/Radarr basculeront automatiquement en copie au lieu du
 hardlink — fonctionnel mais plus lent et transitoirement plus gourmand en
 espace disque.
+
+### Seerr (`seerr/`)
+
+Interface de recherche/demande unifiée pour les utilisateurs non-techniques :
+recherche un film/série (poster, synopsis), un bouton "Demander", et Seerr
+pilote Sonarr/Radarr en coulisses — plus besoin d'ouvrir leurs UI. Ancien
+Jellyseerr/Overseerr, les deux projets ont fusionné dans `ghcr.io/seerr-team/
+seerr` (dépréciés depuis, voir [docs.seerr.dev](https://docs.seerr.dev)) ; à
+ne pas rechercher séparément dans un futur avatar de ce repo.
+
+Contrairement aux images `arr/` (linuxserver.io), celle-ci tourne nativement
+en non-root (utilisateur `node`, UID 1000) : pas de `tmpfs /run` ni de
+`cap_add` nécessaire, juste `user: ${PUID}:${PGID}` classique — mais elle ne
+chown pas non plus son volume elle-même. Si `${DATA_ROOT}/.seerr/config`
+n'existe pas encore, Docker le crée en `root:root` et le container crash en
+boucle (`EACCES` sur `/app/config/logs`) : `sudo chown -R 1000:1000
+${DATA_ROOT}/.seerr` avant le tout premier `make up STACK=seerr`.
+
+Rejoint `arr-internal` (alias vers `arr_default`, le réseau de la stack
+`arr/`) pour atteindre `sonarr:8989`/`radarr:7878` directement par nom de
+container — ces deux services sont LAN-only sur `traefik-public` (middleware
+`ipallowlist`), une requête de Seerr passant par Traefik s'y ferait donc
+bloquer. Contrairement à `arr/`, Seerr est exposé sans restriction LAN
+(comme Jellyfin) : c'est justement l'interface pensée pour être utilisée
+par des non-techniciens, potentiellement hors LAN, avec son propre
+mécanisme d'authentification (compte local ou lié à un compte Jellyfin).
+
+Bootstrap après le premier `make up STACK=seerr` : tout se configure ensuite
+via l'assistant de première connexion (`https://seerr.<DOMAIN>`) — connexion
+à Jellyfin (`http://jellyfin:8096`) puis à Sonarr/Radarr
+(`http://sonarr:8989`/`http://radarr:7878`, clés API dans `arr/.env`), rien
+à préremplir côté fichiers de config. Nécessite donc `jellyfin` et `arr`
+déjà démarrés.
+
+Seerr détermine "déjà disponible" en scannant les bibliothèques **Jellyfin**
+(pas en interrogeant Sonarr/Radarr directement) : sans bibliothèque Jellyfin
+pointant sur `${DATA_ROOT}/library` (voir [Jellyfin](#jellyfin-jellyfin)),
+tout le contenu déjà téléchargé apparaît comme non disponible et Seerr
+propose à tort de le re-demander. Après avoir ajouté les bibliothèques
+Jellyfin, lancer manuellement le job **"Jellyfin Full Library Scan"** côté
+Seerr (Settings → Jobs & Cache) plutôt que d'attendre le cron périodique.
 
 ### Sauvegarde (`scripts/`)
 
@@ -345,8 +397,9 @@ moment du backup pour être fidèle.
 7. **DNS** : créez un enregistrement (A ou AAAA) pour chaque sous-domaine
    utilisé vers l'IP publique de la machine — au minimum
    `www.<DOMAIN>` et `jellyfin.<DOMAIN>`, plus `transmission.<DOMAIN>` si
-   vous déployez la stack VPN, et `prowlarr.<DOMAIN>`/`sonarr.<DOMAIN>`/
-   `radarr.<DOMAIN>` si vous déployez la stack `arr`.
+   vous déployez la stack VPN, `prowlarr.<DOMAIN>`/`sonarr.<DOMAIN>`/
+   `radarr.<DOMAIN>` si vous déployez la stack `arr`, et `seerr.<DOMAIN>`
+   si vous déployez `seerr`.
 
 8. **Démarrer Traefik en premier**
    ```sh
@@ -359,13 +412,16 @@ moment du backup pour être fidèle.
    make up STACK=jellyfin
    make up STACK=nextcloud
    make up STACK=vpn
-   make up STACK=arr    # nécessite vpn déjà démarré (rejoint son réseau vpn-internal)
+   make up STACK=arr      # nécessite vpn déjà démarré (rejoint son réseau vpn-internal)
+   mkdir -p ${DATA_ROOT}/.seerr/config && sudo chown -R ${PUID}:${PGID} ${DATA_ROOT}/.seerr
+   make up STACK=seerr    # nécessite jellyfin et arr déjà démarrés (rejoint arr_default)
    ```
 
 10. **Vérifier** : `https://www.<DOMAIN>` (Nextcloud, le compte admin est
     créé automatiquement depuis `NEXTCLOUD_ADMIN_USER`/`PASSWORD`),
-    `https://jellyfin.<DOMAIN>`, et `https://transmission.<DOMAIN>`
-    depuis le LAN.
+    `https://jellyfin.<DOMAIN>`, `https://transmission.<DOMAIN>` depuis le
+    LAN, et `https://seerr.<DOMAIN>` (assistant de première connexion, voir
+    [Seerr](#seerr-seerr)).
 
 11. **Sauvegardes** :
     ```sh

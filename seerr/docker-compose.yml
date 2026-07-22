@@ -1,0 +1,46 @@
+services:
+  seerr:
+    # Jellyseerr et Overseerr ont fusionné dans un projet unique, Seerr
+    # (https://docs.seerr.dev) — les deux anciens projets sont dépréciés.
+    # Migre automatiquement une éventuelle base Jellyseerr/Overseerr existante
+    # au premier démarrage, sans action manuelle.
+    image: ghcr.io/seerr-team/seerr:latest
+    restart: unless-stopped
+    init: true
+    # Contrairement aux images linuxserver.io (arr/), celle-ci tourne déjà en
+    # non-root nativement (utilisateur `node`, UID 1000) — pas besoin du
+    # montage tmpfs /run ni d'un cap_add pour démarrer.
+    user: "${PUID}:${PGID}"
+    volumes:
+      - ${DATA_ROOT}/.seerr/config:/app/config
+    networks:
+      - traefik-public
+      # Atteint sonarr:8989/radarr:7878 directement par nom de container —
+      # ces deux services sont LAN-only sur traefik-public (middleware
+      # ipallowlist), une requête venant du réseau Docker s'y ferait bloquer.
+      - arr-internal
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.seerr.rule=Host(`seerr.${DOMAIN}`)"
+      - "traefik.http.routers.seerr.entrypoints=websecure"
+      - "traefik.http.routers.seerr.tls.certresolver=letsencrypt"
+      - "traefik.http.services.seerr.loadbalancer.server.port=5055"
+      - "traefik.docker.network=traefik-public"
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+
+networks:
+  traefik-public:
+    external: true
+  arr-internal:
+    external: true
+    # arr/docker-compose.yml ne fixe pas de `name:` de projet compose, donc
+    # son réseau "default" est préfixé par le nom du dossier (arr_default) —
+    # même logique que vpn_vpn-internal dans arr/docker-compose.yml.
+    name: arr_default
