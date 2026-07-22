@@ -2,27 +2,241 @@
 # arr/.env (SONARR_API_KEY/RADARR_API_KEY) passées au conteneur via
 # env_file, lues ici via le tag `!env_var`.
 #
-# Les noms de template ci-dessous sont des EXEMPLES à adapter — lancer
-# `docker compose ... exec recyclarr recyclarr list templates` une fois le
-# conteneur up pour voir la liste actuelle avant de choisir les profils
-# réellement utilisés. Doc : https://recyclarr.dev/wiki/yaml/config-reference/
+# `include: template: <id>` (mécanisme documenté par recyclarr.dev) ne
+# résout PAS les profils du guide TRaSH malgré `recyclarr list
+# quality-profiles`/`list custom-format-groups` qui les listent — testé le
+# 2026-07-22, échoue toujours avec "Unable to find include template". Les
+# ids listés par ces commandes ne sont utilisables qu'en copiant leur
+# contenu directement ici via `quality_profiles:`/`custom_format_groups:`
+# (cf. fichiers `radarr/templates/**/*.yml` et `sonarr/templates/*.yml`
+# dans le dépôt config-templates monté dans le conteneur sous
+# /config/resources) — c'est ce qui est fait ci-dessous. Revalider avec
+# `recyclarr sync --preview` avant tout changement.
 
 sonarr:
-  main:
+  sonarr-main:
     base_url: http://sonarr:8989
     api_key: !env_var SONARR_API_KEY
     quality_definition:
       type: series
-    include:
-      - template: sonarr-quality-definition-series
-      - template: sonarr-v4-quality-profile-web-1080p
+    # Le type "series" du guide TRaSH ne fixe AUCUN maxSize pour
+    # WEBDL-2160p/WEBRip-2160p (seulement minSize=25 Mo/min) — sur des
+    # séries bien encodées type House of the Dragon ça laissait passer des
+    # épisodes de 8-10 Go (100-150 Mo/min). recyclarr n'a pas de propriété
+    # yaml pour surcharger un palier précis de la table de tailles (testé
+    # le 2026-07-22 : ni `preferred_ratio` seul — recalcule juste le
+    # "preferred" entre min et un plafond interne de 1000 Mo/min, pas ce
+    # qu'on veut — ni un hypothétique `sizes:` — n'existe pas). Corrigé à la
+    # main sur Sonarr (id 19 = WEBRip-2160p, id 20 = WEBDL-2160p) :
+    #   maxSize=100, preferredSize=85 (Mo/min) → ~6,5-7 Go pour un épisode
+    #   de ~65 min au lieu de 8-10+ Go sans limite.
+    # Comme "Quality Sizes" est resynchronisé en entier à chaque
+    # `recyclarr sync`, repasser ces deux valeurs après coup :
+    #   for id in 19 20; do
+    #     curl -s -H "X-Api-Key: $SONARR_API_KEY" http://localhost:8989/api/v3/qualitydefinition/$id \
+    #       | jq '.maxSize=100 | .preferredSize=85' \
+    #       | curl -s -X PUT -H "X-Api-Key: $SONARR_API_KEY" -H "Content-Type: application/json" \
+    #           --data @- http://localhost:8989/api/v3/qualitydefinition/$id
+    #   done
+    # WEB-2160p (Combined) : équivalent série du profil Radarr [SQP] SQP-1
+    # WEB (2160p) — WEB 1080p/2160p uniquement (pas de Bluray/Remux/BR-DISK/
+    # 720p). Contrairement au profil Radarr, celui-ci n'a pas de
+    # trash_score_set figé (formatItems du guide ne contient que
+    # Repack/Proper + WEB Tier + WEB Scene) — donc pas de piège caché
+    # language/minFormatScore à corriger après coup ici, testé le
+    # 2026-07-22 (minFormatScore déjà à 0, pas de champ language dans le
+    # profil). Volontairement PAS d'ajout du groupe [Optional] Language
+    # Profiles ci-dessous : son item par défaut "Language: Not Original"
+    # rejetterait les mêmes releases MULTi/VFF françaises que le bug Radarr.
+    quality_profiles:
+      - trash_id: c4cadd6b35b95f62c3d47a408e53e2f7  # WEB-2160p (Combined)
+        reset_unmatched_scores:
+          enabled: true
+    # Même remarque que côté Radarr : sélectionner un CF via
+    # custom_format_groups le fait exister/matcher mais ne lui donne un
+    # score que s'il fait partie du trash_score_set du profil — ici il n'y
+    # en a pas, donc TOUT passe par assign_scores_to ci-dessous.
+    custom_formats:
+      - trash_ids:
+          - 15a05bc7c1a36e2b57fd628f8977e2fc  # AV1 — neutre, même raisonnement que côté Radarr
+        assign_scores_to:
+          - name: WEB-2160p (Combined)
+            score: 0
+      - trash_ids:
+          - 041d90b435ebd773271cea047a457a6a  # x266/VVC — neutre, même raisonnement que côté Radarr
+        assign_scores_to:
+          - name: WEB-2160p (Combined)
+            score: 0
+      - trash_ids:
+          - cddfb4e32db826151d97352b8e37c648  # x264 — légèrement pénalisé
+        assign_scores_to:
+          - name: WEB-2160p (Combined)
+            score: -100
+      - trash_ids:
+          - c9eafd50846d299b862ca9bb6ea91950  # x265/HEVC — légèrement boosté
+        assign_scores_to:
+          - name: WEB-2160p (Combined)
+            score: 50
+      - trash_ids:
+          - 7ba05c6e0e14e793538174c679126996  # MULTi
+        assign_scores_to:
+          - name: WEB-2160p (Combined)
+            score: 300
+      - trash_ids:
+          - 505d871304820ba7106b693be6fe4a9e  # HDR
+        assign_scores_to:
+          - name: WEB-2160p (Combined)
+            score: 500
+      - trash_ids:
+          - 7c3a61a9c6cb04f52f1544be6d44a026  # DV Boost
+        assign_scores_to:
+          - name: WEB-2160p (Combined)
+            score: 1000
+      - trash_ids:
+          - 0c4b99df9206d2cfac3c05ab897dd62a  # HDR10+ Boost
+        assign_scores_to:
+          - name: WEB-2160p (Combined)
+            score: 100
+      - trash_ids:
+          - 9b64dff695c2115facf1b6ea59c9bd07  # x265 (no HDR/DV) — légère pénalité, cohérent avec la préférence HDR
+        assign_scores_to:
+          - name: WEB-2160p (Combined)
+            score: -100
+      - trash_ids:
+          - 2016d1676f5ee13a5b7257ff86ac9a93  # SDR
+        assign_scores_to:
+          - name: WEB-2160p (Combined)
+            score: -100
+      - trash_ids:
+          - 83304f261cf516bb208c18c54c0adf97  # SDR (no WEBDL)
+        assign_scores_to:
+          - name: WEB-2160p (Combined)
+            score: -100
+      - trash_ids:
+          - 07a32f77690263bb9fda1842db7e273f  # VOSTFR
+        assign_scores_to:
+          - name: WEB-2160p (Combined)
+            score: 100
+    custom_format_groups:
+      add:
+        # select: omis — les items par défaut du groupe couvrent déjà ce
+        # qu'on veut ici (les lister explicitement ne fait que déclencher un
+        # warning "redundant" de recyclarr sans rien changer)
+        - trash_id: e3f37512790f00d0e89e54fe5e790d1c  # [Optional] Golden Rule UHD
+        - trash_id: 85fae4a2294965b75710ef2989c850eb  # [Streaming Services] HD/UHD boost
+        - trash_id: 7e1724c5da59e7474803ad25be98f6a3  # [HDR Formats] HDR
+        - trash_id: e0b2774083df4265f25c9e5bc6c80940  # [HDR Formats] DV Boost
+        - trash_id: 7d366c213e5c23a052b157356fac1921  # [HDR Formats] HDR10+ Boost
+        - trash_id: 59c3af66780d08332fdc64e68297098f  # [Unwanted] Unwanted Formats
+          select:
+            - 15a05bc7c1a36e2b57fd628f8977e2fc  # AV1 — gardé ici juste pour la création/matching, score neutralisé ci-dessus
+            - 32b367365729d530ca1c124a0b180c64  # Bad Dual Groups
+            - 85c61753df5da1fb2aab6f2a47426b09  # BR-DISK
+            - 6f808933a71bd9666531610cb8c059cc  # BR-DISK (BTN)
+            - fbcb31d8dabd2a319072b84fc0b7249c  # Extras
+            - 9c11cd3f07101cdba90a2d81cf0e56b4  # LQ
+            - e2315f990da2e2cbfc9fa5b7a6fcfe48  # LQ (Release Title)
+            - 23297a736ca77c0fc8e70f8edd7ee56c  # Upscaled
+        # select: aucun item par défaut, select obligatoire (même remarque que côté Radarr)
+        - trash_id: e1053c0ef622df3749fa43c22865663a  # [HDR Formats] SDR
+          select:
+            - 2016d1676f5ee13a5b7257ff86ac9a93  # SDR
+            - 83304f261cf516bb208c18c54c0adf97  # SDR (no WEBDL)
+        # Ajouts demandés : codecs modernes + MULTi (existence/matching — scores réels ci-dessus)
+        - trash_id: f4a0410a1df109a66d6e47dcadcce014  # [Optional] Miscellaneous
+          select:
+            - cddfb4e32db826151d97352b8e37c648  # x264
+            - c9eafd50846d299b862ca9bb6ea91950  # x265
+            - 041d90b435ebd773271cea047a457a6a  # x266
+            - 7ba05c6e0e14e793538174c679126996  # MULTi
+        - trash_id: 6a554241c0a7121dfa220dcb22066d0f  # [Optional] French Audio Version
+          select:
+            - 07a32f77690263bb9fda1842db7e273f  # VOSTFR
 
 radarr:
-  main:
+  radarr-main:
     base_url: http://radarr:7878
     api_key: !env_var RADARR_API_KEY
     quality_definition:
-      type: movie
-    include:
-      - template: radarr-quality-definition-movie
-      - template: radarr-v5-quality-profile-hd-bluray-web
+      type: sqp-streaming
+    quality_profiles:
+      - trash_id: e91c9adaca0231493f4af0d571b907f9  # [SQP] SQP-1 WEB (2160p) — 1080p/2160p Bluray+WEB, pas de Remux/BR-DISK
+        reset_unmatched_scores:
+          enabled: true
+        min_format_score: 0  # 1000 par défaut (guide) — bloquait tout : score qui repose sur des tags de release-group "de confiance" (BHDStudio, hallowed, WEB/Bluray/UHD Tier N) absents chez C411/Torr9
+    # IMPORTANT : le champ "language" du profil Radarr (id 7) est forcé à
+    # "Original" par le JSON du guide à CHAQUE `recyclarr sync` — recyclarr
+    # n'expose aucune propriété yaml pour le surcharger (`language:` renvoie
+    # "Property not found", testé le 2026-07-22). Comme le profil ne veut que
+    # de l'anglais, ça rejette la quasi-totalité des releases MULTi/VFF/VFI
+    # des trackers FR. Après CHAQUE `recyclarr sync`, repasser le profil en
+    # "Any" à la main :
+    #   curl -s -H "X-Api-Key: $RADARR_API_KEY" http://localhost:7878/api/v3/qualityprofile/7 \
+    #     | jq '.language = {"id":-1,"name":"Any"}' \
+    #     | curl -s -X PUT -H "X-Api-Key: $RADARR_API_KEY" -H "Content-Type: application/json" \
+    #         --data @- http://localhost:7878/api/v3/qualityprofile/7
+    # (id 7 à adapter si le profil est recréé un jour avec un autre id)
+    # Le profil SQP-1 WEB (2160p) a son propre barème de scores figé par le
+    # guide (`trash_score_set`), appliqué via `reset_unmatched_scores` —
+    # sélectionner un Custom Format via `custom_format_groups` le fait
+    # exister/matcher mais NE contrôle PAS son score s'il fait partie de ce
+    # barème (constaté empiriquement le 2026-07-22 : la sélection seule de
+    # x264/x265/x266 ci-dessous ne changeait pas leurs scores). Seul
+    # `custom_formats: assign_scores_to:` peut surcharger le score d'un CF
+    # précis pour ce profil.
+    custom_formats:
+      - trash_ids:
+          - cae4ca30163749b891686f95532519bd  # AV1 — neutre au lieu de -10000 (guide) : demandé explicitement, cf. discussion sur la rareté des releases AV1 pour les films
+        assign_scores_to:
+          - name: "[SQP] SQP-1 WEB (2160p)"
+            score: 0
+      - trash_ids:
+          - 390455c22a9cac81a738f6cbad705c3c  # x266/VVC — neutre au lieu de -10000 (guide) : même raisonnement que AV1, codec encore expérimental
+        assign_scores_to:
+          - name: "[SQP] SQP-1 WEB (2160p)"
+            score: 0
+      - trash_ids:
+          - 2899d84dc9372de3408e6d8cc18e9666  # x264 — légèrement pénalisé (codec plus ancien)
+        assign_scores_to:
+          - name: "[SQP] SQP-1 WEB (2160p)"
+            score: -100
+      - trash_ids:
+          - 9170d55c319f4fe40da8711ba9d8050d  # x265/HEVC — légèrement boosté (codec moderne, bien supporté)
+        assign_scores_to:
+          - name: "[SQP] SQP-1 WEB (2160p)"
+            score: 50
+      # Langue : préférence statique MULTi > VOSTFR > rien (pas de règle
+      # conditionnelle par langue originale du film — demandé explicitement,
+      # cf. discussion, version "légère" plutôt que 2 profils + script
+      # d'auto-assignation par langue originale)
+      - trash_ids:
+          - 4b900e171accbfb172729b63323ea8ca  # MULTi
+        assign_scores_to:
+          - name: "[SQP] SQP-1 WEB (2160p)"
+            score: 300
+      - trash_ids:
+          - 9172b2f683f6223e3a1846427b417a3d  # VOSTFR
+        assign_scores_to:
+          - name: "[SQP] SQP-1 WEB (2160p)"
+            score: 100
+    custom_format_groups:
+      add:
+        # Défauts du profil SQP-1 WEB (2160p) — select: omis, cf. remarque Sonarr ci-dessus
+        - trash_id: 15b1cf0b6f1a1493856a4355907affee  # [Unwanted] Unwanted Formats SQP
+        # Ajouts demandés : codecs modernes — existence/matching des CF (scores réels ci-dessus)
+        - trash_id: 9337080378236ce4c0b183e35790d2a7  # [Optional] Miscellaneous — codecs + MULTi
+          select:
+            - 2899d84dc9372de3408e6d8cc18e9666  # x264
+            - 9170d55c319f4fe40da8711ba9d8050d  # x265
+            - 390455c22a9cac81a738f6cbad705c3c  # x266
+            - 4b900e171accbfb172729b63323ea8ca  # MULTi
+        - trash_id: 741d323a2bb14939d1f53659ef0d5e68  # [Optional] French Audio Version
+          select:
+            - 9172b2f683f6223e3a1846427b417a3d  # VOSTFR
+        # Ajouts demandés : HDR préféré (HDR simple déjà scoré par défaut par le profil SQP-1 WEB 2160p)
+        - trash_id: 1616617ab3a14397a2b2321bcbda44d1  # [HDR Formats] DV Boost
+        - trash_id: b29413a7487478fe98228ce79e5689e4  # [HDR Formats] HDR10+ Boost
+        - trash_id: 47f0d69750de9e16855915fa73bb7b08  # [Optional] SDR — pénalise le SDR (aucun item par défaut, select obligatoire)
+          select:
+            - 9c38ebb7384dada637be8899efa68e6f  # SDR
+            - 25c12f78430a3a23413652cbd1d48d77  # SDR (no WEBDL)
