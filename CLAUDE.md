@@ -117,6 +117,14 @@ explicitement :
   méthode documentée par cross-seed est un Custom Script
   (`arr/scripts/cross-seed-notify.sh`) qui lit `$sonarr_download_id`/
   `$radarr_download_id` et appelle l'API cross-seed lui-même.
+- **`useClientTorrents: true` requis dans `arr/cross-seed/config.js`**
+  (faux par défaut chez cross-seed) — sans ça, le webhook déclenché par
+  `arr/scripts/cross-seed-notify.sh` ne consulte jamais le client réel pour
+  matcher l'infoHash reçu et échoue systématiquement (`Torrent client does
+  not have any torrent with criteria`), même quand le torrent y est bien
+  présent (vérifié le 2026-07-22 en interrogeant directement l'API RPC de
+  `transmission-vpn`). Le job périodique "inject" ne rattrape pas ces
+  échecs non plus tant que ce réglage manque.
 
 ## Repo
 

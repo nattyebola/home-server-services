@@ -119,6 +119,12 @@ Automatisation de récupération séries/films : cinq services.
   Sonarr — celui-ci envoie un payload de test factice (pas de vrai hash de
   torrent) que cross-seed rejette, ce qui bloque l'enregistrement de la
   connexion côté Sonarr/Radarr.
+  `useClientTorrents` (faux par défaut chez cross-seed) doit être à `true`
+  dans `arr/cross-seed/config.js` : sans ça, le webhook déclenché par ce
+  script ne consulte jamais le client réel pour matcher le hash reçu et
+  échoue systématiquement (`Torrent client does not have any torrent with
+  criteria`), même quand le torrent y est bien présent — vérifié en
+  interrogeant directement l'API RPC de `transmission-vpn`.
 - `recyclarr` : synchronise dans Sonarr/Radarr des profils qualité/custom
   formats tout faits (TRaSH-Guides) au lieu de les construire à la main —
   tourne en continu avec son propre cron interne (`@daily` par défaut).

@@ -11,6 +11,11 @@ module.exports = {
   sonarr: [`http://sonarr:8989/?apikey=${process.env.SONARR_API_KEY}`],
   radarr: [`http://radarr:7878/?apikey=${process.env.RADARR_API_KEY}`],
   torrentClients: ["transmission:http://transmission-vpn:9091/transmission/rpc"],
+  // false par défaut chez cross-seed — sans ça, le webhook déclenché par
+  // arr/scripts/cross-seed-notify.sh ne consulte jamais le client réel pour
+  // matcher l'infoHash reçu et échoue systématiquement ("Torrent client does
+  // not have any torrent with criteria") même quand le torrent y est bien.
+  useClientTorrents: true,
   // même arborescence que le volume /data monté en lecture seule dans
   // docker-compose.yml (miroir de transmission-vpn:/data)
   dataDirs: ["/data/completed"],
