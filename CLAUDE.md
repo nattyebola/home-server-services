@@ -153,25 +153,35 @@ explicitement :
   pas de traduction anglaise), puis lancer manuellement le job "Jellyfin
   Full Library Scan" côté Seerr (Settings → Jobs & Cache) au lieu d'attendre
   le cron périodique.
+- **Un bind-mount ne peut pas être monté sous un point de montage déjà
+  `:ro`** — Docker ne peut pas créer le mountpoint interne dans un parent
+  en lecture seule (`mkdirat ... read-only file system`). Déjà rencontré
+  sur `arr/cross-seed` (`config.js` vs volume `/links`, voir son compose
+  file) et à nouveau le 2026-07-23 sur `dashboard/` (voulait monter
+  `./assets` sous `./html:...:ro`) — solution : un seul mount, le script
+  de génération (`scripts/generate-dashboard.sh`) copie les logos dans le
+  dossier généré plutôt que de les monter séparément.
 
 ## Repo
 
 ```
 server/
 ├── .env.shared(.example)     # PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT — réel gitignoré, .example versionné
-├── Makefile                  # network/up/down/config/logs/update/update-all/backup/restore/cron-install STACK=<nom>
+├── Makefile                  # network/up/down/config/logs/update/update-all/backup/restore/cron-install STACK=<nom> ; dashboard-refresh (sans STACK)
 ├── README.md                  # doc humaine : services, choix, problèmes rencontrés, install
 ├── scripts/
 │   ├── crontab                    # source de vérité du crontab hôte — `make cron-install`
 │   ├── backup.sh                   # sauvegarde restic hebdomadaire
-│   └── restore.sh                  # restauration guidée d'un snapshot restic
+│   ├── restore.sh                  # restauration guidée d'un snapshot restic
+│   └── generate-dashboard.sh       # régénère dashboard/html/ — `make dashboard-refresh`
 ├── sauvegarde/                # non versionné — dépôt restic + mot de passe + staging
-├── traefik/                  # socket-proxy + traefik ; .env(ACME_EMAIL)/.example
+├── traefik/                  # socket-proxy + traefik + dashboard (page statique de liens) ; .env(ACME_EMAIL)/.example
 ├── jellyfin/                 # docker-compose.yml + override.yml(.example) pour les bibliothèques
 ├── nextcloud/                 # db-next/app/web/news-updater ; .env/.example ; override.yml(.example)
 ├── vpn/                       # transmission-vpn (réseau isolé) + sidecar transmission-proxy ; .env/.example
 ├── arr/                       # prowlarr/sonarr/radarr/cross-seed/recyclarr ; .env/.example ; override.yml.example (optionnel)
-└── seerr/                     # recherche/requête unifiée (successeur Jellyseerr/Overseerr) ; pas de .env (config via son assistant web)
+├── seerr/                     # recherche/requête unifiée (successeur Jellyseerr/Overseerr) ; pas de .env (config via son assistant web)
+└── dashboard/                 # assets (logos) + html/ généré — pas de compose file, servi par traefik/ (voir ci-dessus)
 ```
 
 `make network` (crée `traefik-public` si absent) avant tout `make up`.

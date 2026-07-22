@@ -6,7 +6,7 @@ STACKS := traefik jellyfin nextcloud vpn arr seerr
 
 UPDATE_STACKS := nextcloud vpn jellyfin arr seerr
 
-.PHONY: network up down config logs update update-all backup restore cron-install
+.PHONY: network up down config logs update update-all backup restore cron-install dashboard-refresh
 
 network:
 	@docker network inspect $(NETWORK) >/dev/null 2>&1 || docker network create $(NETWORK)
@@ -60,6 +60,14 @@ update-all:
 		echo "\n======================== update $$s ========================\n"; \
 		$(MAKE) update STACK=$$s || exit 1; \
 	done
+
+# régénère dashboard/html/index.html à partir des labels Traefik réels
+# (docker compose config) et de l'état d'exécution courant (docker ps) —
+# voir scripts/generate-dashboard.sh. Servi par le service dashboard de
+# traefik/docker-compose.yml (make up STACK=traefik), pas besoin qu'il
+# tourne pour régénérer le contenu.
+dashboard-refresh:
+	@scripts/generate-dashboard.sh
 
 # weekly restic backup (nextcloud DB dump + data + .env secrets + image
 # digest manifest) — see scripts/backup.sh. Also run by cron, see CLAUDE.md.

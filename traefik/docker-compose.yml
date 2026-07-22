@@ -53,6 +53,41 @@ services:
       options:
         max-size: 1m
 
+  # Page statique de liens vers les services (public/local/arrêté) — Traefik
+  # ne sait servir aucun fichier statique lui-même (pur reverse-proxy, pas de
+  # provider "fichiers"), un backend HTTP minimal reste donc nécessaire.
+  # Contenu dans ../dashboard/ (assets versionnés + html/ généré par
+  # scripts/generate-dashboard.sh, voir CLAUDE.md), regroupé ici plutôt que
+  # dans un stack séparé : c'est un backend d'ingress, pas un service à lui.
+  # Même image que vpn/transmission-proxy : écoute en 8080 sans cap_add.
+  dashboard:
+    image: nginxinc/nginx-unprivileged:alpine
+    restart: unless-stopped
+    volumes:
+      - ../dashboard/html:/usr/share/nginx/html:ro
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - traefik-public
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`dashboard.${DOMAIN}`)"
+      - "traefik.http.routers.dashboard.entrypoints=websecure"
+      - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
+      # Liste tous les sous-domaines internes : LAN-only comme arr/transmission,
+      # pas exposé au WAN comme jellyfin/nextcloud/seerr.
+      - "traefik.http.routers.dashboard.middlewares=dashboard-lan-only"
+      - "traefik.http.middlewares.dashboard-lan-only.ipallowlist.sourcerange=192.168.0.0/24"
+      - "traefik.http.services.dashboard.loadbalancer.server.port=8080"
+      - "traefik.docker.network=traefik-public"
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+
 networks:
   socket-proxy:
     internal: true

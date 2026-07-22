@@ -40,6 +40,8 @@ flowchart LR
     Seerr -->|"arr-internal"| Sonarr
     Seerr -->|"arr-internal"| Radarr
     Seerr -->|"traefik-public"| Jellyfin
+
+    Traefik -.->|"dashboard.DOMAIN\nLAN only"| Dashboard[dashboard]
 ```
 
 Un seul point d'entrée HTTPS (Traefik, port 443) pour tous les services,
@@ -51,13 +53,17 @@ Docker, mais ne parle jamais au socket Docker en direct : il passe par un
 
 ### Traefik (`traefik/`)
 
-Reverse proxy + TLS. Deux containers :
+Reverse proxy + TLS. Trois containers :
 - `socket-proxy` (`tecnativa/docker-socket-proxy`) : expose une API Docker
   restreinte (containers/networks/services/tasks, lecture seule) sur un
   réseau interne dédié — Traefik ne voit jamais `/var/run/docker.sock`.
 - `traefik` : écoute 80/443 sur l'hôte (mappés vers 8080/8443 en interne,
   car le process tourne en non-root et ne peut pas biner les ports < 1024
   directement), obtient les certificats Let's Encrypt via HTTP challenge.
+- `dashboard` : sert la page statique de liens vers les services (voir
+  [Dashboard](#dashboard-dashboard)) — un backend HTTP minimal, regroupé
+  ici plutôt que dans son propre stack, car Traefik ne sait servir aucun
+  fichier statique lui-même (pur reverse-proxy, sans provider "fichiers").
 
 Config statique dans `traefik.yml`. L'email de contact ACME est fourni par
 variable d'env (`traefik/.env`, voir plus bas), jamais en dur dans le YAML.
@@ -235,6 +241,38 @@ tout le contenu déjà téléchargé apparaît comme non disponible et Seerr
 propose à tort de le re-demander. Après avoir ajouté les bibliothèques
 Jellyfin, lancer manuellement le job **"Jellyfin Full Library Scan"** côté
 Seerr (Settings → Jobs & Cache) plutôt que d'attendre le cron périodique.
+
+### Dashboard (`dashboard/`)
+
+Page statique listant les services exposés via Traefik, répartis en trois
+groupes — **Public** (Jellyfin, Nextcloud, Seerr), **Local/LAN**
+(Transmission, Prowlarr, Sonarr, Radarr) et **Stack non lancée** (tout
+service dont le container n'est pas actuellement démarré) — avec logo
+cliquable qui redirige vers le service. Servie par le container
+`dashboard` de la stack `traefik/` (voir [Traefik](#traefik-traefik)),
+exposée en LAN-only (`dashboard.<DOMAIN>`, middleware `ipallowlist` — elle
+liste tous les sous-domaines internes, pas de raison de l'exposer au WAN).
+Pas de stack dédiée : Traefik ne sachant servir aucun fichier statique
+lui-même, ce backend HTTP minimal est rattaché à sa stack plutôt qu'à un
+`docker-compose.yml` séparé — `dashboard/` ne contient donc que les assets
+et le script de génération, pas de compose file.
+
+Le contenu (`dashboard/html/`, gitignoré) est entièrement généré par
+`make dashboard-refresh` (`scripts/generate-dashboard.sh`), qui dérive
+public/local/arrêté de l'état réel plutôt que d'une liste à maintenir à la
+main :
+
+- `docker compose config --format json` sur chaque stack pour lire les
+  labels Traefik réels (`Host()` → sous-domaine, présence d'un middleware
+  `ipallowlist` sur le router → local vs public) ;
+- `docker ps` pour savoir quels services sont actuellement démarrés.
+
+Seule metadata non dérivable des compose files : le nom affiché et le
+fichier logo (`dashboard/assets/logos/*.svg`, versionnés) associés à
+chaque service — à compléter dans `scripts/generate-dashboard.sh` quand un
+nouveau service exposé via Traefik apparaît. La regénération n'a pas
+besoin que le container tourne ; démarrer/mettre à jour la stack (`make up`
+/ `make update STACK=traefik`) sert juste le résultat déjà généré.
 
 ### Sauvegarde (`scripts/`)
 
