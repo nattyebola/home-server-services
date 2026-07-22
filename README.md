@@ -289,6 +289,12 @@ moment du backup pour être fidèle.
   risquer une casse lors d'une mise à jour. La reproductibilité d'une
   restauration passe par le manifeste de digests capturé à chaque backup
   (voir [Sauvegarde](#sauvegarde-scripts)), pas par des tags fixes.
+- **Timezone** : chaque service monte `/etc/localtime:/etc/localtime:ro`
+  (lecture seule) depuis l'hôte plutôt que de fixer une variable d'env
+  `TZ` — ne dépend pas d'un paquet `tzdata` présent dans l'image et suit
+  automatiquement les changements d'heure d'été/hiver de l'hôte. Motif déjà
+  en place sur `vpn/transmission-vpn` avant même l'existence de ce repo,
+  généralisé aux autres stacks le 2026-07-23.
 
 ## Pièges rencontrés
 

@@ -13,6 +13,7 @@ services:
     user: "${PUID}:${PGID}"
     volumes:
       - ${DATA_ROOT}/.seerr/config:/app/config
+      - /etc/localtime:/etc/localtime:ro
     networks:
       - traefik-public
       # Atteint sonarr:8989/radarr:7878 directement par nom de container —

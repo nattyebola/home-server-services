@@ -42,6 +42,12 @@ explicitement :
   requête unifiée, pas Jellyseerr/Overseerr — les deux projets ont fusionné
   dans Seerr et sont dépréciés depuis (voir docs.seerr.dev). Ne pas proposer
   de revenir sur l'ancienne image.
+- **Timezone de tous les containers alignée sur l'hôte** via bind-mount
+  `/etc/localtime:/etc/localtime:ro` (déjà en place sur `vpn/transmission-vpn`
+  depuis le début, généralisé à tous les services le 2026-07-23) — préféré à
+  une variable d'env `TZ` : ne dépend pas d'un paquet `tzdata` présent dans
+  chaque image et suit automatiquement les changements d'heure d'été/hiver
+  de l'hôte. Ajouter ce montage à tout nouveau service plutôt que `TZ=...`.
 - **Repo public** sur GitHub (`nattyebola/home-server-services`, remote
   `origin` via deploy key dédiée `~/.ssh/id_ed25519_server_backup` / alias
   SSH `github-server-backup`, pas la clé perso de l'utilisateur). Ne

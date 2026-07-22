@@ -16,6 +16,7 @@ services:
       - 1.0.0.1
     volumes:
       - ${DATA_ROOT}/.arr/prowlarr/config:/config
+      - /etc/localtime:/etc/localtime:ro
     networks:
       - default
       - traefik-public
@@ -63,6 +64,7 @@ services:
       # (même disque que /data) pour que les hardlinks fonctionnent.
       - ${DATA_ROOT}/library:/library
       - ./scripts/cross-seed-notify.sh:/config/custom-cross-seed-notify.sh:ro
+      - /etc/localtime:/etc/localtime:ro
     env_file:
       - .env
     networks:
@@ -105,6 +107,7 @@ services:
       - ${DATA_ROOT}/.transmission/data:/data
       - ${DATA_ROOT}/library:/library
       - ./scripts/cross-seed-notify.sh:/config/custom-cross-seed-notify.sh:ro
+      - /etc/localtime:/etc/localtime:ro
     env_file:
       - .env
     networks:
@@ -157,6 +160,7 @@ services:
       # conteneur (testé) — Docker ne peut pas créer le mountpoint interne
       # dans un parent en lecture seule.
       - ${DATA_ROOT}/.arr/cross-seed/links:/links
+      - /etc/localtime:/etc/localtime:ro
     env_file:
       - .env
     networks:
@@ -184,6 +188,7 @@ services:
     volumes:
       - ${DATA_ROOT}/.arr/recyclarr/config:/config
       - ./recyclarr/recyclarr.yml:/config/recyclarr.yml:ro
+      - /etc/localtime:/etc/localtime:ro
     env_file:
       - .env
     networks:

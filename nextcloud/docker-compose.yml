@@ -4,6 +4,7 @@ services:
     restart: unless-stopped
     volumes:
       - ${DATA_ROOT}/.nextcloud/db-next:/var/lib/postgresql/data:Z
+      - /etc/localtime:/etc/localtime:ro
     env_file:
       - .env
     healthcheck:
@@ -32,6 +33,7 @@ services:
     user: "${PUID}:${PGID}"
     volumes:
       - ${DATA_ROOT}/.nextcloud/nexcloud:/var/www/html
+      - /etc/localtime:/etc/localtime:ro
       # extra external-storage mounts (host-specific) go in a local
       # docker-compose.override.yml — see docker-compose.override.yml.example
     extra_hosts:
@@ -58,6 +60,7 @@ services:
     restart: unless-stopped
     volumes:
       - ${DATA_ROOT}/.nextcloud/nexcloud:/var/www/html:ro
+      - /etc/localtime:/etc/localtime:ro
     depends_on:
       - app
     security_opt:
@@ -86,6 +89,8 @@ services:
   news-updater:
     image: kr3ssh/nextcloud-news-updater
     restart: unless-stopped
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
     depends_on:
       - app
     environment:

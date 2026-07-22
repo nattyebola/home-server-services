@@ -13,6 +13,7 @@ services:
     volumes:
       - ${DATA_ROOT}/.jellyfin/cache:/cache
       - ${DATA_ROOT}/.jellyfin/config:/config
+      - /etc/localtime:/etc/localtime:ro
       # bibliothèque organisée par Sonarr/Radarr (arr/docker-compose.yml) —
       # chemin générique de ce repo, pas un choix propre à une machine,
       # donc dans le compose file de base (contrairement aux montages
