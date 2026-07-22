@@ -1,0 +1,26 @@
+# Copy this file to docker-compose.override.yml (gitignored, host-specific)
+# ONLY if you want Sonarr/Radarr's organized library on a folder OUTSIDE
+# DATA_ROOT. By default, no override is needed at all: the base
+# docker-compose.yml already mounts ${DATA_ROOT}/library at /library in
+# both sonarr and radarr, and that's the recommended setup (see README.md —
+# "Arr" section — for why a separate organized library exists in the first
+# place, distinct from the raw downloads folder).
+#
+# WARNING: don't copy this file with the placeholder path below left
+# unfilled — Docker will silently create a bogus root-owned directory tree
+# at literally /path/to/your/... on the host (happened once, see git
+# history). Only create this file if you're actually overriding the
+# library location; fill in a real host path first.
+#
+# NOTE — hardlinks: Sonarr/Radarr import via hardlink (instant, no extra
+# disk space) only if the downloads folder and the library folder are on
+# the SAME filesystem. If your alternate library path below lives on a
+# different disk/partition than DATA_ROOT, hardlink import silently falls
+# back to copy+delete (works, just slower and transiently uses more disk).
+services:
+  sonarr:
+    volumes:
+      - /path/to/your/alternate/library/series:/library/series
+  radarr:
+    volumes:
+      - /path/to/your/alternate/library/movies:/library/movies

@@ -1,0 +1,28 @@
+# Config versionnée : aucun secret en dur, les clés API viennent de
+# arr/.env (SONARR_API_KEY/RADARR_API_KEY) passées au conteneur via
+# env_file, lues ici via le tag `!env_var`.
+#
+# Les noms de template ci-dessous sont des EXEMPLES à adapter — lancer
+# `docker compose ... exec recyclarr recyclarr list templates` une fois le
+# conteneur up pour voir la liste actuelle avant de choisir les profils
+# réellement utilisés. Doc : https://recyclarr.dev/wiki/yaml/config-reference/
+
+sonarr:
+  main:
+    base_url: http://sonarr:8989
+    api_key: !env_var SONARR_API_KEY
+    quality_definition:
+      type: series
+    include:
+      - template: sonarr-quality-definition-series
+      - template: sonarr-v4-quality-profile-web-1080p
+
+radarr:
+  main:
+    base_url: http://radarr:7878
+    api_key: !env_var RADARR_API_KEY
+    quality_definition:
+      type: movie
+    include:
+      - template: radarr-quality-definition-movie
+      - template: radarr-v5-quality-profile-hd-bluray-web

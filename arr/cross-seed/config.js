@@ -1,0 +1,22 @@
+// Config versionnée : aucun secret en dur, les clés API viennent de
+// arr/.env (PROWLARR_API_KEY/SONARR_API_KEY/RADARR_API_KEY) passées au
+// conteneur via env_file, lues ici par process.env.*.
+//
+// À vérifier/adapter contre la doc cross-seed courante au moment du premier
+// déploiement (noms de champs stables depuis plusieurs versions majeures,
+// mais à confirmer) : https://www.cross-seed.org/docs/basics/options
+
+module.exports = {
+  torznab: [`http://prowlarr:9696/1/api?apikey=${process.env.PROWLARR_API_KEY}`],
+  sonarr: [`http://sonarr:8989/?apikey=${process.env.SONARR_API_KEY}`],
+  radarr: [`http://radarr:7878/?apikey=${process.env.RADARR_API_KEY}`],
+  torrentClients: ["transmission:http://transmission-vpn:9091/transmission/rpc"],
+  // même arborescence que le volume /data monté en lecture seule dans
+  // docker-compose.yml (miroir de transmission-vpn:/data)
+  dataDirs: ["/data/completed"],
+  // volume distinct, en écriture (voir docker-compose.yml) — ne peut pas
+  // être sous /data qui est monté :ro
+  linkDirs: ["/links"],
+  action: "inject",
+  duplicateCategories: true,
+};

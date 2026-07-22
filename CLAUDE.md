@@ -76,10 +76,47 @@ explicitement :
   `data/SQLiteBackups/` (backups auto intégrés à Jellyfin) était vide au
   moment de l'incident — vérifier de temps en temps qu'il se remplit
   réellement.
-- Avant de modifier un des trois `docker-compose.override.yml` réels
-  (gitignorés, contiennent les vrais chemins `/home/ebola/...`), se rappeler
-  qu'ils ne sont pas versionnés : toute évolution structurelle doit aussi
-  se refléter dans le `.example` correspondant.
+- Avant de modifier un des `docker-compose.override.yml` réels (gitignorés,
+  contiennent les vrais chemins `/home/ebola/...`), se rappeler qu'ils ne
+  sont pas versionnés : toute évolution structurelle doit aussi se refléter
+  dans le `.example` correspondant. Ne jamais copier un `.example` tel quel
+  sans remplir ses placeholders (`/path/to/...`) — Docker crée sinon
+  silencieusement l'arborescence bidon correspondante en root sur l'hôte
+  (arrivé avec `arr/docker-compose.override.yml.example`, nettoyé le
+  2026-07-22).
+- **Rejoindre le réseau `vpn-internal` d'une autre stack** (ex. `arr/` pour
+  atteindre `transmission-vpn:9091`) : son vrai nom Docker est
+  `vpn_vpn-internal` (préfixé par le dossier du projet compose, `vpn/`
+  ne fixe pas de `name:` de réseau) — le déclarer `external: true` avec
+  juste `vpn-internal` échoue (`network ... declared as external, but
+  could not be found`). Toujours ajouter `name: vpn_vpn-internal` sur la
+  déclaration externe (voir `arr/docker-compose.yml`). Rejoindre ce réseau
+  depuis un autre container ne pose aucun problème en soi — seul
+  `transmission-vpn` lui-même ne doit jamais toucher un second réseau (cf.
+  piège ci-dessus).
+- **DNS du FAI qui renvoie `127.0.0.1` pour certains domaines** (blocage
+  anti-piratage côté FAI, ex. domaines de trackers/indexeurs) — se présente
+  comme une panne réseau (`Connection refused`) alors que le domaine répond
+  normalement via un résolveur public. Rencontré sur `arr/prowlarr` en
+  ajoutant un indexeur. Fix : forcer `dns: 1.1.1.1/1.0.0.1` sur le service
+  concerné (déjà le cas sur Jellyfin par défaut ; ajouté aussi sur
+  `prowlarr`/`sonarr`/`radarr`/`cross-seed`).
+- **Sonarr/Radarr n'importent pas les fichiers vidéo posés en vrac à la
+  racine d'un dossier scanné** (scan "dossiers non mappés"/Library Import)
+  — ils ne reconnaissent que la convention un-film/une-série par
+  sous-dossier, sans erreur ni log pour les fichiers ignorés. Pour un
+  fichier existant hors de cette convention, utiliser **Manual Import**
+  (liste aussi les fichiers en vrac, matching manuel), pas le scan
+  automatique.
+- **cross-seed + Sonarr/Radarr : Connect "Custom Script", pas "Webhook"**
+  — le type Webhook générique de Sonarr/Radarr envoie un payload de test
+  factice (pas de vrai hash de torrent) au moment d'enregistrer la
+  connexion ; cross-seed le rejette (`A valid infoHash or an accessible
+  path must be provided`), ce qui empêche l'enregistrement de la connexion
+  côté Sonarr/Radarr (échec bloquant, pas juste un warning ignorable). La
+  méthode documentée par cross-seed est un Custom Script
+  (`arr/scripts/cross-seed-notify.sh`) qui lit `$sonarr_download_id`/
+  `$radarr_download_id` et appelle l'API cross-seed lui-même.
 
 ## Repo
 
@@ -96,7 +133,8 @@ server/
 ├── traefik/                  # socket-proxy + traefik ; .env(ACME_EMAIL)/.example
 ├── jellyfin/                 # docker-compose.yml + override.yml(.example) pour les bibliothèques
 ├── nextcloud/                 # db-next/app/web/news-updater ; .env/.example ; override.yml(.example)
-└── vpn/                       # transmission-vpn (réseau isolé) + sidecar transmission-proxy ; .env/.example
+├── vpn/                       # transmission-vpn (réseau isolé) + sidecar transmission-proxy ; .env/.example
+└── arr/                       # prowlarr/sonarr/radarr/cross-seed/recyclarr ; .env/.example ; override.yml.example (optionnel)
 ```
 
 `make network` (crée `traefik-public` si absent) avant tout `make up`.

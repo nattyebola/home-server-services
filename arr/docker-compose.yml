@@ -1,0 +1,209 @@
+services:
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    restart: unless-stopped
+    # Rootless : les images linuxserver.io démarrent normalement en root (s6)
+    # pour chown puis descendre en PUID/PGID. Mode alternatif documenté par
+    # linuxserver pour rester à cap_drop: ALL — perd juste le support des
+    # Docker Mods/Custom Services (non utilisés ici).
+    user: "${PUID}:${PGID}"
+    tmpfs:
+      - /run:uid=${PUID},gid=${PGID},exec
+    # DNS du FAI renvoie 127.0.0.1 pour certains domaines d'indexeurs/trackers
+    # (blocage anti-piratage côté FAI) — même fix que jellyfin/docker-compose.yml.
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
+    volumes:
+      - ${DATA_ROOT}/.arr/prowlarr/config:/config
+    networks:
+      - default
+      - traefik-public
+      # Prowlarr a aussi sa propre section Download Clients (recherche
+      # interactive manuelle, indépendante de Sonarr/Radarr) — besoin du
+      # même accès direct à transmission-vpn:9091 qu'eux.
+      - vpn-internal
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.prowlarr.rule=Host(`prowlarr.${DOMAIN}`)"
+      - "traefik.http.routers.prowlarr.entrypoints=websecure"
+      - "traefik.http.routers.prowlarr.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.prowlarr.middlewares=arr-lan-only"
+      - "traefik.http.middlewares.arr-lan-only.ipallowlist.sourcerange=192.168.0.0/24"
+      - "traefik.http.services.prowlarr.loadbalancer.server.port=9696"
+      - "traefik.docker.network=traefik-public"
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    restart: unless-stopped
+    user: "${PUID}:${PGID}"
+    tmpfs:
+      - /run:uid=${PUID},gid=${PGID},exec
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
+    volumes:
+      - ${DATA_ROOT}/.arr/sonarr/config:/config
+      # même racine que transmission-vpn (vpn/docker-compose.yml) pour que
+      # les imports en hardlink fonctionnent sans copie
+      - ${DATA_ROOT}/.transmission/data:/data
+      # bibliothèque organisée séparée du dossier de téléchargement brut —
+      # nécessaire car l'import automatique de Radarr/Sonarr (scan des
+      # dossiers non mappés) ignore silencieusement les fichiers en vrac à
+      # la racine du dossier de téléchargement, il ne reconnaît que la
+      # convention un-film/une-série par dossier. Toujours sous DATA_ROOT
+      # (même disque que /data) pour que les hardlinks fonctionnent.
+      - ${DATA_ROOT}/library:/library
+      - ./scripts/cross-seed-notify.sh:/config/custom-cross-seed-notify.sh:ro
+    env_file:
+      - .env
+    networks:
+      - default
+      - traefik-public
+      # Atteint transmission-vpn directement par nom de conteneur
+      # (transmission-vpn:9091) — pas via transmission-proxy, qui n'existe
+      # que pour l'accès humain LAN-only. Rejoindre ce réseau ne concerne
+      # que sonarr, pas transmission-vpn : aucun risque pour son routing VPN.
+      - vpn-internal
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.sonarr.rule=Host(`sonarr.${DOMAIN}`)"
+      - "traefik.http.routers.sonarr.entrypoints=websecure"
+      - "traefik.http.routers.sonarr.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.sonarr.middlewares=arr-lan-only"
+      - "traefik.http.middlewares.arr-lan-only.ipallowlist.sourcerange=192.168.0.0/24"
+      - "traefik.http.services.sonarr.loadbalancer.server.port=8989"
+      - "traefik.docker.network=traefik-public"
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    restart: unless-stopped
+    user: "${PUID}:${PGID}"
+    tmpfs:
+      - /run:uid=${PUID},gid=${PGID},exec
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
+    volumes:
+      - ${DATA_ROOT}/.arr/radarr/config:/config
+      - ${DATA_ROOT}/.transmission/data:/data
+      - ${DATA_ROOT}/library:/library
+      - ./scripts/cross-seed-notify.sh:/config/custom-cross-seed-notify.sh:ro
+    env_file:
+      - .env
+    networks:
+      - default
+      - traefik-public
+      - vpn-internal
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.radarr.rule=Host(`radarr.${DOMAIN}`)"
+      - "traefik.http.routers.radarr.entrypoints=websecure"
+      - "traefik.http.routers.radarr.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.radarr.middlewares=arr-lan-only"
+      - "traefik.http.middlewares.arr-lan-only.ipallowlist.sourcerange=192.168.0.0/24"
+      - "traefik.http.services.radarr.loadbalancer.server.port=7878"
+      - "traefik.docker.network=traefik-public"
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+
+  cross-seed:
+    image: ghcr.io/cross-seed/cross-seed:latest
+    restart: unless-stopped
+    # l'image ne lance rien par défaut sans sous-commande (affiche juste
+    # l'aide et quitte) — "daemon" est le mode qui tourne en continu.
+    command: daemon
+    user: "${PUID}:${PGID}"
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
+    depends_on:
+      - prowlarr
+      - sonarr
+      - radarr
+    volumes:
+      - ${DATA_ROOT}/.arr/cross-seed/config:/config
+      - ./cross-seed/config.js:/config/config.js:ro
+      # lecture seule : cross-seed compare les hash des fichiers déjà
+      # téléchargés, il n'a pas besoin d'écrire dedans. Même chemin interne
+      # (/data) que transmission-vpn pour que les chemins matchent sans
+      # config de remapping.
+      - ${DATA_ROOT}/.transmission/data:/data:ro
+      # volume en écriture séparé (PAS sous /data) pour les hardlinks que
+      # cross-seed crée lui-même (linkDirs dans config.js) : un montage
+      # imbriqué sous un point de montage :ro échoue à la création du
+      # conteneur (testé) — Docker ne peut pas créer le mountpoint interne
+      # dans un parent en lecture seule.
+      - ${DATA_ROOT}/.arr/cross-seed/links:/links
+    env_file:
+      - .env
+    networks:
+      - default
+      - vpn-internal
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+
+  recyclarr:
+    image: ghcr.io/recyclarr/recyclarr:latest
+    restart: unless-stopped
+    # Confirmé au premier démarrage : le conteneur tourne en continu avec sa
+    # propre planification interne (cron @daily par défaut), pas besoin de
+    # cron côté hôte.
+    user: "${PUID}:${PGID}"
+    depends_on:
+      - sonarr
+      - radarr
+    volumes:
+      - ${DATA_ROOT}/.arr/recyclarr/config:/config
+      - ./recyclarr/recyclarr.yml:/config/recyclarr.yml:ro
+    env_file:
+      - .env
+    networks:
+      - default
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+
+networks:
+  traefik-public:
+    external: true
+  vpn-internal:
+    external: true
+    # vpn/docker-compose.yml ne fixe pas de `name:` de projet compose, donc
+    # le réseau qu'il crée est préfixé par le nom du dossier (vpn_vpn-internal),
+    # pas juste "vpn-internal" — on garde l'alias court ici pour la lisibilité
+    # des services, en le faisant pointer vers le vrai nom externe.
+    name: vpn_vpn-internal

@@ -27,6 +27,14 @@ flowchart LR
     VPN -.->|"tunnel OpenVPN"| Internet
 
     SocketProxy[docker-socket-proxy] -.->|"API Docker\nlecture seule"| Traefik
+
+    Traefik -.->|"prowlarr/sonarr/radarr.DOMAIN\nLAN only"| Prowlarr
+    Prowlarr --- Sonarr
+    Prowlarr --- Radarr
+    Prowlarr -->|"vpn-internal"| VPN
+    Sonarr -->|"vpn-internal"| VPN
+    Radarr -->|"vpn-internal"| VPN
+    CrossSeed[cross-seed] -->|"vpn-internal"| VPN
 ```
 
 Un seul point d'entrée HTTPS (Traefik, port 443) pour tous les services,
@@ -88,6 +96,87 @@ Accès restreint au LAN (`192.168.0.0/24` par défaut, middleware Traefik
 `ipallowlist`) : le client torrent doit pointer vers
 `https://transmission.<DOMAIN>/transmission/rpc`, pas `localhost:9091`
 (plus de port publié sur l'hôte).
+
+### Arr (`arr/`)
+
+Automatisation de récupération séries/films : cinq services.
+- `prowlarr`, `sonarr`, `radarr` (`lscr.io/linuxserver/*`) : gestion des
+  indexeurs et suivi des séries/films (saisons/films manquants, import
+  automatique). UI restreinte au LAN (même middleware `ipallowlist` que
+  Transmission). Ces images démarrent normalement en root (s6-overlay) pour
+  appliquer PUID/PGID puis descendre en privilège ; ici elles tournent en
+  mode rootless alternatif documenté par LinuxServer (`user: PUID:PGID` +
+  `tmpfs /run`, sans `cap_add`) — perd juste le support des Docker
+  Mods/Custom Services de ces images (non utilisés).
+- `cross-seed` : cross-seed automatique entre trackers différents à partir
+  des mêmes indexeurs Prowlarr. Lit en lecture seule les fichiers déjà
+  téléchargés par Transmission (mêmes chemins internes que
+  `transmission-vpn`, pour que la comparaison de hash fonctionne sans
+  remapping) et crée ses propres hardlinks dans un volume séparé en écriture
+  (pas sous le même montage `:ro`, voir commentaire dans le compose file).
+  Déclenché sur import/upgrade via un **Custom Script** Sonarr/Radarr
+  (`arr/scripts/cross-seed-notify.sh`), pas le type "Webhook" générique de
+  Sonarr — celui-ci envoie un payload de test factice (pas de vrai hash de
+  torrent) que cross-seed rejette, ce qui bloque l'enregistrement de la
+  connexion côté Sonarr/Radarr.
+- `recyclarr` : synchronise dans Sonarr/Radarr des profils qualité/custom
+  formats tout faits (TRaSH-Guides) au lieu de les construire à la main —
+  tourne en continu avec son propre cron interne (`@daily` par défaut).
+
+`prowlarr`/`sonarr`/`radarr`/`cross-seed` rejoignent aussi `vpn-internal`
+(réseau externe créé par la stack `vpn/`) pour atteindre
+`transmission-vpn:9091` directement par nom de container — pas via
+`transmission-proxy`, qui n'existe que pour l'accès humain LAN-only.
+Prowlarr en a besoin pour sa propre section Download Clients (recherche
+interactive manuelle, indépendante de Sonarr/Radarr). Rejoindre ce réseau
+depuis un autre container ne pose aucun problème : la règle "jamais un
+second réseau" ne concerne que `transmission-vpn` lui-même (voir
+[Pièges rencontrés](#vpntransmission)).
+
+`prowlarr`/`sonarr`/`radarr`/`cross-seed` forcent aussi la résolution DNS
+sur Cloudflare (`1.1.1.1`/`1.0.0.1`, même fix que Jellyfin) : le résolveur
+du FAI peut renvoyer `127.0.0.1` pour certains domaines de trackers/indexeurs
+(blocage anti-piratage côté FAI), ce qui ressemble à une panne réseau
+("Connection refused") alors que le domaine répond normalement via un DNS
+public.
+
+Bibliothèque : Sonarr/Radarr importent (hardlink) vers
+`${DATA_ROOT}/library/{series,movies}` (monté en base à `/library`), une
+bibliothèque organisée **séparée** du dossier de téléchargement brut
+(`${DATA_ROOT}/.transmission/data`, monté à `/data`). Nécessaire car le
+scan d'import automatique de Sonarr/Radarr ("dossiers non mappés") ignore
+silencieusement les fichiers vidéo posés directement à la racine d'un
+dossier scanné — il ne reconnaît que la convention un-film/une-série par
+dossier. Pour importer un fichier existant qui n'est pas déjà dans son
+propre sous-dossier (le cas classique d'un dossier de téléchargements géré
+manuellement jusqu'ici), utiliser **Manual Import** (pas le scan
+automatique), qui liste aussi les fichiers en vrac et permet de les
+associer film par film avec le mode Hardlink.
+
+Bootstrap après le premier `make up STACK=arr` (les clés API sont générées
+au premier démarrage de chaque app, impossible de les connaître avant) :
+1. Récupérer `<ApiKey>` dans
+   `${DATA_ROOT}/.arr/{prowlarr,sonarr,radarr}/config/config.xml` (ou
+   Settings → General dans chaque UI), les reporter dans `arr/.env`.
+   Récupérer aussi la clé cross-seed (`docker compose ... exec cross-seed
+   cross-seed api-key`) pour `CROSSSEED_API_KEY`, utilisée par
+   `arr/scripts/cross-seed-notify.sh`.
+2. `make up STACK=arr` à nouveau pour que `cross-seed`/`recyclarr`
+   redémarrent avec les vraies clés.
+3. Configuration manuelle via les UI (normal pour cet écosystème, pas
+   automatisable en compose) : ajouter des indexeurs dans Prowlarr, le
+   connecter à Sonarr/Radarr (Settings → Apps), configurer Transmission
+   comme client de téléchargement dans Sonarr/Radarr (host
+   `transmission-vpn`, port `9091`), ajouter `/library/series` et
+   `/library/movies` comme Root Folders, et ajouter le script
+   `/config/custom-cross-seed-notify.sh` comme Connection "Custom Script"
+   (déclenché sur Import/Upgrade).
+
+Si votre bibliothèque (`${DATA_ROOT}/library`) n'est pas sur le même disque
+que le reste de `DATA_ROOT` (vérifiable avec `df` sur les deux chemins),
+les imports Sonarr/Radarr basculeront automatiquement en copie au lieu du
+hardlink — fonctionnel mais plus lent et transitoirement plus gourmand en
+espace disque.
 
 ### Sauvegarde (`scripts/`)
 
@@ -227,6 +316,7 @@ moment du backup pour être fidèle.
    cp traefik/.env.example    traefik/.env      # ACME_EMAIL
    cp nextcloud/.env.example  nextcloud/.env    # POSTGRES_USER/PASSWORD, NEXTCLOUD_ADMIN_USER/PASSWORD
    cp vpn/.env.example        vpn/.env          # OPENVPN_USERNAME/PASSWORD
+   cp arr/.env.example        arr/.env          # PROWLARR/SONARR/RADARR/CROSSSEED_API_KEY (à remplir après le 1er démarrage, voir plus haut)
    ```
 
 5. **Config OpenVPN** (si vous utilisez la stack `vpn/`) : déposez le
@@ -242,11 +332,15 @@ moment du backup pour être fidèle.
    cp jellyfin/docker-compose.override.yml.example  jellyfin/docker-compose.override.yml
    cp nextcloud/docker-compose.override.yml.example nextcloud/docker-compose.override.yml
    ```
+   `arr/docker-compose.override.yml` n'est **pas** à copier par défaut —
+   Sonarr/Radarr utilisent déjà `${DATA_ROOT}/library` par défaut (voir plus
+   haut), l'override ne sert que si vous voulez cette bibliothèque ailleurs.
 
 7. **DNS** : créez un enregistrement (A ou AAAA) pour chaque sous-domaine
    utilisé vers l'IP publique de la machine — au minimum
    `www.<DOMAIN>` et `jellyfin.<DOMAIN>`, plus `transmission.<DOMAIN>` si
-   vous déployez la stack VPN.
+   vous déployez la stack VPN, et `prowlarr.<DOMAIN>`/`sonarr.<DOMAIN>`/
+   `radarr.<DOMAIN>` si vous déployez la stack `arr`.
 
 8. **Démarrer Traefik en premier**
    ```sh
@@ -259,6 +353,7 @@ moment du backup pour être fidèle.
    make up STACK=jellyfin
    make up STACK=nextcloud
    make up STACK=vpn
+   make up STACK=arr    # nécessite vpn déjà démarré (rejoint son réseau vpn-internal)
    ```
 
 10. **Vérifier** : `https://www.<DOMAIN>` (Nextcloud, le compte admin est
@@ -283,7 +378,7 @@ moment du backup pour être fidèle.
 | `make config STACK=<nom>` | affiche la config résolue (debug des `${VAR}`) |
 | `make logs STACK=<nom>` | logs en direct |
 | `make update STACK=<nom>` | pull + rebuild + recrée (+ maintenance `occ` si `nextcloud`) |
-| `make update-all` | `update` sur nextcloud, vpn, jellyfin |
+| `make update-all` | `update` sur nextcloud, vpn, jellyfin, arr |
 | `make backup` | sauvegarde restic (aussi via cron) |
 | `make restore SNAPSHOT=<id\|latest>` | restauration guidée d'un snapshot |
 | `make cron-install` | (ré)installe `scripts/crontab` comme crontab de l'hôte |
