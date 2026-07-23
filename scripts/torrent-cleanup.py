@@ -79,9 +79,25 @@ LIBRARY_ROOT = os.path.join(DATA_ROOT, "library")
 TRANSMISSION_DATA_ROOT = os.path.join(DATA_ROOT, ".transmission", "data")
 LOG_PATH = os.path.join(DATA_ROOT, ".torrent-cleanup.log")
 
+_ARR_ENV = load_env_file(os.path.join(REPO_ROOT, "arr", ".env"))
+
 PROWLARR_CONTAINER = "arr-prowlarr-1"
 PROWLARR_URL = "http://localhost:9696/api/v1/indexer"
-PROWLARR_API_KEY = load_env_file(os.path.join(REPO_ROOT, "arr", ".env")).get("PROWLARR_API_KEY")
+PROWLARR_API_KEY = _ARR_ENV.get("PROWLARR_API_KEY")
+
+RADARR_CONTAINER = "arr-radarr-1"
+RADARR_URL = "http://localhost:7878"
+RADARR_API_KEY = _ARR_ENV.get("RADARR_API_KEY")
+
+SONARR_CONTAINER = "arr-sonarr-1"
+SONARR_URL = "http://localhost:8989"
+SONARR_API_KEY = _ARR_ENV.get("SONARR_API_KEY")
+
+# Chemin vu par sonarr/radarr pour un fichier de library/ : les deux montent
+# ${DATA_ROOT}:/data_root en un seul mount (voir CLAUDE.md, fix hardlink) —
+# un chemin host sous DATA_ROOT devient /data_root/... côté conteneur.
+def host_to_arr_path(host_path):
+    return host_path.replace(DATA_ROOT, "/data_root", 1)
 
 # Un seul fichier de log, pensé pour du debug/maintenance a posteriori : DEBUG
 # = détail RPC/lookups (utile pour comprendre un comportement inattendu),
@@ -99,7 +115,7 @@ logging.basicConfig(
 logger = logging.getLogger("torrent-cleanup")
 
 
-def log_deletion(torrent, host_files, lib_matches):
+def log_deletion(torrent, host_files, lib_matches, arr_plan):
     lines = [f"suppression torrent: {torrent['name']} (id={torrent['id']})"]
     lines.append(f"  transmission: {len(host_files)} fichier(s), {human_size(sum(s for _, s in host_files))}")
     for path, size in host_files:
@@ -110,6 +126,10 @@ def log_deletion(torrent, host_files, lib_matches):
             lines.append(f"    - {path} ({human_size(size)})")
     else:
         lines.append("  library: aucune correspondance (jamais importé, ou déjà supprimé)")
+    if arr_plan:
+        lines.append(f"  arr: {len(arr_plan)} action(s)")
+        for action in arr_plan:
+            lines.append(f"    - {action['description']}")
     logger.info("\n".join(lines))
 
 
@@ -236,6 +256,162 @@ def tracker_display(torrent, tracker_map):
     if hosts == "?":
         return "?"
     return ",".join(resolve_tracker_name(h, tracker_map) for h in hosts.split(","))
+
+
+def arr_api(container, base_url, api_key, method, path, params=None, json_body=None):
+    """GET/PUT/DELETE générique vers Sonarr/Radarr, même schéma docker-exec-curl
+    que Transmission/Prowlarr. Renvoie None sur tout échec (clé absente,
+    container injoignable, timeout, JSON illisible) — chaque appelant doit
+    dégrader proprement plutôt que planter (best-effort, comme
+    build_prowlarr_tracker_map)."""
+    if not api_key:
+        return None
+    url = base_url + path
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    cmd = ["docker", "exec", "-i", container, "curl", "-s", "-X", method, "-H", f"X-Api-Key: {api_key}"]
+    payload = None
+    if json_body is not None:
+        cmd += ["-H", "Content-Type: application/json", "-d", "@-"]
+        payload = json.dumps(json_body).encode()
+    cmd.append(url)
+    try:
+        res = subprocess.run(cmd, input=payload, capture_output=True, timeout=15)
+    except subprocess.TimeoutExpired:
+        logger.warning("arr_api %s %s: timeout", method, path)
+        return None
+    if res.returncode != 0:
+        logger.warning("arr_api %s %s: docker exec a échoué: %s", method, path,
+                        res.stderr.decode(errors="replace").strip())
+        return None
+    if not res.stdout.strip():
+        return {}
+    try:
+        return json.loads(res.stdout)
+    except json.JSONDecodeError:
+        logger.warning("arr_api %s %s: réponse illisible: %r", method, path, res.stdout[:300])
+        return None
+
+
+def plan_radarr_deletion(container_paths):
+    """container_paths: set de chemins (vus par les conteneurs arr) déjà
+    identifiés comme présents dans library/. Renvoie (plan, chemins_matchés)
+    — les chemins matchés sont retirés du set par l'appelant avant de tenter
+    le matching Sonarr (un fichier ne peut être qu'un film OU un épisode)."""
+    if not RADARR_API_KEY or not container_paths:
+        return [], set()
+    movies = arr_api(RADARR_CONTAINER, RADARR_URL, RADARR_API_KEY, "GET", "/api/v3/movie")
+    if not movies:
+        return [], set()
+    plan, matched = [], set()
+    for m in movies:
+        mf = m.get("movieFile")
+        if mf and mf.get("path") in container_paths:
+            matched.add(mf["path"])
+            plan.append({
+                "description": f'Radarr : "{m["title"]}" retiré complètement (+ exclusion de liste)',
+                "kind": "radarr_delete",
+                "movie_id": m["id"],
+                "title": m["title"],
+            })
+    return plan, matched
+
+
+def plan_sonarr_unmonitor(container_paths):
+    """Regroupe par série (préfixe de series.path), puis par saison. Une
+    saison n'est désactivée en bloc que si TOUS ses fichiers connus de
+    Sonarr sont dans ce qu'on supprime ET qu'elle est terminée (aucun
+    épisode restant à venir) — sinon on désactive juste les épisodes
+    concernés, pour ne pas couper une saison en cours de diffusion (cf.
+    discussion utilisateur : les prochains épisodes doivent continuer à
+    être surveillés)."""
+    if not SONARR_API_KEY or not container_paths:
+        return []
+    series_list = arr_api(SONARR_CONTAINER, SONARR_URL, SONARR_API_KEY, "GET", "/api/v3/series")
+    if not series_list:
+        return []
+    plan = []
+    for series in series_list:
+        prefix = series["path"] + "/"
+        matched_paths = {p for p in container_paths if p.startswith(prefix)}
+        if not matched_paths:
+            continue
+        episodefiles = arr_api(SONARR_CONTAINER, SONARR_URL, SONARR_API_KEY, "GET", "/api/v3/episodefile",
+                                params={"seriesId": series["id"]}) or []
+        matched_ef_ids = {ef["id"] for ef in episodefiles if ef["path"] in matched_paths}
+        if not matched_ef_ids:
+            continue
+        episodes = arr_api(SONARR_CONTAINER, SONARR_URL, SONARR_API_KEY, "GET", "/api/v3/episode",
+                            params={"seriesId": series["id"]}) or []
+        by_season = {}
+        for ef in episodefiles:
+            by_season.setdefault(ef["seasonNumber"], set()).add(ef["id"])
+        touched_by_season = {}
+        for e in episodes:
+            if e.get("episodeFileId") in matched_ef_ids:
+                touched_by_season.setdefault(e["seasonNumber"], []).append(e)
+        season_stats = {s["seasonNumber"]: s["statistics"] for s in series["seasons"]}
+        for season_number, touched_eps in touched_by_season.items():
+            stats = season_stats.get(season_number, {})
+            season_complete = (stats.get("totalEpisodeCount", 0) > 0
+                                and stats.get("totalEpisodeCount") == stats.get("episodeCount"))
+            season_fully_deleted = by_season.get(season_number, set()) <= matched_ef_ids
+            if season_complete and season_fully_deleted:
+                plan.append({
+                    "description": f'Sonarr : "{series["title"]}" saison {season_number} — '
+                                    f"monitoring désactivé (série toujours suivie)",
+                    "kind": "sonarr_season",
+                    "series_id": series["id"],
+                    "season_number": season_number,
+                })
+            else:
+                plan.append({
+                    "description": f'Sonarr : "{series["title"]}" — {len(touched_eps)} épisode(s) '
+                                    f"retiré(s) du monitoring (saison {season_number} toujours suivie)",
+                    "kind": "sonarr_episodes",
+                    "episode_ids": [e["id"] for e in touched_eps],
+                })
+    return plan
+
+
+def plan_arr_actions(lib_matches):
+    """Point d'entrée : chemins host déjà trouvés dans library/ (find_library_matches)
+    -> plan d'actions Sonarr/Radarr. Best-effort : une clé API absente ou une
+    instance injoignable réduit juste le plan, ne bloque jamais la suppression
+    des fichiers elle-même."""
+    container_paths = {host_to_arr_path(p) for p, _size in lib_matches}
+    radarr_plan, matched = plan_radarr_deletion(container_paths)
+    remaining = container_paths - matched
+    sonarr_plan = plan_sonarr_unmonitor(remaining)
+    return radarr_plan + sonarr_plan
+
+
+def execute_arr_plan(plan):
+    for action in plan:
+        try:
+            if action["kind"] == "radarr_delete":
+                arr_api(RADARR_CONTAINER, RADARR_URL, RADARR_API_KEY, "DELETE",
+                        f"/api/v3/movie/{action['movie_id']}",
+                        params={"deleteFiles": "false", "addImportExclusion": "true"})
+                logger.info("Radarr: film retiré id=%s (%s)", action["movie_id"], action["title"])
+            elif action["kind"] == "sonarr_season":
+                series = arr_api(SONARR_CONTAINER, SONARR_URL, SONARR_API_KEY, "GET",
+                                  f"/api/v3/series/{action['series_id']}")
+                if not series:
+                    logger.warning("sonarr_season: série id=%s introuvable au moment d'exécuter", action["series_id"])
+                    continue
+                for season in series["seasons"]:
+                    if season["seasonNumber"] == action["season_number"]:
+                        season["monitored"] = False
+                arr_api(SONARR_CONTAINER, SONARR_URL, SONARR_API_KEY, "PUT",
+                        f"/api/v3/series/{action['series_id']}", json_body=series)
+                logger.info("Sonarr: série id=%s saison %s désactivée", action["series_id"], action["season_number"])
+            elif action["kind"] == "sonarr_episodes":
+                arr_api(SONARR_CONTAINER, SONARR_URL, SONARR_API_KEY, "PUT", "/api/v3/episode/monitor",
+                        json_body={"episodeIds": action["episode_ids"], "monitored": False})
+                logger.info("Sonarr: épisodes désactivés ids=%s", action["episode_ids"])
+        except Exception as e:
+            logger.warning("échec d'exécution de l'action arr %r : %s", action.get("description"), e)
 
 
 # Champs de tri disponibles (touche 's' pour passer au suivant, 'S' pour
@@ -414,6 +590,7 @@ def draw_list(stdscr, torrents, selected, offset, filter_str, linked_ids, sort_i
 def confirm_delete(stdscr, torrent, library_index):
     host_files = torrent_host_files(torrent)
     lib_matches = find_library_matches(host_files, library_index)
+    arr_plan = plan_arr_actions(lib_matches)
     stdscr.erase()
     h, w = stdscr.getmaxyx()
     none_attr = curses.A_NORMAL
@@ -438,6 +615,11 @@ def confirm_delete(stdscr, torrent, library_index):
         lines.append(("Aucun fichier bibliothèque correspondant trouvé (jamais importé, ou déjà supprimé).",
                        curses.A_BOLD | cp(COLOR_WARN)))
     lines.append(("", none_attr))
+    if arr_plan:
+        lines.append((f"Actions Sonarr/Radarr ({len(arr_plan)}) :", curses.A_BOLD | cp(COLOR_LINKED)))
+        for action in arr_plan:
+            lines.append((f"  - {action['description']}", cp(COLOR_LINKED)))
+        lines.append(("", none_attr))
     total = sum(s for _, s in host_files) + sum(s for _, s in lib_matches)
     lines.append((f"Espace total libéré : {human_size(total)}", curses.A_BOLD))
     lines.append(("", none_attr))
@@ -449,12 +631,12 @@ def confirm_delete(stdscr, torrent, library_index):
     key = stdscr.getch()
     curses.noecho()
     if key in (ord("o"), ord("O"), ord("y"), ord("Y")):
-        return host_files, lib_matches
+        return host_files, lib_matches, arr_plan
     return None
 
 
-def do_delete(client, torrent, host_files, lib_matches):
-    log_deletion(torrent, host_files, lib_matches)
+def do_delete(client, torrent, host_files, lib_matches, arr_plan):
+    log_deletion(torrent, host_files, lib_matches, arr_plan)
     client.remove_torrent(torrent["id"])
     for path, _size in lib_matches:
         try:
@@ -463,13 +645,14 @@ def do_delete(client, torrent, host_files, lib_matches):
             prune_empty_dirs(path)
         except OSError as e:
             logger.warning("échec de suppression du fichier library %s : %s", path, e)
+    execute_arr_plan(arr_plan)
 
 
-def apply_deletion(client, torrent, host_files, lib_matches, all_torrents, linked_ids):
+def apply_deletion(client, torrent, host_files, lib_matches, arr_plan, all_torrents, linked_ids):
     """Effectue la suppression et renvoie (nouvelle liste all_torrents, octets
     libérés) — factorise ce que les chemins Entrée (confirmée) et D (directe)
-    ont en commun une fois host_files/lib_matches connus."""
-    do_delete(client, torrent, host_files, lib_matches)
+    ont en commun une fois host_files/lib_matches/arr_plan connus."""
+    do_delete(client, torrent, host_files, lib_matches, arr_plan)
     deleted_id = torrent["id"]
     remaining = [t for t in all_torrents if t["id"] != deleted_id]
     linked_ids.discard(deleted_id)
@@ -573,8 +756,8 @@ def main(stdscr):
             try:
                 result = confirm_delete(stdscr, torrent, library_index)
                 if result:
-                    host_files, lib_matches = result
-                    all_torrents, freed = apply_deletion(client, torrent, host_files, lib_matches,
+                    host_files, lib_matches, arr_plan = result
+                    all_torrents, freed = apply_deletion(client, torrent, host_files, lib_matches, arr_plan,
                                                           all_torrents, linked_ids)
                     session_freed_bytes += freed
                     session_deletions += 1
@@ -592,7 +775,8 @@ def main(stdscr):
             try:
                 host_files = torrent_host_files(torrent)
                 lib_matches = find_library_matches(host_files, library_index)
-                all_torrents, freed = apply_deletion(client, torrent, host_files, lib_matches,
+                arr_plan = plan_arr_actions(lib_matches)
+                all_torrents, freed = apply_deletion(client, torrent, host_files, lib_matches, arr_plan,
                                                       all_torrents, linked_ids)
                 session_freed_bytes += freed
                 session_deletions += 1

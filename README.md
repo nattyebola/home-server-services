@@ -510,9 +510,25 @@ confirmation, `q` quitter. Le marqueur `L` (vert) signale les torrents
 ayant une correspondance dans `library/`. Un compteur en bas d'écran
 totalise l'espace libéré pendant la session.
 
-Ne touche volontairement pas à Sonarr/Radarr : si le titre est encore
-monitored, il peut être re-téléchargé plus tard (RSS/recherche manuelle) —
-désactiver le monitoring ou blacklister la release reste un geste séparé.
+**Évite le re-téléchargement automatique** : en plus des fichiers, l'outil
+retrouve (par correspondance de chemin) si le fichier supprimé correspond
+à un film Radarr ou un épisode Sonarr, et agit en conséquence — sans quoi
+Sonarr/Radarr, toujours monitored, redemanderait le même contenu à la
+prochaine recherche RSS/manuelle :
+- **Film** : retiré complètement de Radarr (+ exclusion de liste, pour
+  éviter un re-ajout automatique via une liste Trakt/Seerr).
+- **Épisode/saison** : si la saison est *terminée* (aucun épisode à venir)
+  et que tous ses fichiers connus sont supprimés, son monitoring est
+  désactivé — sinon, seuls les épisodes concernés le sont, saison et
+  série restant suivies pour que les prochains épisodes d'une saison en
+  cours continuent d'être recherchés.
 
-Journal détaillé de chaque suppression (fichiers touchés côté Transmission
-et bibliothèque, erreurs éventuelles) dans `${DATA_ROOT}/.torrent-cleanup.log`.
+Best-effort : si Sonarr/Radarr est injoignable ou que le fichier ne leur
+est pas connu (téléchargement jamais importé), ce volet est simplement
+sauté — la suppression des fichiers n'est jamais bloquée pour autant.
+Le plan d'action est affiché dans l'écran de confirmation (`Entrée`) avant
+exécution.
+
+Journal détaillé de chaque suppression (fichiers touchés côté Transmission,
+bibliothèque et actions Sonarr/Radarr, erreurs éventuelles) dans
+`${DATA_ROOT}/.torrent-cleanup.log`.

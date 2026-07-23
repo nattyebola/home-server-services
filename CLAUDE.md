@@ -66,10 +66,20 @@ explicitement :
   *arr (vérifié le 2026-07-23, cf. issue GitHub ManiMatter/decluttarr#292).
   Le matching bibliothèque se fait par inode (device+inode), donc ne
   fonctionne que grâce au fix hardlink ci-dessus — sans lui, `library/` et
-  `.transmission/data/` étaient des copies distinctes, pas des liens. Ne
-  touche volontairement pas à Sonarr/Radarr (monitoring/blocklist) : une
-  suppression via cet outil n'empêche pas un re-téléchargement futur si le
-  titre est encore monitored, c'est un geste séparé et volontaire.
+  `.transmission/data/` étaient des copies distinctes, pas des liens.
+  Synchronise aussi Sonarr/Radarr (ajouté le 2026-07-23) pour éviter qu'un
+  titre encore monitored soit re-téléchargé à la prochaine recherche : film
+  Radarr → retiré complètement (+ import exclusion) ; épisode/saison
+  Sonarr → saison désactivée seulement si elle est *terminée* (aucun
+  épisode à venir, `totalEpisodeCount == episodeCount` côté API) et
+  entièrement supprimée, sinon seuls les épisodes concernés sont
+  désactivés — pour ne jamais couper le monitoring d'une saison en cours
+  de diffusion. Matching par chemin (`movieFile.path`/`episodefile.path`
+  vus par les conteneurs arr, donc traduits via le même montage
+  `/data_root` que le fix hardlink), pas par nom — fiable même si le titre
+  affiché diffère (VO/VF, ponctuation...). Best-effort : une instance arr
+  injoignable ou un fichier jamais importé ne bloque jamais la suppression
+  des fichiers eux-mêmes.
 
 ## Pièges à ne pas répéter
 
