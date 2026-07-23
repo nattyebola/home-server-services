@@ -435,9 +435,15 @@ moment du backup pour être fidèle.
 5. **Config OpenVPN** (si vous utilisez la stack `vpn/`) : déposez le
    fichier `.ovpn` fourni par votre provider dans `vpn/custom/` (voir la
    doc de [haugene/docker-transmission-openvpn](https://haugene.github.io/docker-transmission-openvpn/)
-   pour `OPENVPN_PROVIDER=CUSTOM`). Adaptez aussi le CIDR LAN en dur dans
-   les labels Traefik de `vpn/docker-compose.yml`
-   (`ipallowlist.sourcerange=192.168.0.0/24`) à votre propre réseau local.
+   pour `OPENVPN_PROVIDER=CUSTOM`). Adaptez aussi le CIDR LAN en dur
+   (`ipallowlist.sourcerange=192.168.0.0/24`) à votre propre réseau local —
+   présent dans **plusieurs** fichiers, pas seulement `vpn/docker-compose.yml` :
+   ```sh
+   grep -rl 'ipallowlist.sourcerange' --include=docker-compose.yml .
+   ```
+   (au moment d'écrire ces lignes : `vpn/docker-compose.yml`,
+   `arr/docker-compose.yml` — trois fois, Prowlarr/Sonarr/Radarr — et
+   `traefik/docker-compose.yml` pour le dashboard.)
 
 6. **Montages personnels** (Jellyfin, Nextcloud) — copier les exemples et
    pointer vers vos propres dossiers :
