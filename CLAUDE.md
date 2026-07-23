@@ -91,6 +91,12 @@ explicitement :
   passer par le sidecar `transmission-proxy` pour exposer le RPC ; pour
   autoriser un pair du même réseau Docker sans casser le routage, utiliser
   `UFW_ALLOW_GW_NET=true`, pas `LOCAL_NETWORK`. Détails complets : README.
+- **`vpn/transmission-vpn` a besoin du module kernel `ip_tables` chargé sur
+  l'hôte** — absent par défaut sur les Ubuntu récents (remplacé par
+  `nftables`), nécessaire aux règles de routing/kill-switch de
+  `haugene/transmission-openvpn`. Fix : `/etc/modules-load.d/ip-tables.conf`
+  contenant `ip_tables` (déjà en place sur ce déploiement). Prérequis host,
+  pas dans le compose file — à vérifier sur toute nouvelle machine.
 - **Traefik ne retente pas seul un certificat ACME resté en échec** (ex.
   après un DNS temporairement en NXDOMAIN) — un restart du container est
   nécessaire une fois le problème sous-jacent corrigé.

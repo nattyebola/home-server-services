@@ -357,6 +357,11 @@ moment du backup pour être fidèle.
 - Le client torrent doit pointer vers
   `https://transmission.<DOMAIN>/transmission/rpc` : plus de port publié
   sur l'hôte depuis que Transmission est passé derrière le sidecar.
+- `haugene/transmission-openvpn` a besoin du module kernel `ip_tables` sur
+  l'hôte pour ses règles de routing/kill-switch — absent par défaut sur
+  les Ubuntu récents (remplacé par `nftables`). Sans lui le container ne
+  démarre pas correctement. Fix : `/etc/modules-load.d/ip-tables.conf`
+  contenant `ip_tables` pour le charger au boot (voir Prérequis).
 
 ### Traefik / Let's Encrypt
 
@@ -388,6 +393,12 @@ moment du backup pour être fidèle.
   `jellyfin/docker-compose.yml`.
 - (optionnel, VPN) un abonnement fournissant une config OpenVPN (`.ovpn`)
   — testé avec un provider custom (AirVPN).
+- (VPN) module kernel `ip_tables` chargé sur l'hôte — les Ubuntu récents
+  ne le chargent plus par défaut, or `haugene/transmission-openvpn` en a
+  besoin pour ses règles de routing/kill-switch. Si le container échoue à
+  démarrer ou que le tunnel ne route rien, vérifier `lsmod | grep
+  ip_tables` et sinon créer `/etc/modules-load.d/ip-tables.conf` contenant
+  `ip_tables` (puis `modprobe ip_tables` ou reboot).
 - [`restic`](https://restic.net/) pour les sauvegardes.
 
 ### Étapes
