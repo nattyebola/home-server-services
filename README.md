@@ -283,12 +283,18 @@ local dans `sauvegarde/` (sur un disque différent de `DATA_ROOT`, pour
 survivre à la perte de ce dernier). Pas d'offsite/cloud pour l'instant.
 
 Ce qui est sauvegardé : la base Nextcloud (dump `pg_dump` cohérent, pas
-une copie brute des fichiers Postgres), le webroot Nextcloud, les `.env`
-de chaque stack, et un **manifeste des digests d'images exacts** en cours
-d'exécution — utile car ce repo reste volontairement sur des tags
-`:latest` (voir [Versions des images](#versions-des-images-latest)), donc
-une restauration a besoin de savoir *quelle* image tournait réellement au
-moment du backup pour être fidèle.
+une copie brute des fichiers Postgres), le webroot Nextcloud, les configs
+Jellyfin/arr (`prowlarr`/`sonarr`/`radarr`/`cross-seed`/`recyclarr`)/Seerr/
+Transmission, les `.env` de `traefik`/`nextcloud`/`vpn`/`arr`, `.env.shared`,
+et un **manifeste des digests d'images exacts** en cours d'exécution
+(toutes les stacks, y compris `arr`/`seerr`) — utile car ce repo reste
+volontairement sur des tags `:latest` (voir
+[Versions des images](#versions-des-images-latest)), donc une restauration
+a besoin de savoir *quelle* image tournait réellement au moment du backup
+pour être fidèle. Volontairement **exclu** : `library/` et
+`.transmission/data/` (média/téléchargements, ré-obtenables via arr, trop
+volumineux pour la valeur de récupération) et `.jellyfin/cache` (purement
+régénéré).
 
 - `make backup` : lance tout le processus (dump, manifeste, `restic
   backup`, `restic forget --keep-weekly 8 --prune`), et tague le commit

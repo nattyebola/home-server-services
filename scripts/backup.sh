@@ -14,7 +14,7 @@ STAGING_DIR="$BACKUP_DIR/.staging"
 export RESTIC_REPOSITORY="$BACKUP_DIR/restic-repo"
 export RESTIC_PASSWORD_FILE="$BACKUP_DIR/restic-password"
 
-STACKS="traefik jellyfin nextcloud vpn"
+STACKS="traefik jellyfin nextcloud vpn arr seerr"
 
 compose_for() {
 	local stack="$1"; shift
@@ -53,11 +53,22 @@ done
 git -C "$REPO_ROOT" rev-parse HEAD >"$STAGING_DIR/infra-commit.txt"
 
 echo "==> restic backup"
+# Deliberately NOT backed up: $DATA_ROOT/library (media, redownloadable via
+# arr), $DATA_ROOT/.transmission/data (in-flight/completed downloads, same
+# reasoning), $DATA_ROOT/.jellyfin/cache (transcodes/image cache, purely
+# regenerated) — huge and disposable, would blow up the restic repo for no
+# recovery value.
 restic backup \
 	"$REPO_ROOT/.env.shared" \
+	"$REPO_ROOT/traefik/.env" \
 	"$REPO_ROOT/nextcloud/.env" \
 	"$REPO_ROOT/vpn/.env" \
+	"$REPO_ROOT/arr/.env" \
 	"$DATA_ROOT/.nextcloud/nexcloud" \
+	"$DATA_ROOT/.jellyfin/config" \
+	"$DATA_ROOT/.arr" \
+	"$DATA_ROOT/.seerr/config" \
+	"$DATA_ROOT/.transmission/config" \
 	"$STAGING_DIR" \
 	--tag weekly --tag "commit-$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 
