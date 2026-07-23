@@ -25,12 +25,16 @@ explicitement :
 - **Secrets et valeurs propres au déploiement** : `.env` par stack
   (gitignoré) + `.env.example` versionné — même chose pour les valeurs
   partagées entre stacks (`PUID`/`PGID`/`RENDER_GID`/`DOMAIN`/
-  `DATA_ROOT`/`LAN_CIDR`) dans `.env.shared`/`.env.shared.example` à la
-  racine (`.env.shared` gitignoré depuis le 2026-07-18, il identifiait ce
-  déploiement — domaine, chemins). `LAN_CIDR` (ajouté le 2026-07-23)
-  alimente le middleware Traefik `ipallowlist.sourcerange` dans
-  `vpn/`, `arr/` et `traefik/docker-compose.yml` — ne jamais remettre ce
-  CIDR en dur dans un compose file, toujours `${LAN_CIDR}`. Toujours
+  `DATA_ROOT`/`LAN_CIDR`/`DNS_PRIMARY`/`DNS_SECONDARY`) dans
+  `.env.shared`/`.env.shared.example` à la racine (`.env.shared` gitignoré
+  depuis le 2026-07-18, il identifiait ce déploiement — domaine, chemins).
+  `LAN_CIDR` (ajouté le 2026-07-23) alimente le middleware Traefik
+  `ipallowlist.sourcerange` dans `vpn/`, `arr/` et
+  `traefik/docker-compose.yml` — ne jamais remettre ce CIDR en dur dans un
+  compose file, toujours `${LAN_CIDR}`. `DNS_PRIMARY`/`DNS_SECONDARY`
+  (ajoutés le 2026-07-23, mêmes valeurs Cloudflare par défaut qu'avant —
+  pas un secret, juste une valeur dupliquée à ne pas refaire diverger)
+  alimentent les blocs `dns:` de `arr/`, `vpn/` et `jellyfin/`. Toujours
   passer par le `Makefile` (`make <target> STACK=<nom>`), jamais `docker
   compose` en direct dans un dossier de stack (il ne chargerait pas
   `.env.shared`).
@@ -141,8 +145,9 @@ explicitement :
   anti-piratage côté FAI, ex. domaines de trackers/indexeurs) — se présente
   comme une panne réseau (`Connection refused`) alors que le domaine répond
   normalement via un résolveur public. Rencontré sur `arr/prowlarr` en
-  ajoutant un indexeur. Fix : forcer `dns: 1.1.1.1/1.0.0.1` sur le service
-  concerné (déjà le cas sur Jellyfin par défaut ; ajouté aussi sur
+  ajoutant un indexeur. Fix : forcer `dns: ${DNS_PRIMARY}/${DNS_SECONDARY}`
+  (Cloudflare par défaut, `.env.shared`) sur le service concerné (déjà le
+  cas sur Jellyfin par défaut ; ajouté aussi sur
   `prowlarr`/`sonarr`/`radarr`/`cross-seed`).
 - **Sonarr/Radarr n'importent pas les fichiers vidéo posés en vrac à la
   racine d'un dossier scanné** (scan "dossiers non mappés"/Library Import)

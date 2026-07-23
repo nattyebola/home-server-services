@@ -15,8 +15,8 @@ services:
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=0
     dns:
-      - 1.1.1.1
-      - 1.0.0.1
+      - ${DNS_PRIMARY}
+      - ${DNS_SECONDARY}
     volumes:
       - '${DATA_ROOT}/.transmission/config:/config'
       - '${DATA_ROOT}/.transmission/data:/data'

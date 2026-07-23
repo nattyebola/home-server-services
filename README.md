@@ -157,7 +157,8 @@ second réseau" ne concerne que `transmission-vpn` lui-même (voir
 [Pièges rencontrés](#vpntransmission)).
 
 `prowlarr`/`sonarr`/`radarr`/`cross-seed` forcent aussi la résolution DNS
-sur Cloudflare (`1.1.1.1`/`1.0.0.1`, même fix que Jellyfin) : le résolveur
+sur Cloudflare (`DNS_PRIMARY`/`DNS_SECONDARY` dans `.env.shared`,
+`1.1.1.1`/`1.0.0.1` par défaut, même fix que Jellyfin) : le résolveur
 du FAI peut renvoyer `127.0.0.1` pour certains domaines de trackers/indexeurs
 (blocage anti-piratage côté FAI), ce qui ressemble à une panne réseau
 ("Connection refused") alors que le domaine répond normalement via un DNS
@@ -418,7 +419,10 @@ moment du backup pour être fidèle.
    `DOMAIN` (le vôtre), `DATA_ROOT` (où stocker les données applicatives —
    idéalement un disque avec de la place), `LAN_CIDR` (plage de votre
    réseau local — restreint l'accès à Transmission/Arr/dashboard via le
-   middleware Traefik `ipallowlist`, lu par `vpn/`, `arr/` et `traefik/`).
+   middleware Traefik `ipallowlist`, lu par `vpn/`, `arr/` et `traefik/`),
+   `DNS_PRIMARY`/`DNS_SECONDARY` (résolveurs DNS forcés sur Jellyfin/arr/vpn
+   pour contourner un éventuel DNS de FAI menteur — Cloudflare par défaut,
+   pas besoin d'y toucher sauf préférence).
 
 3. **Créer le réseau Docker partagé**
    ```sh

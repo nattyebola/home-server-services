@@ -8,8 +8,8 @@ services:
     group_add:
       - "${RENDER_GID}"
     dns:
-      - 1.1.1.1
-      - 1.0.0.1
+      - ${DNS_PRIMARY}
+      - ${DNS_SECONDARY}
     volumes:
       - ${DATA_ROOT}/.jellyfin/cache:/cache
       - ${DATA_ROOT}/.jellyfin/config:/config

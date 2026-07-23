@@ -12,8 +12,8 @@ services:
     # DNS du FAI renvoie 127.0.0.1 pour certains domaines d'indexeurs/trackers
     # (blocage anti-piratage côté FAI) — même fix que jellyfin/docker-compose.yml.
     dns:
-      - 1.1.1.1
-      - 1.0.0.1
+      - ${DNS_PRIMARY}
+      - ${DNS_SECONDARY}
     volumes:
       - ${DATA_ROOT}/.arr/prowlarr/config:/config
       - /etc/localtime:/etc/localtime:ro
@@ -49,8 +49,8 @@ services:
     tmpfs:
       - /run:uid=${PUID},gid=${PGID},exec
     dns:
-      - 1.1.1.1
-      - 1.0.0.1
+      - ${DNS_PRIMARY}
+      - ${DNS_SECONDARY}
     volumes:
       - ${DATA_ROOT}/.arr/sonarr/config:/config
       # UN SEUL montage pour /data (téléchargements) et /library (import
@@ -99,8 +99,8 @@ services:
     tmpfs:
       - /run:uid=${PUID},gid=${PGID},exec
     dns:
-      - 1.1.1.1
-      - 1.0.0.1
+      - ${DNS_PRIMARY}
+      - ${DNS_SECONDARY}
     volumes:
       - ${DATA_ROOT}/.arr/radarr/config:/config
       # même raison que sonarr ci-dessus : un seul montage pour permettre le
@@ -140,8 +140,8 @@ services:
     command: daemon
     user: "${PUID}:${PGID}"
     dns:
-      - 1.1.1.1
-      - 1.0.0.1
+      - ${DNS_PRIMARY}
+      - ${DNS_SECONDARY}
     depends_on:
       - prowlarr
       - sonarr
