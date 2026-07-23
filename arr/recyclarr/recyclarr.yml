@@ -164,6 +164,41 @@ radarr:
         reset_unmatched_scores:
           enabled: true
         min_format_score: 0  # 1000 par défaut (guide) — bloquait tout : score qui repose sur des tags de release-group "de confiance" (BHDStudio, hallowed, WEB/Bluray/UHD Tier N) absents chez C411/Torr9
+    # Même piège que côté Sonarr (voir plus haut) mais version Radarr : le
+    # guide sqp-streaming fixe bien un maxSize par palier ici (contrairement
+    # au type "series"), mais preferredSize est calé quasi au max partout
+    # (ex. WEBDL/WEBRip-2160p : max=222,2, preferred=221,2 Mo/min) — Radarr
+    # vise donc systématiquement le plus gros fichier autorisé. Comme pour
+    # Sonarr, recyclarr n'expose pas de propriété yaml pour ces tailles.
+    #
+    # Corrigé à la main le 2026-07-23, en deux passes — la première
+    # (touchant seulement max/preferred) s'est révélée insuffisante : testé
+    # via une recherche interactive Radarr sur Le Hobbit (id 16), une
+    # release 2160p Bluray DV/HDR/MULTi de 10,18 Go (même score custom
+    # format que la version retenue de 18,77 Go) était rejetée par le
+    # minSize par défaut du guide (102 Mo/min, jamais touché → "10.2 GB is
+    # smaller than minimum allowed 16.8 GB"). minSize abaissé en
+    # conséquence sur les 6 paliers, et preferred/max recalés sur cette
+    # release réelle (~62 Mo/min) plutôt que sur une estimation à l'aveugle.
+    # Valeurs finales (Mo/min) sur les paliers utilisés par ce profil
+    # (1080p/2160p × WEBDL/WEBRip/Bluray) :
+    #   id 20/21 WEBDL/WEBRip-1080p : min=10, preferred=30, max=45
+    #   id 22    Bluray-1080p       : min=18, preferred=40, max=60
+    #   id 25/26 WEBDL/WEBRip-2160p : min=25, preferred=65, max=100
+    #   id 27    Bluray-2160p       : min=40, preferred=75, max=120
+    # Comme "Quality Sizes" est resynchronisé en entier à chaque
+    # `recyclarr sync`, repasser ces valeurs après coup :
+    #   for id_min_pref_max in "20 10 30 45" "21 10 30 45" "22 18 40 60" "25 25 65 100" "26 25 65 100" "27 40 75 120"; do
+    #     set -- $id_min_pref_max
+    #     curl -s -H "X-Api-Key: $RADARR_API_KEY" http://localhost:7878/api/v3/qualitydefinition/$1 \
+    #       | jq ".minSize=$2 | .preferredSize=$3 | .maxSize=$4" \
+    #       | curl -s -X PUT -H "X-Api-Key: $RADARR_API_KEY" -H "Content-Type: application/json" \
+    #           --data @- http://localhost:7878/api/v3/qualitydefinition/$1
+    #   done
+    # Vérifié aussi le 2026-07-23 : à score custom format égal, Radarr
+    # départage d'abord sur le nombre de seeders avant la taille — la
+    # préférence de taille ne joue qu'entre releases par ailleurs
+    # comparables (santé du torrent, qualité, langue...).
     # IMPORTANT : le champ "language" du profil Radarr (id 7) est forcé à
     # "Original" par le JSON du guide à CHAQUE `recyclarr sync` — recyclarr
     # n'expose aucune propriété yaml pour le surcharger (`language:` renvoie

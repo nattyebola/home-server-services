@@ -16,12 +16,12 @@ module.exports = {
   // matcher l'infoHash reçu et échoue systématiquement ("Torrent client does
   // not have any torrent with criteria") même quand le torrent y est bien.
   useClientTorrents: true,
-  // même arborescence que le volume /data monté en lecture seule dans
-  // docker-compose.yml (miroir de transmission-vpn:/data)
+  // dataDirs et linkDirs sont deux sous-chemins du même montage /data
+  // (docker-compose.yml) — nécessaire pour que cross-seed puisse hardlink
+  // de l'un vers l'autre (voir CLAUDE.md). dataDirs garde le chemin exact
+  // renvoyé par Transmission (pas de remapping possible côté cross-seed).
   dataDirs: ["/data/completed"],
-  // volume distinct, en écriture (voir docker-compose.yml) — ne peut pas
-  // être sous /data qui est monté :ro
-  linkDirs: ["/links"],
+  linkDirs: ["/data/.cross-seed-links"],
   action: "inject",
   duplicateCategories: true,
 };

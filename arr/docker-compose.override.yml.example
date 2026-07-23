@@ -13,10 +13,16 @@
 # library location; fill in a real host path first.
 #
 # NOTE — hardlinks: Sonarr/Radarr import via hardlink (instant, no extra
-# disk space) only if the downloads folder and the library folder are on
-# the SAME filesystem. If your alternate library path below lives on a
-# different disk/partition than DATA_ROOT, hardlink import silently falls
-# back to copy+delete (works, just slower and transiently uses more disk).
+# disk space) only if the downloads folder and the library folder are
+# reachable through the SAME Docker mount inside the container — being on
+# the same underlying disk is NOT enough. Two separate `-v host:container`
+# binds of the same physical filesystem still get `Cross-device link` from
+# link(2), even though `stat` reports the same st_dev on both (confirmed
+# 2026-07-23, see CLAUDE.md "Pièges à ne pas répéter"). The base compose
+# file mounts the whole ${DATA_ROOT} once at /data_root for this reason —
+# if you override the library path below to somewhere outside DATA_ROOT,
+# hardlink import silently falls back to copy+delete (works, just slower
+# and doubles disk usage for that content).
 services:
   sonarr:
     volumes:

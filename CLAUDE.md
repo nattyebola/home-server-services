@@ -57,6 +57,19 @@ explicitement :
   génériques). Le username Unix `ebola` reste en clair dans les
   `docker-compose.override.yml` gitignorés (pas versionnés, donc pas
   concernés) — décision explicite de l'utilisateur.
+- **`scripts/torrent-cleanup.py` (`make cleanup`)** : TUI maison pour
+  supprimer un torrent + ses fichiers Transmission + les fichiers
+  `library/` correspondants en une seule action. Écrit sur mesure plutôt
+  que d'ajouter un service tiers (Decluttarr, Removarr...) : aucun ne
+  couvre ce cas précis (suppression Sonarr/Radarr → nettoyage automatique
+  du client torrent), c'est un trou connu et non résolu de l'écosystème
+  *arr (vérifié le 2026-07-23, cf. issue GitHub ManiMatter/decluttarr#292).
+  Le matching bibliothèque se fait par inode (device+inode), donc ne
+  fonctionne que grâce au fix hardlink ci-dessus — sans lui, `library/` et
+  `.transmission/data/` étaient des copies distinctes, pas des liens. Ne
+  touche volontairement pas à Sonarr/Radarr (monitoring/blocklist) : une
+  suppression via cet outil n'empêche pas un re-téléchargement futur si le
+  titre est encore monitored, c'est un geste séparé et volontaire.
 
 ## Pièges à ne pas répéter
 
@@ -161,19 +174,47 @@ explicitement :
   `./assets` sous `./html:...:ro`) — solution : un seul mount, le script
   de génération (`scripts/generate-dashboard.sh`) copie les logos dans le
   dossier généré plutôt que de les monter séparément.
+- **Deux bind-mounts Docker séparés du même disque physique n'autorisent
+  pas les hardlinks entre eux**, même si `stat` rapporte le même `st_dev`
+  des deux côtés — `link()` refuse avec `Cross-device link` dès que
+  source et destination sont sur deux montages distincts, peu importe
+  que ce soit littéralement la même partition sous-jacente (confirmé le
+  2026-07-23 : `sonarr`/`radarr` montaient `${DATA_ROOT}/.transmission/data:/data`
+  et `${DATA_ROOT}/library:/library` séparément — `copyUsingHardlinks:
+  true` était bien actif, mais chaque import retombait silencieusement
+  sur une copie complète, doublant l'espace disque de tout ce qui était
+  déjà importé, ~185 Go récupérés en corrigeant). Fix : un seul mount
+  `${DATA_ROOT}:/data_root` dans `arr/docker-compose.yml` pour sonarr et
+  radarr (au lieu de deux mounts séparés), avec remote path mapping
+  (host `transmission-vpn`, `/data/completed/` → `/data_root/.transmission/data/completed/`)
+  et root folders/chemins des séries et films existants repointés sur
+  `/data_root/library/...` via l'API. Même piège sur `arr/cross-seed`
+  (`dataDirs`/`linkDirs` montés séparément dans l'ancien
+  `docker-compose.yml`) corrigé le 2026-07-23 : contrairement à
+  Sonarr/Radarr, cross-seed n'a pas de "remote path mapping" — il compare
+  tel quel le chemin renvoyé par le client torrent (`/data/completed/...`)
+  à son propre `dataDirs`, donc impossible de renommer ce mount comme pour
+  sonarr/radarr sans casser le matching. Fix : garder le même montage
+  `${DATA_ROOT}/.transmission/data:/data` (comme avant, mais sans `:ro`)
+  et faire pointer `linkDirs` vers un sous-dossier de ce même mount
+  (`/data/.cross-seed-links`, host
+  `${DATA_ROOT}/.transmission/data/.cross-seed-links`) au lieu de l'ancien
+  volume séparé `.arr/cross-seed/links` (supprimé, dossier vide au moment
+  du fix).
 
 ## Repo
 
 ```
 server/
 ├── .env.shared(.example)     # PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT — réel gitignoré, .example versionné
-├── Makefile                  # network/up/down/config/logs/update/update-all/backup/restore/cron-install STACK=<nom> ; dashboard-refresh (sans STACK)
+├── Makefile                  # network/up/down/config/logs/update/update-all/backup/restore/cron-install STACK=<nom> ; dashboard-refresh/cleanup (sans STACK)
 ├── README.md                  # doc humaine : services, choix, problèmes rencontrés, install
 ├── scripts/
 │   ├── crontab                    # source de vérité du crontab hôte — `make cron-install`
 │   ├── backup.sh                   # sauvegarde restic hebdomadaire
 │   ├── restore.sh                  # restauration guidée d'un snapshot restic
-│   └── generate-dashboard.sh       # régénère dashboard/html/ — `make dashboard-refresh`
+│   ├── generate-dashboard.sh       # régénère dashboard/html/ — `make dashboard-refresh`
+│   └── torrent-cleanup.py          # TUI de nettoyage manuel torrents+library/ — `make cleanup`
 ├── sauvegarde/                # non versionné — dépôt restic + mot de passe + staging
 ├── traefik/                  # socket-proxy + traefik + dashboard (page statique de liens) ; .env(ACME_EMAIL)/.example
 ├── jellyfin/                 # docker-compose.yml + override.yml(.example) pour les bibliothèques

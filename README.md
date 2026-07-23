@@ -488,3 +488,31 @@ moment du backup pour être fidèle.
 | `make backup` | sauvegarde restic (aussi via cron) |
 | `make restore SNAPSHOT=<id\|latest>` | restauration guidée d'un snapshot |
 | `make cron-install` | (ré)installe `scripts/crontab` comme crontab de l'hôte |
+| `make cleanup` | TUI de nettoyage torrents/bibliothèque, voir ci-dessous |
+
+#### Supprimer un torrent + sa place dans la bibliothèque (`make cleanup`)
+
+Sonarr/Radarr et Transmission ne se parlent pas à la suppression : effacer
+un film/une série dans Sonarr/Radarr ne touche pas le torrent dans le
+client, et inversement. C'est un manque connu et non résolu de
+l'écosystème *arr (aucun outil communautaire — Decluttarr, Removarr... —
+ne couvre ce cas précis). `scripts/torrent-cleanup.py` comble ce trou pour
+ce déploiement précis : un TUI qui liste les torrents Transmission (âge,
+taille, ratio, tracker — résolu via Prowlarr quand possible) et, à la
+suppression d'un torrent, retrouve et supprime aussi les fichiers
+`library/` correspondants (matching par inode — ne fonctionne que parce
+que Sonarr/Radarr importent en hardlink, voir plus haut).
+
+Contrôles : `↑`/`↓`/`j`/`k` naviguer, `/` filtrer par nom, `s`/`S` changer
+le critère de tri ou son sens, `Entrée` supprimer avec confirmation
+(détail des fichiers touchés), `D` (majuscule) supprimer directement sans
+confirmation, `q` quitter. Le marqueur `L` (vert) signale les torrents
+ayant une correspondance dans `library/`. Un compteur en bas d'écran
+totalise l'espace libéré pendant la session.
+
+Ne touche volontairement pas à Sonarr/Radarr : si le titre est encore
+monitored, il peut être re-téléchargé plus tard (RSS/recherche manuelle) —
+désactiver le monitoring ou blacklister la release reste un geste séparé.
+
+Journal détaillé de chaque suppression (fichiers touchés côté Transmission
+et bibliothèque, erreurs éventuelles) dans `${DATA_ROOT}/.torrent-cleanup.log`.

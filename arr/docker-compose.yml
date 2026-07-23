@@ -53,16 +53,15 @@ services:
       - 1.0.0.1
     volumes:
       - ${DATA_ROOT}/.arr/sonarr/config:/config
-      # même racine que transmission-vpn (vpn/docker-compose.yml) pour que
-      # les imports en hardlink fonctionnent sans copie
-      - ${DATA_ROOT}/.transmission/data:/data
-      # bibliothèque organisée séparée du dossier de téléchargement brut —
-      # nécessaire car l'import automatique de Radarr/Sonarr (scan des
-      # dossiers non mappés) ignore silencieusement les fichiers en vrac à
-      # la racine du dossier de téléchargement, il ne reconnaît que la
-      # convention un-film/une-série par dossier. Toujours sous DATA_ROOT
-      # (même disque que /data) pour que les hardlinks fonctionnent.
-      - ${DATA_ROOT}/library:/library
+      # UN SEUL montage pour /data (téléchargements) et /library (import
+      # hardlink) — voir CLAUDE.md "Pièges à ne pas répéter" : link() refuse
+      # de traverser deux montages Docker distincts même s'ils pointent vers
+      # le même disque physique (confirmé le 2026-07-23 : Cross-device link
+      # malgré un st_dev identique). Les chemins internes deviennent
+      # /data_root/.transmission/data et /data_root/library — cf. remote
+      # path mapping (host transmission-vpn) et root folders à reconfigurer
+      # côté Sonarr en conséquence.
+      - ${DATA_ROOT}:/data_root
       - ./scripts/cross-seed-notify.sh:/config/custom-cross-seed-notify.sh:ro
       - /etc/localtime:/etc/localtime:ro
     env_file:
@@ -104,8 +103,9 @@ services:
       - 1.0.0.1
     volumes:
       - ${DATA_ROOT}/.arr/radarr/config:/config
-      - ${DATA_ROOT}/.transmission/data:/data
-      - ${DATA_ROOT}/library:/library
+      # même raison que sonarr ci-dessus : un seul montage pour permettre le
+      # hardlink entre téléchargement et bibliothèque.
+      - ${DATA_ROOT}:/data_root
       - ./scripts/cross-seed-notify.sh:/config/custom-cross-seed-notify.sh:ro
       - /etc/localtime:/etc/localtime:ro
     env_file:
@@ -149,17 +149,19 @@ services:
     volumes:
       - ${DATA_ROOT}/.arr/cross-seed/config:/config
       - ./cross-seed/config.js:/config/config.js:ro
-      # lecture seule : cross-seed compare les hash des fichiers déjà
-      # téléchargés, il n'a pas besoin d'écrire dedans. Même chemin interne
-      # (/data) que transmission-vpn pour que les chemins matchent sans
-      # config de remapping.
-      - ${DATA_ROOT}/.transmission/data:/data:ro
-      # volume en écriture séparé (PAS sous /data) pour les hardlinks que
-      # cross-seed crée lui-même (linkDirs dans config.js) : un montage
-      # imbriqué sous un point de montage :ro échoue à la création du
-      # conteneur (testé) — Docker ne peut pas créer le mountpoint interne
-      # dans un parent en lecture seule.
-      - ${DATA_ROOT}/.arr/cross-seed/links:/links
+      # UN SEUL montage pour dataDirs et linkDirs (config.js) — voir
+      # CLAUDE.md "Pièges à ne pas répéter" : link() refuse de traverser
+      # deux montages Docker distincts même sur le même disque physique,
+      # donc dataDirs et linkDirs doivent être deux sous-chemins du même
+      # mount. Même chemin interne (/data) que transmission-vpn : cross-seed
+      # compare les chemins renvoyés par le client torrent (ex.
+      # /data/completed/...) tels quels, sans remapping — contrairement à
+      # Sonarr/Radarr, cross-seed n'a pas de "remote path mapping". linkDirs
+      # (config.js) pointe donc vers un sous-dossier DE CE MÊME montage
+      # (${DATA_ROOT}/.transmission/data/.cross-seed-links), plus besoin du
+      # volume /links séparé d'avant. Perd le :ro qu'avait l'ancien montage
+      # /data (nécessaire pour écrire les hardlinks quelque part dessous).
+      - ${DATA_ROOT}/.transmission/data:/data
       - /etc/localtime:/etc/localtime:ro
     env_file:
       - .env

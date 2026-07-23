@@ -6,7 +6,7 @@ STACKS := traefik jellyfin nextcloud vpn arr seerr
 
 UPDATE_STACKS := nextcloud vpn jellyfin arr seerr
 
-.PHONY: network up down config logs update update-all backup restore cron-install dashboard-refresh
+.PHONY: network up down config logs update update-all backup restore cron-install dashboard-refresh cleanup
 
 network:
 	@docker network inspect $(NETWORK) >/dev/null 2>&1 || docker network create $(NETWORK)
@@ -68,6 +68,12 @@ update-all:
 # tourne pour régénérer le contenu.
 dashboard-refresh:
 	@scripts/generate-dashboard.sh
+
+# TUI de nettoyage manuel : liste les torrents Transmission, supprime à la
+# demande le torrent (+ fichiers) et les fichiers hardlinkés correspondants
+# dans library/ — voir scripts/torrent-cleanup.py.
+cleanup:
+	@python3 scripts/torrent-cleanup.py
 
 # weekly restic backup (nextcloud DB dump + data + .env secrets + image
 # digest manifest) — see scripts/backup.sh. Also run by cron, see CLAUDE.md.
