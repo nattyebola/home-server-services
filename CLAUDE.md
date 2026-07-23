@@ -25,11 +25,15 @@ explicitement :
 - **Secrets et valeurs propres au déploiement** : `.env` par stack
   (gitignoré) + `.env.example` versionné — même chose pour les valeurs
   partagées entre stacks (`PUID`/`PGID`/`RENDER_GID`/`DOMAIN`/
-  `DATA_ROOT`) dans `.env.shared`/`.env.shared.example` à la racine
-  (`.env.shared` gitignoré depuis le 2026-07-18, il identifiait ce
-  déploiement — domaine, chemins). Toujours passer par le `Makefile`
-  (`make <target> STACK=<nom>`), jamais `docker compose` en direct dans
-  un dossier de stack (il ne chargerait pas `.env.shared`).
+  `DATA_ROOT`/`LAN_CIDR`) dans `.env.shared`/`.env.shared.example` à la
+  racine (`.env.shared` gitignoré depuis le 2026-07-18, il identifiait ce
+  déploiement — domaine, chemins). `LAN_CIDR` (ajouté le 2026-07-23)
+  alimente le middleware Traefik `ipallowlist.sourcerange` dans
+  `vpn/`, `arr/` et `traefik/docker-compose.yml` — ne jamais remettre ce
+  CIDR en dur dans un compose file, toujours `${LAN_CIDR}`. Toujours
+  passer par le `Makefile` (`make <target> STACK=<nom>`), jamais `docker
+  compose` en direct dans un dossier de stack (il ne chargerait pas
+  `.env.shared`).
 - **Montages host-specific** (bibliothèques Jellyfin, external storage
   Nextcloud) : dans `docker-compose.override.yml` par stack (gitignoré,
   chargé automatiquement par le Makefile s'il existe) + `.example`

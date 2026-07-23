@@ -109,7 +109,7 @@ Client torrent qui ne doit jamais sortir hors tunnel VPN. Deux services :
   `traefik-public`, seul pont entre le VPN et le reste du monde — proxy_pass
   vers le RPC de Transmission. C'est lui qui porte les labels Traefik.
 
-Accès restreint au LAN (`192.168.0.0/24` par défaut, middleware Traefik
+Accès restreint au LAN (`LAN_CIDR` dans `.env.shared`, middleware Traefik
 `ipallowlist`) : le client torrent doit pointer vers
 `https://transmission.<DOMAIN>/transmission/rpc`, pas `localhost:9091`
 (plus de port publié sur l'hôte).
@@ -416,7 +416,9 @@ moment du backup pour être fidèle.
    `PUID`/`PGID` (uid/gid de l'utilisateur qui doit posséder les fichiers
    créés), `RENDER_GID` (`getent group render` si vous avez un GPU),
    `DOMAIN` (le vôtre), `DATA_ROOT` (où stocker les données applicatives —
-   idéalement un disque avec de la place).
+   idéalement un disque avec de la place), `LAN_CIDR` (plage de votre
+   réseau local — restreint l'accès à Transmission/Arr/dashboard via le
+   middleware Traefik `ipallowlist`, lu par `vpn/`, `arr/` et `traefik/`).
 
 3. **Créer le réseau Docker partagé**
    ```sh
@@ -435,15 +437,7 @@ moment du backup pour être fidèle.
 5. **Config OpenVPN** (si vous utilisez la stack `vpn/`) : déposez le
    fichier `.ovpn` fourni par votre provider dans `vpn/custom/` (voir la
    doc de [haugene/docker-transmission-openvpn](https://haugene.github.io/docker-transmission-openvpn/)
-   pour `OPENVPN_PROVIDER=CUSTOM`). Adaptez aussi le CIDR LAN en dur
-   (`ipallowlist.sourcerange=192.168.0.0/24`) à votre propre réseau local —
-   présent dans **plusieurs** fichiers, pas seulement `vpn/docker-compose.yml` :
-   ```sh
-   grep -rl 'ipallowlist.sourcerange' --include=docker-compose.yml .
-   ```
-   (au moment d'écrire ces lignes : `vpn/docker-compose.yml`,
-   `arr/docker-compose.yml` — trois fois, Prowlarr/Sonarr/Radarr — et
-   `traefik/docker-compose.yml` pour le dashboard.)
+   pour `OPENVPN_PROVIDER=CUSTOM`).
 
 6. **Montages personnels** (Jellyfin, Nextcloud) — copier les exemples et
    pointer vers vos propres dossiers :

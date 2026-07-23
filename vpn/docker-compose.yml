@@ -99,9 +99,9 @@ services:
       - "traefik.http.routers.transmission.rule=Host(`transmission.${DOMAIN}`)"
       - "traefik.http.routers.transmission.entrypoints=websecure"
       - "traefik.http.routers.transmission.tls.certresolver=letsencrypt"
-      # Client torrent : jamais exposé au WAN, seul le LAN (192.168.0.0/24) peut l'atteindre.
+      # Client torrent : jamais exposé au WAN, seul le LAN (LAN_CIDR, .env.shared) peut l'atteindre.
       - "traefik.http.routers.transmission.middlewares=transmission-lan-only"
-      - "traefik.http.middlewares.transmission-lan-only.ipallowlist.sourcerange=192.168.0.0/24"
+      - "traefik.http.middlewares.transmission-lan-only.ipallowlist.sourcerange=${LAN_CIDR}"
       - "traefik.http.services.transmission.loadbalancer.server.port=8080"
       - "traefik.docker.network=traefik-public"
     logging:

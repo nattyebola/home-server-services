@@ -80,7 +80,7 @@ services:
       # Liste tous les sous-domaines internes : LAN-only comme arr/transmission,
       # pas exposé au WAN comme jellyfin/nextcloud/seerr.
       - "traefik.http.routers.dashboard.middlewares=dashboard-lan-only"
-      - "traefik.http.middlewares.dashboard-lan-only.ipallowlist.sourcerange=192.168.0.0/24"
+      - "traefik.http.middlewares.dashboard-lan-only.ipallowlist.sourcerange=${LAN_CIDR}"
       - "traefik.http.services.dashboard.loadbalancer.server.port=8080"
       - "traefik.docker.network=traefik-public"
     logging:
