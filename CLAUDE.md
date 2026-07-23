@@ -46,6 +46,13 @@ explicitement :
   chemins de cette machine.
 - **Nextcloud** : image communautaire (pas AIO — incompatible avec
   rootless/infra-as-code, cf. README).
+- **Hôte Linux natif requis, pas de support Windows/WSL2** (évalué le
+  2026-07-23, cf. README section "Windows / WSL2") : noyau WSL2 sans
+  chargement de module (casse le fix `ip_tables`), NAT cassant la
+  joignabilité 80/443 pour Let's Encrypt, VM non persistante (casse le
+  cron de backup), hardlinks Sonarr/Radarr cassés sur un disque Windows
+  monté en drvfs, pas de passthrough VAAPI pour Jellyfin. Ne pas proposer
+  WSL2 comme option de déploiement sans que ces points soient résolus.
 - **Seerr (`seerr/`, image `ghcr.io/seerr-team/seerr`)** pour la recherche/
   requête unifiée, pas Jellyseerr/Overseerr — les deux projets ont fusionné
   dans Seerr et sont dépréciés depuis (voir docs.seerr.dev). Ne pas proposer

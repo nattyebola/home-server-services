@@ -380,10 +380,47 @@ moment du backup pour être fidèle.
   hairpin (`location /sites/` → `https://www.<DOMAIN>/`) dans la config
   nginx ; retirée avec le plugin.
 
+### Windows / WSL2
+
+Ce repo suppose un vrai hôte Linux (bare metal ou VM Linux) ; **pas testé
+ni recommandé sous Windows + WSL2**, pour plusieurs raisons qui touchent
+au cœur de l'architecture, pas de simples détails :
+
+- Le noyau WSL2 est un noyau Microsoft figé, sans chargement de module à
+  la `modprobe`/`systemd-modules-load` — le fix `ip_tables` (voir
+  [Pièges rencontrés — VPN/Transmission](#vpntransmission)) risque de ne
+  pas s'appliquer, et sans lui le kill-switch iptables de
+  `transmission-vpn` ne fonctionne probablement pas.
+- Traefik + Let's Encrypt (HTTP-01) exigent une machine joignable
+  directement depuis internet sur 80/443 ; sous WSL2 le trafic doit
+  traverser routeur → Windows → VM WSL2 (NAT), ce qui demande des règles
+  `netsh portproxy` en plus et une IP de VM qui change à chaque
+  redémarrage (sauf mode "mirrored networking", récent et pas garanti
+  stable).
+- WSL2 n'est pas un service persistant : Windows peut arrêter la VM en
+  idle, ce qui casse la sauvegarde cron du dimanche (`make cron-install`)
+  et la disponibilité continue des services, sauf configuration
+  supplémentaire pour empêcher l'arrêt/forcer le démarrage au boot.
+- Les hardlinks dont dépendent l'import Sonarr/Radarr et
+  `torrent-cleanup.py` (voir CLAUDE.md, section hardlinks) ne fonctionnent
+  que si `DATA_ROOT` est sur le filesystem natif WSL2 (ext4 virtuel) — sur
+  un disque Windows monté en `/mnt/c/...` (drvfs), ils cassent et on
+  retombe sur des copies complètes.
+- Le passthrough GPU de WSL2 cible CUDA/DirectML, pas les render nodes
+  VAAPI Intel/AMD (`/dev/dri/renderD128`) — le transcodage matériel
+  Jellyfin est probablement inutilisable tel quel.
+
+Le modèle rootless (`cap_drop`/`no-new-privileges`) n'a lui aucun souci
+particulier sous WSL2. Les stacks sans réseau public ni VPN (Nextcloud,
+Jellyfin sans transcodage matériel) pourraient tourner en bricolant un
+peu, mais l'architecture globale ne s'y prête pas.
+
 ## Installation
 
 ### Prérequis
 
+- Un hôte Linux natif (voir [Windows / WSL2](#windows--wsl2) juste
+  au-dessus pour pourquoi).
 - Docker Engine + Docker Compose v2 (`docker compose`, pas
   `docker-compose`), `make`, `git`.
 - Un nom de domaine dont vous contrôlez le DNS (pour les sous-domaines et
