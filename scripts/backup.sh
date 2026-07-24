@@ -72,6 +72,12 @@ restic backup \
 	"$STAGING_DIR" \
 	--tag weekly --tag "commit-$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 
+echo "==> checking repository integrity (structure + 5% of data packs read back)"
+# 5%/week averages a full --read-data pass roughly every ~5 months without
+# adding much I/O to each run — catches silent corruption long before a
+# restore would, instead of only discovering it then.
+restic check --read-data-subset=5%
+
 echo "==> pruning old snapshots (keep last 8 weekly, ~2 months)"
 restic forget --keep-weekly 8 --prune
 
