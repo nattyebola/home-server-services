@@ -133,6 +133,20 @@ explicitement :
   nouveau fichier statique est ajouté à la racine servie par `dashboard`,
   garder `robots.txt` à jour dans `dashboard/assets/` (source versionnée),
   pas directement dans `dashboard/html/` (généré, gitignoré).
+- **HSTS généralisé à tous les services** (ajouté le 2026-07-24), y compris
+  LAN-only — middleware `hsts` (`stsSeconds=15552000`,
+  `stsIncludeSubdomains=true`, `forceSTSHeader=true`) défini **une seule
+  fois**, sur le container `traefik` lui-même (`traefik/docker-compose.yml`,
+  labels sans routeur associé — Traefik ne se reverse-proxy pas, mais un
+  container avec `traefik.enable=true` peut déclarer un middleware sans
+  router pour que d'autres stacks le référencent). Chaque stack l'ajoute à
+  son propre routeur via `hsts@docker` (`@docker` = provider, nécessaire
+  pour référencer un middleware déclaré sur un autre container/stack) —
+  ne pas repasser en dur `stsSeconds`/`includeSubdomains` dans un compose
+  file, toujours `hsts@docker`. `nextcloud-hsts` (middleware local,
+  dupliquant les mêmes valeurs) supprimé au passage. Un routeur avec déjà
+  un autre middleware (ex. `arr-lan-only`, `dashboard-headers`) le combine
+  en liste séparée par virgules : `arr-lan-only,hsts@docker`.
 
 ## Pièges à ne pas répéter
 

@@ -68,6 +68,17 @@ Reverse proxy + TLS. Trois containers :
 Config statique dans `traefik.yml`. L'email de contact ACME est fourni par
 variable d'env (`traefik/.env`, voir plus bas), jamais en dur dans le YAML.
 
+HSTS (`Strict-Transport-Security`, ajouté le 2026-07-24) généralisé à tous
+les services, y compris LAN-only (Transmission/Prowlarr/Sonarr/Radarr) :
+middleware `hsts` défini une seule fois sur le container `traefik`
+(labels — pas de routeur associé, juste une déclaration de middleware
+réutilisable), référencé depuis chaque stack via `hsts@docker` plutôt que
+redéfini partout. `includeSubDomains` posé sur chaque service individuel
+plutôt que sur le seul domaine nu (dashboard) : sinon un visiteur qui ne
+charge jamais `<DOMAIN>` directement (favori pointant sur `jellyfin.<DOMAIN>`
+par ex.) ne recevrait jamais la directive et resterait sans protection
+downgrade sur ce sous-domaine.
+
 ### Jellyfin (`jellyfin/`)
 
 Media server, accès GPU pour le transcodage (`/dev/dri/renderD128` +

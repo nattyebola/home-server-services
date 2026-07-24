@@ -100,7 +100,8 @@ services:
       - "traefik.http.routers.transmission.entrypoints=websecure"
       - "traefik.http.routers.transmission.tls.certresolver=letsencrypt"
       # Client torrent : jamais exposé au WAN, seul le LAN (LAN_CIDR, .env.shared) peut l'atteindre.
-      - "traefik.http.routers.transmission.middlewares=transmission-lan-only"
+      # hsts défini une seule fois dans traefik/docker-compose.yml, voir CLAUDE.md
+      - "traefik.http.routers.transmission.middlewares=transmission-lan-only,hsts@docker"
       - "traefik.http.middlewares.transmission-lan-only.ipallowlist.sourcerange=${LAN_CIDR}"
       - "traefik.http.services.transmission.loadbalancer.server.port=8080"
       - "traefik.docker.network=traefik-public"

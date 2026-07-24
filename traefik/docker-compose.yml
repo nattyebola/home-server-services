@@ -48,6 +48,15 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    labels:
+      # Pas de routeur ici (Traefik ne se reverse-proxy pas lui-même) : juste
+      # une déclaration de middleware, réutilisable par toutes les stacks via
+      # `hsts@docker` dans leurs propres labels `...routers.<x>.middlewares`
+      # — évite de dupliquer stsSeconds/includeSubdomains dans chaque stack.
+      - "traefik.enable=true"
+      - "traefik.http.middlewares.hsts.headers.stsSeconds=15552000"
+      - "traefik.http.middlewares.hsts.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.hsts.headers.forceSTSHeader=true"
     logging:
       driver: json-file
       options:
@@ -81,7 +90,8 @@ services:
       # LAN-only (arr/transmission), mais leurs cartes sont grisées côté client
       # par un probing JS (voir scripts/generate-dashboard.sh) qui détecte le
       # 403 renvoyé par leur propre ipallowlist quand l'appelant est sur le WAN.
-      - "traefik.http.routers.dashboard.middlewares=dashboard-headers"
+      # hsts défini une seule fois plus haut sur ce même container, voir CLAUDE.md
+      - "traefik.http.routers.dashboard.middlewares=dashboard-headers,hsts@docker"
       # X-Robots-Tag en plus de la balise <meta robots> du HTML généré : les
       # crawlers qui ne parsent pas le HTML (ou tapent une ressource non-HTML)
       # respectent quand même l'en-tête. frameDeny/nosniff/referrerPolicy :
