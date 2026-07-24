@@ -122,6 +122,17 @@ explicitement :
   à jour via `occ config:system:set` dans le container `app` (pas en
   éditant le fichier à la main), sinon Nextcloud rejette le nouveau nom
   d'hôte avec une erreur "domaine non fiable".
+- **Dashboard exclu des moteurs de recherche/crawlers IA** (ajouté le
+  2026-07-24, conséquence de son exposition WAN) : balise `<meta
+  name="robots">` dans le HTML généré + `dashboard/assets/robots.txt`
+  (versionné, `Disallow: /`) + en-tête `X-Robots-Tag` posé par le
+  middleware Traefik `dashboard-headers` (`traefik/docker-compose.yml`) —
+  volontairement redondant (crawler qui ne lit que le HTML vs celui qui ne
+  lit que les en-têtes). Même middleware : `X-Frame-Options: DENY`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`. Si un
+  nouveau fichier statique est ajouté à la racine servie par `dashboard`,
+  garder `robots.txt` à jour dans `dashboard/assets/` (source versionnée),
+  pas directement dans `dashboard/html/` (généré, gitignoré).
 
 ## Pièges à ne pas répéter
 

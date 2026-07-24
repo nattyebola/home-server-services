@@ -120,6 +120,7 @@ done
 
 mkdir -p "$OUT_DIR/assets/logos"
 cp "$LOGOS_SRC"/*.svg "$OUT_DIR/assets/logos/"
+cp "$REPO_ROOT/dashboard/assets/robots.txt" "$OUT_DIR/robots.txt"
 
 cat >"$OUT_FILE" <<HTML
 <!doctype html>
@@ -127,6 +128,7 @@ cat >"$OUT_FILE" <<HTML
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive">
 <title>Services — ${DOMAIN}</title>
 <style>
   :root { color-scheme: light dark; }

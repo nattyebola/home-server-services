@@ -281,6 +281,17 @@ une redirection vers du HTML) : `transmission-proxy` redirige
 `/transmission/web/images/favicon.ico` pour ce service (vérifié le
 2026-07-24 par sonde `curl` avec IP source forcée dans/hors `LAN_CIDR`).
 
+Étant public, la page est explicitement exclue des moteurs de recherche et
+des crawlers d'entraînement IA (ajouté le 2026-07-24) : balise
+`<meta name="robots" content="noindex, nofollow, noarchive">` dans le HTML
+généré, `dashboard/assets/robots.txt` (`Disallow: /`, versionné, copié tel
+quel par `scripts/generate-dashboard.sh`) et en-tête `X-Robots-Tag` posé
+par le middleware Traefik `dashboard-headers` — redondant avec la balise
+`<meta>` mais couvre aussi les crawlers qui ne parsent pas le HTML. Ce même
+middleware ajoute `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`
+et `Referrer-Policy: no-referrer` (durcissement générique, sans lien avec
+l'indexation).
+
 Le contenu (`dashboard/html/`, gitignoré) est entièrement généré par
 `make dashboard-refresh` (`scripts/generate-dashboard.sh`), qui dérive
 public/local/arrêté de l'état réel plutôt que d'une liste à maintenir à la

@@ -81,6 +81,15 @@ services:
       # LAN-only (arr/transmission), mais leurs cartes sont grisées côté client
       # par un probing JS (voir scripts/generate-dashboard.sh) qui détecte le
       # 403 renvoyé par leur propre ipallowlist quand l'appelant est sur le WAN.
+      - "traefik.http.routers.dashboard.middlewares=dashboard-headers"
+      # X-Robots-Tag en plus de la balise <meta robots> du HTML généré : les
+      # crawlers qui ne parsent pas le HTML (ou tapent une ressource non-HTML)
+      # respectent quand même l'en-tête. frameDeny/nosniff/referrerPolicy :
+      # durcissement standard, sans lien avec le blocage des robots.
+      - "traefik.http.middlewares.dashboard-headers.headers.customResponseHeaders.X-Robots-Tag=noindex, nofollow, noarchive"
+      - "traefik.http.middlewares.dashboard-headers.headers.frameDeny=true"
+      - "traefik.http.middlewares.dashboard-headers.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.dashboard-headers.headers.referrerPolicy=no-referrer"
       - "traefik.http.services.dashboard.loadbalancer.server.port=8080"
       - "traefik.docker.network=traefik-public"
     logging:
