@@ -16,7 +16,7 @@ repris ailleurs (voir [Installation](#installation)).
 flowchart LR
     Internet(("Internet\n(LAN pour transmission)")) -->|"443"| Traefik
 
-    Traefik -->|"www.DOMAIN"| Web[nextcloud web]
+    Traefik -->|"nextcloud.DOMAIN"| Web[nextcloud web]
     Web --> App[nextcloud app]
     App --> DB[("db-next\nPostgres")]
 
@@ -41,7 +41,7 @@ flowchart LR
     Seerr -->|"arr-internal"| Radarr
     Seerr -->|"traefik-public"| Jellyfin
 
-    Traefik -->|"dashboard.DOMAIN"| Dashboard[dashboard]
+    Traefik -->|"DOMAIN, www.DOMAIN"| Dashboard[dashboard]
 ```
 
 Un seul point d'entrée HTTPS (Traefik, port 443) pour tous les services,
@@ -251,7 +251,9 @@ groupes — **Public** (Jellyfin, Nextcloud, Seerr), **Local/LAN**
 service dont le container n'est pas actuellement démarré) — avec logo
 cliquable qui redirige vers le service. Servie par le container
 `dashboard` de la stack `traefik/` (voir [Traefik](#traefik-traefik)),
-accessible en WAN comme en LAN (`dashboard.<DOMAIN>`, pas de middleware
+accessible en WAN comme en LAN sur le domaine nu et `www.<DOMAIN>` (pas de
+sous-domaine `dashboard.` dédié depuis le 2026-07-24, `<DOMAIN>`/`www.<DOMAIN>`
+libérés par le passage de Nextcloud sur `nextcloud.<DOMAIN>`), pas de middleware
 `ipallowlist` sur son router — évalué le 2026-07-24 : les sous-domaines
 listés sont de toute façon publics via les logs Certificate Transparency
 dès qu'un certificat Let's Encrypt leur a été émis, donc restreindre la
@@ -518,11 +520,11 @@ peu, mais l'architecture globale ne s'y prête pas.
    haut), l'override ne sert que si vous voulez cette bibliothèque ailleurs.
 
 7. **DNS** : créez un enregistrement (A ou AAAA) pour chaque sous-domaine
-   utilisé vers l'IP publique de la machine — au minimum
-   `www.<DOMAIN>` et `jellyfin.<DOMAIN>`, plus `transmission.<DOMAIN>` si
-   vous déployez la stack VPN, `prowlarr.<DOMAIN>`/`sonarr.<DOMAIN>`/
-   `radarr.<DOMAIN>` si vous déployez la stack `arr`, et `seerr.<DOMAIN>`
-   si vous déployez `seerr`.
+   utilisé vers l'IP publique de la machine — au minimum `<DOMAIN>` et
+   `www.<DOMAIN>` (dashboard), `nextcloud.<DOMAIN>` et `jellyfin.<DOMAIN>`,
+   plus `transmission.<DOMAIN>` si vous déployez la stack VPN,
+   `prowlarr.<DOMAIN>`/`sonarr.<DOMAIN>`/`radarr.<DOMAIN>` si vous déployez
+   la stack `arr`, et `seerr.<DOMAIN>` si vous déployez `seerr`.
 
 8. **Démarrer Traefik en premier**
    ```sh

@@ -111,6 +111,17 @@ explicitement :
   générique : `transmission-proxy` le redirige vers du HTML, chemin
   overridé vers `/transmission/web/images/favicon.ico`. Ne pas proposer de
   revenir à un dashboard LAN-only sans redemande explicite.
+- **Le dashboard vit sur le domaine nu et `www.${DOMAIN}`, pas
+  `dashboard.${DOMAIN}`** (changé le 2026-07-24, en même temps que le
+  passage de Nextcloud sur `nextcloud.${DOMAIN}` — avant sur
+  `www.${DOMAIN}`, ce qui bloquait ces deux domaines pour le dashboard).
+  Routeur Traefik : `Host(\`${DOMAIN}\`) || Host(\`www.${DOMAIN}\`)` dans
+  `traefik/docker-compose.yml`. Le changement de domaine de Nextcloud
+  n'est pas qu'un label Traefik : `trusted_domains`/`overwrite.cli.url`
+  sont aussi dans `config/config.php` (persisté, hors compose) — à mettre
+  à jour via `occ config:system:set` dans le container `app` (pas en
+  éditant le fichier à la main), sinon Nextcloud rejette le nouveau nom
+  d'hôte avec une erreur "domaine non fiable".
 
 ## Pièges à ne pas répéter
 
