@@ -121,6 +121,8 @@ done
 mkdir -p "$OUT_DIR/assets/logos"
 cp "$LOGOS_SRC"/*.svg "$OUT_DIR/assets/logos/"
 cp "$REPO_ROOT/dashboard/assets/robots.txt" "$OUT_DIR/robots.txt"
+cp "$REPO_ROOT/dashboard/assets/favicon.png" "$OUT_DIR/assets/favicon.png"
+cp "$REPO_ROOT/dashboard/assets/favicon.ico" "$OUT_DIR/favicon.ico"
 
 cat >"$OUT_FILE" <<HTML
 <!doctype html>
@@ -129,6 +131,8 @@ cat >"$OUT_FILE" <<HTML
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow, noarchive">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="/assets/favicon.png">
 <title>Services — ${DOMAIN}</title>
 <style>
   :root { color-scheme: light dark; }
