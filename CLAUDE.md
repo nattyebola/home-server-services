@@ -29,9 +29,10 @@ explicitement :
   `.env.shared`/`.env.shared.example` à la racine (`.env.shared` gitignoré
   depuis le 2026-07-18, il identifiait ce déploiement — domaine, chemins).
   `LAN_CIDR` (ajouté le 2026-07-23) alimente le middleware Traefik
-  `ipallowlist.sourcerange` dans `vpn/`, `arr/` et
-  `traefik/docker-compose.yml` — ne jamais remettre ce CIDR en dur dans un
-  compose file, toujours `${LAN_CIDR}`. `DNS_PRIMARY`/`DNS_SECONDARY`
+  `ipallowlist.sourcerange` dans `vpn/` et `arr/` (plus dans
+  `traefik/docker-compose.yml` depuis le 2026-07-24, voir dashboard
+  ci-dessous) — ne jamais remettre ce CIDR en dur dans un compose file,
+  toujours `${LAN_CIDR}`. `DNS_PRIMARY`/`DNS_SECONDARY`
   (ajoutés le 2026-07-23, mêmes valeurs Cloudflare par défaut qu'avant —
   pas un secret, juste une valeur dupliquée à ne pas refaire diverger)
   alimentent les blocs `dns:` de `arr/`, `vpn/` et `jellyfin/`. Toujours
@@ -95,6 +96,21 @@ explicitement :
   affiché diffère (VO/VF, ponctuation...). Best-effort : une instance arr
   injoignable ou un fichier jamais importé ne bloque jamais la suppression
   des fichiers eux-mêmes.
+- **`dashboard` (`traefik/docker-compose.yml`) accessible en WAN comme en
+  LAN** (changé le 2026-07-24, avant restreint par `ipallowlist`) — les
+  sous-domaines qu'elle liste sont de toute façon publics via Certificate
+  Transparency dès qu'un certificat Let's Encrypt leur a été émis, donc
+  restreindre l'accès à la page n'apportait pas de confidentialité réelle.
+  Les cartes des services LAN-only (Transmission/Prowlarr/Sonarr/Radarr)
+  restent dans le HTML généré et cliquables, mais un script côté client
+  (dans `scripts/generate-dashboard.sh`) les grise dynamiquement pour un
+  visiteur WAN : il sonde une image réelle de chaque service via `<img>`
+  (`onload`/`onerror`, pas `fetch`/`XHR` — ceux-ci échouent pareil, bloqués
+  ou non par CORS, donc ne distinguent pas un 403 ipallowlist d'un succès).
+  Chemin de la sonde dans `PROBE_PATH` — ne pas supposer `/favicon.ico`
+  générique : `transmission-proxy` le redirige vers du HTML, chemin
+  overridé vers `/transmission/web/images/favicon.ico`. Ne pas proposer de
+  revenir à un dashboard LAN-only sans redemande explicite.
 
 ## Pièges à ne pas répéter
 

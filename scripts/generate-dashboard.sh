@@ -49,6 +49,15 @@ declare -A LOGO_FILE=(
 	[seerr/seerr]="seerr.svg"
 )
 
+# chemin d'une image réelle (200, Content-Type image/*) servie par chaque
+# service LAN-only, utilisée par le probing JS pour détecter un blocage
+# ipallowlist (403) côté WAN — voir card_html(). /favicon.ico par défaut ;
+# transmission-proxy redirige /favicon.ico vers /transmission/web/ (du HTML,
+# pas une image), d'où l'override ci-dessous (vérifié le 2026-07-24).
+declare -A PROBE_PATH=(
+	[vpn/transmission-proxy]="/transmission/web/images/favicon.ico"
+)
+
 # services actuellement démarrés, sous forme "projet/service"
 declare -A RUNNING
 while IFS= read -r line; do
@@ -74,14 +83,16 @@ local_cards=""
 down_cards=""
 
 card_html() {
-	local key="$1" host="$2" clickable="$3"
+	local key="$1" host="$2" clickable="$3" probe="${4:-}"
 	local name="${DISPLAY_NAME[$key]:-$key}"
 	local logo="${LOGO_FILE[$key]:-}"
 	local img=""
 	[ -n "$logo" ] && img="<img src=\"/assets/logos/$logo\" alt=\"\" class=\"logo\">"
 	if [ "$clickable" = "1" ]; then
-		printf '<a class="card" href="https://%s">%s<span class="name">%s</span><span class="host">%s</span></a>\n' \
-			"$host" "$img" "$name" "$host"
+		local probe_attr=""
+		[ -n "$probe" ] && probe_attr=" data-probe=\"https://$host$probe\""
+		printf '<a class="card" href="https://%s"%s>%s<span class="name">%s</span><span class="host">%s</span></a>\n' \
+			"$host" "$probe_attr" "$img" "$name" "$host"
 	else
 		printf '<div class="card card-down">%s<span class="name">%s</span><span class="host">arrêté</span></div>\n' \
 			"$img" "$name"
@@ -97,7 +108,7 @@ for stack in $STACKS; do
 		key="$stack/$service"
 		if [ -n "${RUNNING[$key]:-}" ]; then
 			if [ "$lan" = "true" ]; then
-				local_cards+="$(card_html "$key" "$host" 1)"
+				local_cards+="$(card_html "$key" "$host" 1 "${PROBE_PATH[$key]:-/favicon.ico}")"
 			else
 				public_cards+="$(card_html "$key" "$host" 1)"
 			fi
@@ -148,6 +159,7 @@ cat >"$OUT_FILE" <<HTML
   }
   a.card:hover { transform: translateY(-2px); }
   .card-down { opacity: .45; }
+  .card-lan-blocked { opacity: .45; pointer-events: none; }
   .logo { width: 40px; height: 40px; object-fit: contain; }
   .name { font-weight: 600; font-size: .95rem; }
   .host { font-size: .75rem; opacity: .6; word-break: break-all; text-align: center; }
@@ -172,6 +184,22 @@ cat >"$OUT_FILE" <<HTML
     <h2>Stack non lancée</h2>
     <div class="grid">${down_cards:-<span class=\"empty\">aucune</span>}</div>
   </section>
+
+  <script>
+    // Grise les cartes LAN-only quand l'appelant est sur le WAN : leur
+    // ipallowlist Traefik répond 403 à la sonde ci-dessous, ce que <img>
+    // distingue d'un chargement réussi sans dépendre de CORS.
+    document.querySelectorAll('.card[data-probe]').forEach(function (card) {
+      var probe = new Image();
+      probe.onerror = function () {
+        card.classList.add('card-lan-blocked');
+        card.removeAttribute('href');
+        var host = card.querySelector('.host');
+        if (host) { host.textContent = 'accessible en LAN uniquement'; }
+      };
+      probe.src = card.dataset.probe + '?t=' + Date.now();
+    });
+  </script>
 </body>
 </html>
 HTML

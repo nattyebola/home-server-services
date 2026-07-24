@@ -41,7 +41,7 @@ flowchart LR
     Seerr -->|"arr-internal"| Radarr
     Seerr -->|"traefik-public"| Jellyfin
 
-    Traefik -.->|"dashboard.DOMAIN\nLAN only"| Dashboard[dashboard]
+    Traefik -->|"dashboard.DOMAIN"| Dashboard[dashboard]
 ```
 
 Un seul point d'entrée HTTPS (Traefik, port 443) pour tous les services,
@@ -251,12 +251,33 @@ groupes — **Public** (Jellyfin, Nextcloud, Seerr), **Local/LAN**
 service dont le container n'est pas actuellement démarré) — avec logo
 cliquable qui redirige vers le service. Servie par le container
 `dashboard` de la stack `traefik/` (voir [Traefik](#traefik-traefik)),
-exposée en LAN-only (`dashboard.<DOMAIN>`, middleware `ipallowlist` — elle
-liste tous les sous-domaines internes, pas de raison de l'exposer au WAN).
-Pas de stack dédiée : Traefik ne sachant servir aucun fichier statique
-lui-même, ce backend HTTP minimal est rattaché à sa stack plutôt qu'à un
-`docker-compose.yml` séparé — `dashboard/` ne contient donc que les assets
-et le script de génération, pas de compose file.
+accessible en WAN comme en LAN (`dashboard.<DOMAIN>`, pas de middleware
+`ipallowlist` sur son router — évalué le 2026-07-24 : les sous-domaines
+listés sont de toute façon publics via les logs Certificate Transparency
+dès qu'un certificat Let's Encrypt leur a été émis, donc restreindre la
+page elle-même n'apportait pas de confidentialité réelle sur leur
+existence). Pas de stack dédiée : Traefik ne sachant servir aucun fichier
+statique lui-même, ce backend HTTP minimal est rattaché à sa stack plutôt
+qu'à un `docker-compose.yml` séparé — `dashboard/` ne contient donc que
+les assets et le script de génération, pas de compose file.
+
+Les cartes du groupe **Local/LAN** restent cliquables dans le HTML généré
+(elles pointent vers `https://<service>.<DOMAIN>`, qui répond bien 403 côté
+Traefik pour un appelant hors `LAN_CIDR`), mais un petit script côté client
+les grise dynamiquement pour un visiteur WAN : au chargement, chaque carte
+LAN sonde une image réelle du service concerné (`<img>`, pas `fetch` — un
+`fetch`/`XMLHttpRequest` cross-origin échoue de la même façon (CORS) que la
+ressource soit bloquée ou non par l'ipallowlist, il ne permet donc pas de
+distinguer les deux cas ; `<img>` s'appuie sur `onload`/`onerror`, qui eux
+reflètent le vrai statut HTTP sans dépendre de CORS). `onerror` (403 renvoyé
+par l'ipallowlist du service, appelant hors LAN) grise la carte et retire
+son lien ; `onload` (LAN) ne change rien. Le chemin sondé par service est
+dans `PROBE_PATH` (`scripts/generate-dashboard.sh`, `/favicon.ico` par
+défaut) — attention, ce chemin doit répondre par une véritable image (pas
+une redirection vers du HTML) : `transmission-proxy` redirige
+`/favicon.ico` vers `/transmission/web/` (HTML), d'où l'override vers
+`/transmission/web/images/favicon.ico` pour ce service (vérifié le
+2026-07-24 par sonde `curl` avec IP source forcée dans/hors `LAN_CIDR`).
 
 Le contenu (`dashboard/html/`, gitignoré) est entièrement généré par
 `make dashboard-refresh` (`scripts/generate-dashboard.sh`), qui dérive
@@ -461,8 +482,8 @@ peu, mais l'architecture globale ne s'y prête pas.
    créés), `RENDER_GID` (`getent group render` si vous avez un GPU),
    `DOMAIN` (le vôtre), `DATA_ROOT` (où stocker les données applicatives —
    idéalement un disque avec de la place), `LAN_CIDR` (plage de votre
-   réseau local — restreint l'accès à Transmission/Arr/dashboard via le
-   middleware Traefik `ipallowlist`, lu par `vpn/`, `arr/` et `traefik/`),
+   réseau local — restreint l'accès à Transmission/Arr via le middleware
+   Traefik `ipallowlist`, lu par `vpn/` et `arr/`),
    `DNS_PRIMARY`/`DNS_SECONDARY` (résolveurs DNS forcés sur Jellyfin/arr/vpn
    pour contourner un éventuel DNS de FAI menteur — Cloudflare par défaut,
    pas besoin d'y toucher sauf préférence).
