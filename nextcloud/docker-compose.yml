@@ -46,6 +46,15 @@ services:
     depends_on:
       db-next:
         condition: service_healthy
+    # nextcloud:fpm-alpine only listens on the php-fpm fastcgi socket (9000),
+    # no HTTP of its own — a plain TCP connect is the simplest signal that
+    # the fpm master/worker are still accepting, without needing cgi-fcgi.
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 9000 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -63,6 +72,15 @@ services:
       - /etc/localtime:/etc/localtime:ro
     depends_on:
       - app
+    # status.php is proxied through to app's php-fpm (see app's healthcheck
+    # above) — also catches app being unreachable from web, not just nginx
+    # itself being stuck.
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8080/status.php"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     security_opt:
       - no-new-privileges:true
     cap_drop:

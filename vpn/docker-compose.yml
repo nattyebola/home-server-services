@@ -90,6 +90,18 @@ services:
     networks:
       - vpn-internal
       - traefik-public
+    # Simple connect TCP plutôt qu'une requête RPC réelle : sans en-tête
+    # X-Transmission-Session-Id, l'upstream répond 409 (comportement normal
+    # du protocole RPC de Transmission), pas un 200 — un check HTTP se
+    # tromperait de signal. Suffisant pour détecter nginx planté/bloqué ;
+    # transmission-vpn a déjà son propre healthcheck (image haugene, voir
+    # `depends_on` ci-dessus).
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8080 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     security_opt:
       - no-new-privileges:true
     cap_drop:

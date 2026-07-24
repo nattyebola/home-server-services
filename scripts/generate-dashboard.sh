@@ -64,6 +64,14 @@ while IFS= read -r line; do
 	[ -n "$line" ] && RUNNING["$line"]=1
 done < <(docker ps --filter status=running --format '{{.Label "com.docker.compose.project"}}/{{.Label "com.docker.compose.service"}}')
 
+# services avec un healthcheck en échec ("Up (unhealthy)") — voir CLAUDE.md.
+# Les services sans healthcheck défini (health=none) n'apparaissent jamais
+# ici, ce n'est pas une régression : on n'affiche que ce que Docker sait dire.
+declare -A UNHEALTHY
+while IFS= read -r line; do
+	[ -n "$line" ] && UNHEALTHY["$line"]=1
+done < <(docker ps --filter status=running --filter health=unhealthy --format '{{.Label "com.docker.compose.project"}}/{{.Label "com.docker.compose.service"}}')
+
 JQ_PROGRAM='
   (.services // {}) | to_entries[]
   | select((.value.labels // {})["traefik.enable"] == "true")
@@ -83,16 +91,19 @@ local_cards=""
 down_cards=""
 
 card_html() {
-	local key="$1" host="$2" clickable="$3" probe="${4:-}"
+	local key="$1" host="$2" clickable="$3" probe="${4:-}" unhealthy="${5:-0}"
 	local name="${DISPLAY_NAME[$key]:-$key}"
 	local logo="${LOGO_FILE[$key]:-}"
+	local logo_class="logo"
+	local warning=""
+	[ "$unhealthy" = "1" ] && logo_class="logo logo-unhealthy" && warning='<span class="warning">⚠ healthcheck en échec</span>'
 	local img=""
-	[ -n "$logo" ] && img="<img src=\"/assets/logos/$logo\" alt=\"\" class=\"logo\">"
+	[ -n "$logo" ] && img="<img src=\"/assets/logos/$logo\" alt=\"\" class=\"$logo_class\">"
 	if [ "$clickable" = "1" ]; then
 		local probe_attr=""
 		[ -n "$probe" ] && probe_attr=" data-probe=\"https://$host$probe\""
-		printf '<a class="card" href="https://%s"%s>%s<span class="name">%s</span><span class="host">%s</span></a>\n' \
-			"$host" "$probe_attr" "$img" "$name" "$host"
+		printf '<a class="card" href="https://%s"%s>%s%s<span class="name">%s</span><span class="host">%s</span></a>\n' \
+			"$host" "$probe_attr" "$img" "$warning" "$name" "$host"
 	else
 		printf '<div class="card card-down">%s<span class="name">%s</span><span class="host">arrêté</span></div>\n' \
 			"$img" "$name"
@@ -106,11 +117,13 @@ for stack in $STACKS; do
 		host="$(jq -r '.host' <<<"$row")"
 		lan="$(jq -r '.lan' <<<"$row")"
 		key="$stack/$service"
+		unhealthy=0
+		[ -n "${UNHEALTHY[$key]:-}" ] && unhealthy=1
 		if [ -n "${RUNNING[$key]:-}" ]; then
 			if [ "$lan" = "true" ]; then
-				local_cards+="$(card_html "$key" "$host" 1 "${PROBE_PATH[$key]:-/favicon.ico}")"
+				local_cards+="$(card_html "$key" "$host" 1 "${PROBE_PATH[$key]:-/favicon.ico}" "$unhealthy")"
 			else
-				public_cards+="$(card_html "$key" "$host" 1)"
+				public_cards+="$(card_html "$key" "$host" 1 "" "$unhealthy")"
 			fi
 		else
 			down_cards+="$(card_html "$key" "$host" 0)"
@@ -167,6 +180,12 @@ cat >"$OUT_FILE" <<HTML
   .card-down { opacity: .45; }
   .card-lan-blocked { opacity: .45; pointer-events: none; }
   .logo { width: 40px; height: 40px; object-fit: contain; }
+  .logo-unhealthy {
+    outline: 3px solid #ef4444; outline-offset: 3px; border-radius: 8px;
+  }
+  .warning {
+    font-size: .7rem; font-weight: 600; color: #ef4444; text-align: center;
+  }
   .name { font-weight: 600; font-size: .95rem; }
   .host { font-size: .75rem; opacity: .6; word-break: break-all; text-align: center; }
   .empty { opacity: .5; font-size: .9rem; }

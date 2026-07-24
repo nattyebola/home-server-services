@@ -14,3 +14,7 @@ MAILTO=""
 # the placeholder below is substituted by `make cron-install` with this
 # checkout's absolute path — never hardcode a literal path here.
 0 3 * * 0 __REPO_ROOT__/scripts/backup.sh >> __REPO_ROOT__/sauvegarde/backup.log 2>&1
+
+# Refresh the dashboard every 5 minutes — mainly to reflect healthcheck
+# status (see CLAUDE.md) without waiting on a manual `make dashboard-refresh`.
+*/5 * * * * __REPO_ROOT__/scripts/generate-dashboard.sh >> __REPO_ROOT__/dashboard/refresh.log 2>&1

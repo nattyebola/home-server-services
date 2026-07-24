@@ -155,6 +155,37 @@ explicitement :
   statique est ajouté à la racine servie par `dashboard`, garder
   `robots.txt` à jour dans `dashboard/assets/` (source versionnée), pas
   directement dans `dashboard/html/` (généré, gitignoré).
+- **Healthcheck sur tous les services** (ajouté le 2026-07-24, avant la
+  moitié en étaient dépourvus : `nextcloud-app`/`web`, `seerr`, `traefik`,
+  `dashboard`, `arr/*`, `vpn/transmission-proxy` — sans ça un process
+  bloqué sans crasher restait `Up` indéfiniment, `restart: unless-stopped`
+  ne se déclenchant que sur un exit du process, jamais sur un statut
+  unhealthy). Un check HTTP réel quand un endpoint non authentifié existe
+  (`/ping` Servarr pour `prowlarr`/`sonarr`/`radarr`, `/status.php` pour
+  `web`, `/api/v1/status` pour `seerr`) ; simple connect TCP sinon
+  (`nc -z`, pour `app` sur le port fastcgi 9000 sans HTTP propre,
+  `cross-seed` sans endpoint non authentifié connu, `dashboard`/
+  `transmission-proxy` sur nginx) ; `pgrep supercronic` pour `recyclarr`
+  qui n'a aucun serveur (juste un scheduler interne — ne détecte pas un
+  job individuel bloqué, seulement le scheduler mort). `traefik` a un
+  entrypoint statique dédié `healthcheck` lié à `127.0.0.1:8082`
+  (`traefik.yml`, jamais publié dans `ports:`) + `ping: {}`, plutôt que de
+  réutiliser `web`/`websecure` — sinon la redirection http→https de
+  l'entrypoint `web` s'appliquerait aussi à la sonde interne. Version
+  volontairement simple : aucune auto-remédiation (pas de watcher type
+  `autoheal` sur le socket Docker), juste de la visibilité (`docker ps`,
+  dashboard ci-dessous).
+- **Le dashboard reflète l'état `unhealthy` d'un service** (ajouté le
+  2026-07-24, conséquence directe du point ci-dessus) :
+  `scripts/generate-dashboard.sh` lit `docker ps --filter
+  health=unhealthy` (en plus de `docker ps --filter status=running`
+  déjà utilisé pour public/local/arrêté) et ajoute un contour rouge
+  (`.logo-unhealthy`) autour du logo + un texte d'avertissement sous la
+  carte. Régénéré automatiquement toutes les 5 min par cron
+  (`scripts/crontab`, `make cron-install`) plutôt que seulement à la
+  main (`make dashboard-refresh`) — sinon un service qui devient
+  unhealthy entre deux régénérations manuelles resterait affiché comme
+  sain arbitrairement longtemps.
 
 ## Pièges à ne pas répéter
 

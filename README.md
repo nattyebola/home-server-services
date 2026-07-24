@@ -345,6 +345,14 @@ nouveau service exposé via Traefik apparaît. La regénération n'a pas
 besoin que le container tourne ; démarrer/mettre à jour la stack (`make up`
 / `make update STACK=traefik`) sert juste le résultat déjà généré.
 
+Depuis le 2026-07-24, tous les services ont un `healthcheck` Docker (voir
+plus bas, par stack) et la génération lit aussi `docker ps --filter
+health=unhealthy` : un service qui tourne mais échoue son healthcheck
+affiche un contour rouge autour de son logo et un texte d'avertissement
+sur sa carte. Le dashboard est régénéré automatiquement toutes les 5
+minutes par cron (`scripts/crontab`, `make cron-install`) pour que ça
+reste à jour sans dépendre d'un `make dashboard-refresh` manuel.
+
 ### Sauvegarde (`scripts/`)
 
 Politique volontairement simple : **restic**, hebdomadaire (cron dimanche

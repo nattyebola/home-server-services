@@ -11,6 +11,15 @@ entryPoints:
           scheme: https
   websecure:
     address: ":8443"
+  # Bound to loopback only, never published in docker-compose.yml's `ports:`
+  # — used solely by the container's own healthcheck (see docker-compose.yml),
+  # kept off `web`/`websecure` so the http->https redirection above doesn't
+  # apply to it and it isn't reachable from outside the container.
+  healthcheck:
+    address: "127.0.0.1:8082"
+
+ping:
+  entryPoint: healthcheck
 
 providers:
   docker:
