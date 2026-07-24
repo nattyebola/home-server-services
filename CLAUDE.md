@@ -351,6 +351,26 @@ explicitement :
   Cible `jellyfin:8096` en direct (réseau `traefik-public` partagé, pas de
   passage par Traefik). Clé API réutilisée depuis celle déjà générée pour
   Seerr plutôt qu'une clé dédiée à Sonarr/Radarr — voir README.
+- **`scripts/backup.sh` dumpait silencieusement la mauvaise base Postgres
+  depuis le début** (repéré le 2026-07-24 en testant `make restore` pour de
+  vrai — jusque-là jamais exercé) : `pg_dump -U "$POSTGRES_USER"
+  "${POSTGRES_DB:-$POSTGRES_USER}"` retombe sur `$POSTGRES_USER` ("postgres",
+  le superuser d'amorçage de l'image officielle) quand `POSTGRES_DB` n'est
+  pas définie — et `nextcloud/.env` ne définit que `POSTGRES_USER`/
+  `PASSWORD`, jamais `POSTGRES_DB`. Toutes les sauvegardes précédentes
+  avaient donc un `nextcloud-db.sql` de 26 lignes (juste l'en-tête pg_dump,
+  0 `COPY`) au lieu du vrai dump (~1,57M lignes, 279 tables) — la base
+  réelle s'appelle `nextcloud` (codée en dur via `POSTGRES_DB=nextcloud`
+  sur le service `app`, `nextcloud/docker-compose.yml`), pas
+  `$POSTGRES_USER`. Fix dans `backup.sh` et dans les instructions
+  affichées par `restore.sh` : fallback `${POSTGRES_DB:-nextcloud}`.
+  Validé par un restore réel + import du dump dans une base Postgres
+  temporaire (`restore_test`, supprimée après coup) : 279/279 tables,
+  compte de lignes identique à la base live sur une table témoin
+  (`oc_users`). Retenir la leçon plus généralement : un chemin de
+  restauration jamais exercé peut cacher ce genre de bug arbitrairement
+  longtemps — voir la limite `${VAR:-default}` d'un fallback silencieux
+  quand `VAR` n'est jamais définie nulle part.
 
 ## Repo
 

@@ -37,8 +37,15 @@ if ! restic snapshots >/dev/null 2>&1; then
 fi
 
 echo "==> dumping nextcloud DB (consistent, not a raw copy of db-next's data dir)"
+# La base réelle de Nextcloud est "nextcloud" (POSTGRES_DB=nextcloud codé en
+# dur sur le service app, docker-compose.yml) — pas $POSTGRES_USER. nextcloud/.env
+# ne définit que POSTGRES_USER/PASSWORD (le superuser d'amorçage de l'image
+# postgres, "postgres"), donc l'ancien fallback "${POSTGRES_DB:-$POSTGRES_USER}"
+# dumpait silencieusement la base "postgres" (quasi vide) au lieu de "nextcloud"
+# — repéré le 2026-07-24 en testant `make restore` pour de vrai : toutes les
+# sauvegardes précédentes avaient un dump DB vide (26 lignes, 0 `COPY`).
 compose_for nextcloud exec -T db-next \
-	sh -c 'pg_dump -U "$POSTGRES_USER" "${POSTGRES_DB:-$POSTGRES_USER}"' \
+	sh -c 'pg_dump -U "$POSTGRES_USER" "${POSTGRES_DB:-nextcloud}"' \
 	>"$STAGING_DIR/nextcloud-db.sql"
 
 echo "==> recording exact image digests currently running"
