@@ -50,13 +50,22 @@ services:
       - ALL
     labels:
       # Pas de routeur ici (Traefik ne se reverse-proxy pas lui-même) : juste
-      # une déclaration de middleware, réutilisable par toutes les stacks via
-      # `hsts@docker` dans leurs propres labels `...routers.<x>.middlewares`
-      # — évite de dupliquer stsSeconds/includeSubdomains dans chaque stack.
+      # des déclarations de middlewares, réutilisables par toutes les stacks
+      # via `hsts@docker`/`security-headers@docker` dans leurs propres
+      # labels `...routers.<x>.middlewares` — évite de dupliquer les mêmes
+      # valeurs dans chaque stack.
       - "traefik.enable=true"
       - "traefik.http.middlewares.hsts.headers.stsSeconds=15552000"
       - "traefik.http.middlewares.hsts.headers.stsIncludeSubdomains=true"
       - "traefik.http.middlewares.hsts.headers.forceSTSHeader=true"
+      # noindex : serveur perso, aucun service ne doit être indexé/appris par
+      # un crawler (moteur de recherche ou entraînement IA) ; frameDeny,
+      # nosniff, referrerPolicy : durcissement standard sans lien avec
+      # l'indexation. Générique à tous les services, pas propre au dashboard.
+      - "traefik.http.middlewares.security-headers.headers.customResponseHeaders.X-Robots-Tag=noindex, nofollow, noarchive"
+      - "traefik.http.middlewares.security-headers.headers.frameDeny=true"
+      - "traefik.http.middlewares.security-headers.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.security-headers.headers.referrerPolicy=no-referrer"
     logging:
       driver: json-file
       options:
@@ -90,16 +99,11 @@ services:
       # LAN-only (arr/transmission), mais leurs cartes sont grisées côté client
       # par un probing JS (voir scripts/generate-dashboard.sh) qui détecte le
       # 403 renvoyé par leur propre ipallowlist quand l'appelant est sur le WAN.
-      # hsts défini une seule fois plus haut sur ce même container, voir CLAUDE.md
-      - "traefik.http.routers.dashboard.middlewares=dashboard-headers,hsts@docker"
-      # X-Robots-Tag en plus de la balise <meta robots> du HTML généré : les
-      # crawlers qui ne parsent pas le HTML (ou tapent une ressource non-HTML)
-      # respectent quand même l'en-tête. frameDeny/nosniff/referrerPolicy :
-      # durcissement standard, sans lien avec le blocage des robots.
-      - "traefik.http.middlewares.dashboard-headers.headers.customResponseHeaders.X-Robots-Tag=noindex, nofollow, noarchive"
-      - "traefik.http.middlewares.dashboard-headers.headers.frameDeny=true"
-      - "traefik.http.middlewares.dashboard-headers.headers.contentTypeNosniff=true"
-      - "traefik.http.middlewares.dashboard-headers.headers.referrerPolicy=no-referrer"
+      # hsts/security-headers définis une seule fois plus haut sur ce même
+      # container, voir CLAUDE.md. X-Robots-Tag redondant avec la balise
+      # <meta robots> du HTML généré : couvre aussi les crawlers qui ne
+      # parsent pas le HTML (ou tapent une ressource non-HTML, ex. les logos).
+      - "traefik.http.routers.dashboard.middlewares=security-headers@docker,hsts@docker"
       - "traefik.http.services.dashboard.loadbalancer.server.port=8080"
       - "traefik.docker.network=traefik-public"
     logging:

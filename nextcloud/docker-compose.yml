@@ -75,8 +75,9 @@ services:
       - "traefik.http.routers.nextcloud.rule=Host(`nextcloud.${DOMAIN}`)"
       - "traefik.http.routers.nextcloud.entrypoints=websecure"
       - "traefik.http.routers.nextcloud.tls.certresolver=letsencrypt"
-      # hsts défini une seule fois dans traefik/docker-compose.yml, voir CLAUDE.md
-      - "traefik.http.routers.nextcloud.middlewares=hsts@docker"
+      # hsts/security-headers définis une seule fois dans
+      # traefik/docker-compose.yml, voir CLAUDE.md
+      - "traefik.http.routers.nextcloud.middlewares=security-headers@docker,hsts@docker"
       - "traefik.http.services.nextcloud.loadbalancer.server.port=8080"
       - "traefik.docker.network=traefik-public"
     logging:

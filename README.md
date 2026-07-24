@@ -79,6 +79,15 @@ charge jamais `<DOMAIN>` directement (favori pointant sur `jellyfin.<DOMAIN>`
 par ex.) ne recevrait jamais la directive et resterait sans protection
 downgrade sur ce sous-domaine.
 
+Même principe pour `security-headers` (ajouté le 2026-07-24, généralisé
+depuis le dashboard qui l'utilisait seul à l'origine) : `X-Robots-Tag:
+noindex, nofollow, noarchive` (serveur perso, aucun service ne doit être
+indexé par un moteur de recherche ou appris par un crawler d'entraînement
+IA), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
+`Referrer-Policy: no-referrer` — durcissement standard sans lien avec
+l'indexation. Middleware défini une fois sur le container `traefik`,
+référencé partout via `security-headers@docker`.
+
 ### Jellyfin (`jellyfin/`)
 
 Media server, accès GPU pour le transcodage (`/dev/dri/renderD128` +
@@ -297,11 +306,9 @@ des crawlers d'entraînement IA (ajouté le 2026-07-24) : balise
 `<meta name="robots" content="noindex, nofollow, noarchive">` dans le HTML
 généré, `dashboard/assets/robots.txt` (`Disallow: /`, versionné, copié tel
 quel par `scripts/generate-dashboard.sh`) et en-tête `X-Robots-Tag` posé
-par le middleware Traefik `dashboard-headers` — redondant avec la balise
-`<meta>` mais couvre aussi les crawlers qui ne parsent pas le HTML. Ce même
-middleware ajoute `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`
-et `Referrer-Policy: no-referrer` (durcissement générique, sans lien avec
-l'indexation).
+par le middleware partagé `security-headers` (voir
+[Traefik](#traefik-traefik)) — redondant avec la balise `<meta>` mais
+couvre aussi les crawlers qui ne parsent pas le HTML.
 
 Le contenu (`dashboard/html/`, gitignoré) est entièrement généré par
 `make dashboard-refresh` (`scripts/generate-dashboard.sh`), qui dérive

@@ -122,31 +122,39 @@ explicitement :
   à jour via `occ config:system:set` dans le container `app` (pas en
   éditant le fichier à la main), sinon Nextcloud rejette le nouveau nom
   d'hôte avec une erreur "domaine non fiable".
+- **`hsts` et `security-headers` : deux middlewares Traefik partagés,
+  définis une seule fois sur le container `traefik` lui-même**
+  (`traefik/docker-compose.yml`, labels sans routeur associé — Traefik ne
+  se reverse-proxy pas, mais un container avec `traefik.enable=true` peut
+  déclarer un middleware sans router pour que d'autres stacks le
+  référencent via `<nom>@docker`, `@docker` = provider, nécessaire pour
+  référencer un middleware déclaré sur un autre container/stack). Chaque
+  stack les ajoute à son propre routeur — ne jamais redéfinir
+  `stsSeconds`/`customResponseHeaders`/etc. en dur dans un compose file,
+  toujours `hsts@docker`/`security-headers@docker`. Un routeur avec déjà
+  un autre middleware (ex. `arr-lan-only`) les combine en liste séparée
+  par virgules : `arr-lan-only,security-headers@docker,hsts@docker`.
+  - `hsts` (ajouté le 2026-07-24, généralisé à tous les services y compris
+    LAN-only) : `stsSeconds=15552000`, `stsIncludeSubdomains=true`,
+    `forceSTSHeader=true`. `nextcloud-hsts` (middleware local dupliquant
+    les mêmes valeurs) supprimé au passage.
+  - `security-headers` (ajouté le 2026-07-24 pour le dashboard seul sous
+    le nom `dashboard-headers`, généralisé à tous les services le
+    2026-07-24) : `X-Robots-Tag: noindex, nofollow, noarchive` (serveur
+    perso, aucun service ne doit être indexé par un moteur de recherche
+    ou appris par un crawler d'entraînement IA), `X-Frame-Options: DENY`,
+    `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
+    Sur le dashboard, redondant avec sa balise `<meta name="robots">`
+    (voir plus bas) et son `dashboard/assets/robots.txt` — volontaire,
+    couvre les crawlers qui ne parsent pas le HTML.
 - **Dashboard exclu des moteurs de recherche/crawlers IA** (ajouté le
   2026-07-24, conséquence de son exposition WAN) : balise `<meta
   name="robots">` dans le HTML généré + `dashboard/assets/robots.txt`
-  (versionné, `Disallow: /`) + en-tête `X-Robots-Tag` posé par le
-  middleware Traefik `dashboard-headers` (`traefik/docker-compose.yml`) —
-  volontairement redondant (crawler qui ne lit que le HTML vs celui qui ne
-  lit que les en-têtes). Même middleware : `X-Frame-Options: DENY`,
-  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`. Si un
-  nouveau fichier statique est ajouté à la racine servie par `dashboard`,
-  garder `robots.txt` à jour dans `dashboard/assets/` (source versionnée),
-  pas directement dans `dashboard/html/` (généré, gitignoré).
-- **HSTS généralisé à tous les services** (ajouté le 2026-07-24), y compris
-  LAN-only — middleware `hsts` (`stsSeconds=15552000`,
-  `stsIncludeSubdomains=true`, `forceSTSHeader=true`) défini **une seule
-  fois**, sur le container `traefik` lui-même (`traefik/docker-compose.yml`,
-  labels sans routeur associé — Traefik ne se reverse-proxy pas, mais un
-  container avec `traefik.enable=true` peut déclarer un middleware sans
-  router pour que d'autres stacks le référencent). Chaque stack l'ajoute à
-  son propre routeur via `hsts@docker` (`@docker` = provider, nécessaire
-  pour référencer un middleware déclaré sur un autre container/stack) —
-  ne pas repasser en dur `stsSeconds`/`includeSubdomains` dans un compose
-  file, toujours `hsts@docker`. `nextcloud-hsts` (middleware local,
-  dupliquant les mêmes valeurs) supprimé au passage. Un routeur avec déjà
-  un autre middleware (ex. `arr-lan-only`, `dashboard-headers`) le combine
-  en liste séparée par virgules : `arr-lan-only,hsts@docker`.
+  (versionné, `Disallow: /`), en plus de l'en-tête `X-Robots-Tag` du
+  middleware partagé `security-headers` ci-dessus. Si un nouveau fichier
+  statique est ajouté à la racine servie par `dashboard`, garder
+  `robots.txt` à jour dans `dashboard/assets/` (source versionnée), pas
+  directement dans `dashboard/html/` (généré, gitignoré).
 
 ## Pièges à ne pas répéter
 
