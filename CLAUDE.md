@@ -293,6 +293,17 @@ explicitement :
   `${DATA_ROOT}/.transmission/data/.cross-seed-links`) au lieu de l'ancien
   volume séparé `.arr/cross-seed/links` (supprimé, dossier vide au moment
   du fix).
+- **Connexion Sonarr/Radarr → Jellyfin ("Emby/Jellyfin" notification,
+  ajoutée le 2026-07-24 via l'API, pas les UI — pas dans un fichier
+  versionné) nécessite `mapFrom`/`mapTo`**, sinon le refresh ciblé déclenché
+  sur import/upgrade ne trouve pas le bon dossier côté Jellyfin : Sonarr/
+  Radarr voient la bibliothèque sous `/data_root/library/...` (même mount
+  unique que le fix hardlink ci-dessus), Jellyfin la voit sous
+  `/library/...` (son propre mount, `jellyfin/docker-compose.yml`).
+  `mapFrom=/data_root/library` / `mapTo=/library` dans les deux connexions.
+  Cible `jellyfin:8096` en direct (réseau `traefik-public` partagé, pas de
+  passage par Traefik). Clé API réutilisée depuis celle déjà générée pour
+  Seerr plutôt qu'une clé dédiée à Sonarr/Radarr — voir README.
 
 ## Repo
 

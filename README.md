@@ -222,6 +222,24 @@ les imports Sonarr/Radarr basculeront automatiquement en copie au lieu du
 hardlink — fonctionnel mais plus lent et transitoirement plus gourmand en
 espace disque.
 
+Rafraîchissement ciblé de Jellyfin (ajouté le 2026-07-24, configuré via
+l'API Sonarr/Radarr plutôt que les UI — pas dans un fichier versionné,
+rien à refaire après un `make up`) : connexion **Emby/Jellyfin**
+(`implementation: MediaBrowser`) sur import/upgrade/renommage, ciblant
+`jellyfin:8096` en direct (Sonarr/Radarr et Jellyfin partagent déjà le
+réseau `traefik-public`, pas besoin de passer par Traefik). Sans ça,
+Jellyfin comptait uniquement sur sa surveillance temps réel (inotify,
+`EnableRealtimeMonitor`) pour détecter les nouveaux fichiers — qui
+fonctionne, mais sans le mapping de chemin ci-dessous un refresh déclenché
+par Sonarr/Radarr aurait été incapable de cibler le bon dossier. Sonarr/
+Radarr voient la bibliothèque sous `/data_root/library/...` (montage
+unique documenté plus haut pour le hardlink) alors que Jellyfin la voit
+sous `/library/...` : `mapFrom=/data_root/library` / `mapTo=/library`
+dans les deux connexions. Clé API Jellyfin réutilisée depuis celle déjà
+générée pour Seerr (`${DATA_ROOT}/.seerr/config/settings.json`) plutôt
+qu'une clé dédiée — apparaît donc sous le nom "Seerr" dans Jellyfin
+→ Tableau de bord → Clés API, purement cosmétique.
+
 ### Seerr (`seerr/`)
 
 Interface de recherche/demande unifiée pour les utilisateurs non-techniques :
