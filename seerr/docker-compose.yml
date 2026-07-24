@@ -35,9 +35,9 @@ services:
       - "traefik.http.routers.seerr.rule=Host(`seerr.${DOMAIN}`)"
       - "traefik.http.routers.seerr.entrypoints=websecure"
       - "traefik.http.routers.seerr.tls.certresolver=letsencrypt"
-      # hsts/security-headers définis une seule fois dans
+      # hsts/security-headers/rate-limit définis une seule fois dans
       # traefik/docker-compose.yml, voir CLAUDE.md
-      - "traefik.http.routers.seerr.middlewares=security-headers@docker,hsts@docker"
+      - "traefik.http.routers.seerr.middlewares=rate-limit@docker,security-headers@docker,hsts@docker"
       - "traefik.http.services.seerr.loadbalancer.server.port=5055"
       - "traefik.docker.network=traefik-public"
     logging:

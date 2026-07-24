@@ -147,6 +147,16 @@ explicitement :
     Sur le dashboard, redondant avec sa balise `<meta name="robots">`
     (voir plus bas) et son `dashboard/assets/robots.txt` — volontaire,
     couvre les crawlers qui ne parsent pas le HTML.
+  - `rate-limit` (ajouté le 2026-07-24, appliqué à `jellyfin` et `seerr`
+    seulement — Nextcloud a son propre anti-bruteforce intégré, les
+    services `arr`/`transmission` sont déjà LAN-only via `ipallowlist`) :
+    `average=50`, `burst=100` par IP source. Limite tout le routeur, pas
+    que l'endpoint de login (Traefik seul ne sait pas cibler par code de
+    réponse/chemin pour faire du vrai anti-bruteforce à la fail2ban) —
+    valeurs volontairement généreuses pour ne jamais gêner un usage normal
+    (Jellyfin charge plusieurs images de bibliothèque en parallèle),
+    testé le 2026-07-24 : 200 requêtes concurrentes → ~110 passent
+    (302), le reste 429 ; 20 requêtes séquentielles → aucune impactée.
 - **Dashboard exclu des moteurs de recherche/crawlers IA** (ajouté le
   2026-07-24, conséquence de son exposition WAN) : balise `<meta
   name="robots">` dans le HTML généré + `dashboard/assets/robots.txt`
