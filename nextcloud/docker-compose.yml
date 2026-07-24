@@ -26,6 +26,7 @@ services:
       driver: "json-file"
       options:
         max-size: "1m"
+        max-file: "3"
 
   app:
     build: ./app
@@ -63,6 +64,7 @@ services:
       driver: "json-file"
       options:
         max-size: "1m"
+        max-file: "3"
 
   web:
     build: ./web
@@ -102,6 +104,7 @@ services:
       driver: "json-file"
       options:
         max-size: "1m"
+        max-file: "3"
 
   news-updater:
     image: kr3ssh/nextcloud-news-updater
@@ -124,6 +127,7 @@ services:
       driver: "json-file"
       options:
         max-size: "1m"
+        max-file: "3"
 
 networks:
   traefik-public:

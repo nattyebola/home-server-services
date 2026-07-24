@@ -186,6 +186,12 @@ explicitement :
   main (`make dashboard-refresh`) — sinon un service qui devient
   unhealthy entre deux régénérations manuelles resterait affiché comme
   sain arbitrairement longtemps.
+- **`max-file: "3"` sur tous les blocs `logging` json-file** (ajouté le
+  2026-07-24) — `max-file` n'était jamais fixé alors que `max-size` l'est
+  partout, donc un seul fichier de logs par service : dès qu'il atteignait
+  `max-size`, tout l'historique précédent disparaissait plutôt que d'être
+  conservé dans un fichier tourné. Toujours ajouter les deux ensemble sur
+  tout nouveau service, jamais `max-size` seul.
 
 ## Pièges à ne pas répéter
 

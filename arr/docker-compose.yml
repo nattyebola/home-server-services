@@ -51,6 +51,7 @@ services:
       driver: json-file
       options:
         max-size: 1m
+        max-file: "3"
 
   sonarr:
     image: lscr.io/linuxserver/sonarr:latest
@@ -109,6 +110,7 @@ services:
       driver: json-file
       options:
         max-size: 1m
+        max-file: "3"
 
   radarr:
     image: lscr.io/linuxserver/radarr:latest
@@ -157,6 +159,7 @@ services:
       driver: json-file
       options:
         max-size: 1m
+        max-file: "3"
 
   cross-seed:
     image: ghcr.io/cross-seed/cross-seed:latest
@@ -212,6 +215,7 @@ services:
       driver: json-file
       options:
         max-size: 1m
+        max-file: "3"
 
   recyclarr:
     image: ghcr.io/recyclarr/recyclarr:latest
@@ -250,6 +254,7 @@ services:
       driver: json-file
       options:
         max-size: 1m
+        max-file: "3"
 
 networks:
   traefik-public:

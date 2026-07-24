@@ -25,6 +25,7 @@ services:
       driver: json-file
       options:
         max-size: 1m
+        max-file: "3"
 
   traefik:
     image: traefik:v3.7
@@ -76,6 +77,7 @@ services:
       driver: json-file
       options:
         max-size: 1m
+        max-file: "3"
 
   # Page statique de liens vers les services (public/local/arrêté) — Traefik
   # ne sait servir aucun fichier statique lui-même (pur reverse-proxy, pas de
@@ -122,6 +124,7 @@ services:
       driver: json-file
       options:
         max-size: 1m
+        max-file: "3"
 
 networks:
   socket-proxy:

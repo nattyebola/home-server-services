@@ -77,6 +77,7 @@ services:
       driver: json-file
       options:
         max-size: 10m
+        max-file: "3"
 
   transmission-proxy:
     image: nginxinc/nginx-unprivileged:alpine
@@ -122,6 +123,7 @@ services:
       driver: json-file
       options:
         max-size: 1m
+        max-file: "3"
 
 networks:
   vpn-internal:
