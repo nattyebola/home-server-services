@@ -1,8 +1,9 @@
 # server/ — instructions pour Claude
 
 Infra as code de services home server (Docker Compose + Traefik + Makefile).
-Description des services, choix d'architecture expliqués, problèmes
-rencontrés et guide d'installation : **voir `README.md`**, destiné aux
+Guide d'installation : **voir `README.md`**. Description des services et
+choix d'architecture expliqués : **voir `ARCHITECTURE.md`**. Problèmes
+rencontrés : **voir `ISSUES.md`**. Ces trois fichiers sont destinés aux
 humains. Ce fichier ne garde que ce qui sert à retravailler sur ce repo
 sans relitiger des décisions déjà prises ou répéter des pièges déjà
 rencontrés.
@@ -46,9 +47,9 @@ explicitement :
   qu'un autre déploiement puisse reprendre la stack sans dépendre des
   chemins de cette machine.
 - **Nextcloud** : image communautaire (pas AIO — incompatible avec
-  rootless/infra-as-code, cf. README).
+  rootless/infra-as-code, cf. ARCHITECTURE.md).
 - **Hôte Linux natif requis, pas de support Windows/WSL2** (évalué le
-  2026-07-23, cf. README section "Windows / WSL2") : noyau WSL2 sans
+  2026-07-23, cf. ISSUES.md section "Windows / WSL2") : noyau WSL2 sans
   chargement de module (casse le fix `ip_tables`), NAT cassant la
   joignabilité 80/443 pour Let's Encrypt, VM non persistante (casse le
   cron de backup), hardlinks Sonarr/Radarr cassés sur un disque Windows
@@ -212,7 +213,7 @@ explicitement :
   `172.16.0.0/12`, la plage par défaut des réseaux Docker). Toujours
   passer par le sidecar `transmission-proxy` pour exposer le RPC ; pour
   autoriser un pair du même réseau Docker sans casser le routage, utiliser
-  `UFW_ALLOW_GW_NET=true`, pas `LOCAL_NETWORK`. Détails complets : README.
+  `UFW_ALLOW_GW_NET=true`, pas `LOCAL_NETWORK`. Détails complets : ISSUES.md.
 - **`vpn/transmission-vpn` a besoin du module kernel `ip_tables` chargé sur
   l'hôte** — absent par défaut sur les Ubuntu récents (remplacé par
   `nftables`), nécessaire aux règles de routing/kill-switch de
@@ -350,7 +351,7 @@ explicitement :
   `mapFrom=/data_root/library` / `mapTo=/library` dans les deux connexions.
   Cible `jellyfin:8096` en direct (réseau `traefik-public` partagé, pas de
   passage par Traefik). Clé API réutilisée depuis celle déjà générée pour
-  Seerr plutôt qu'une clé dédiée à Sonarr/Radarr — voir README.
+  Seerr plutôt qu'une clé dédiée à Sonarr/Radarr — voir ARCHITECTURE.md.
 - **`scripts/backup.sh` dumpait silencieusement la mauvaise base Postgres
   depuis le début** (repéré le 2026-07-24 en testant `make restore` pour de
   vrai — jusque-là jamais exercé) : `pg_dump -U "$POSTGRES_USER"
@@ -378,7 +379,9 @@ explicitement :
 server/
 ├── .env.shared(.example)     # PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT — réel gitignoré, .example versionné
 ├── Makefile                  # network/up/down/config/logs/update/update-all/backup/restore/cron-install STACK=<nom> ; dashboard-refresh/cleanup (sans STACK)
-├── README.md                  # doc humaine : services, choix, problèmes rencontrés, install
+├── README.md                  # doc humaine : services, install
+├── ARCHITECTURE.md            # doc humaine : architecture, choix structurants
+├── ISSUES.md                  # doc humaine : problèmes rencontrés
 ├── scripts/
 │   ├── crontab                    # source de vérité du crontab hôte — `make cron-install`
 │   ├── backup.sh                   # sauvegarde restic hebdomadaire
@@ -414,4 +417,5 @@ server/
   l'infra-as-code est récupérable depuis GitHub, la sauvegarde restic est
   perdue avec (accepté pour l'instant, pas d'offsite).
 
-Détails, rationale et guide d'installation complet : `README.md`.
+Détails, rationale et guide d'installation complet : `README.md` /
+`ARCHITECTURE.md` / `ISSUES.md`.
