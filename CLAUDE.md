@@ -491,14 +491,31 @@ explicitement :
   même domaine de base (`yggreborn.org`), pas l'un suffixe de l'autre : un
   `hostname.endswith("." + domain)` nu ne matche jamais. Fix : `base_domain()`
   (2 derniers labels du hostname, ex. `www.yggreborn.org` → `yggreborn.org`)
-  appliqué des deux côtés avant de comparer, dans les deux scripts. Nyaa.si
-  reste non résolu et le restera : ses torrents n'utilisent aucun tracker
-  qui lui soit propre, seulement des trackers publics génériques partagés
-  avec n'importe quel autre torrent (`nyaa.tracker.wf`, `open.stealth.si`,
-  `tracker.opentrackr.org`, `exodus.desync.com`, `tracker.torrent.eu.org`)
-  — aucune information de domaine ne permet de les rattacher à Nyaa
-  spécifiquement, contrairement à YggReborn/TR4KER/C411 qui ont un tracker
-  privé dédié à leur propre domaine.
+  appliqué des deux côtés avant de comparer, dans les deux scripts.
+  Nyaa.si n'a lui aucun tracker qui lui soit propre — seulement des
+  trackers publics génériques (`nyaa.tracker.wf`, `open.stealth.si`,
+  `tracker.opentrackr.org`, `exodus.desync.com`, `tracker.torrent.eu.org`),
+  aucune info Prowlarr ne permet de les rattacher à Nyaa spécifiquement.
+  Confirmé par l'utilisateur le 2026-07-28 que ce bundle exact de 5 domaines
+  est bien celui de Nyaa.si (vérifié : toujours les 5 ensemble, jamais
+  mélangés à un torrent d'un autre indexeur dans cette bibliothèque) — ajouté
+  en alias manuel `MANUAL_TRACKER_ALIASES` (les deux scripts), matché en
+  exact et non via `base_domain()` : `tracker.torrent.eu.org` réduirait à
+  `eu.org`, un vrai domaine public partagé par d'innombrables sites sans
+  rapport, un faux positif bien pire que l'inverse. Si un futur torrent d'un
+  autre indexeur ajoute l'un de ces trackers publics en complément du sien
+  (pratique courante pour la redondance), il serait aussi étiqueté "Nyaa.si"
+  à tort — accepté en connaissance de cause, à revoir si ça arrive.
+  Piège annexe repéré en ajoutant cet alias : `transmission-stats.py`
+  sommait `uploadedEver`/`downloadedEver` une fois par **host** brut, pas
+  par nom résolu — un torrent Nyaa comptait donc son volume 5 fois (une
+  par tracker du bundle) une fois les 5 hosts collapsés sous le même nom,
+  gonflant `uploaded`/`downloaded` d'un facteur 5 dans la section
+  Transmission du dashboard (le ratio affiché n'était pas faussé, par
+  coïncidence : numérateur et dénominateur gonflés du même facteur). Fixé
+  en dédupliquant par nom résolu avant d'accumuler. Même dédup appliquée à
+  `tracker_display()` dans `torrent-cleanup.py` (affichait sinon
+  `"Nyaa.si,Nyaa.si,Nyaa.si,Nyaa.si,Nyaa.si"` dans la colonne TRACKER).
 
 ## Repo
 

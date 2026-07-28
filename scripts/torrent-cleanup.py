@@ -262,7 +262,30 @@ def build_prowlarr_tracker_map():
     return domain_map
 
 
+# Alias manuels pour des trackers publics génériques que Prowlarr ne peut
+# pas connaître via indexerUrls/legacyUrls (ce ne sont pas des domaines "du
+# site" d'un indexeur, mais bien les trackers que celui-ci embarque dans ses
+# .torrent) — confirmé par l'utilisateur le 2026-07-28 : ce bundle exact (les
+# 5 domaines toujours ensemble) n'apparaît que sur des torrents Nyaa.si dans
+# cette bibliothèque. Matché en exact (pas via base_domain : tracker.torrent.
+# eu.org réduirait à "eu.org", un vrai domaine public partagé par d'innombrables
+# sites sans rapport, risque de faux positif bien pire que l'inverse). Si un
+# futur torrent d'un autre indexeur ajoute l'un de ces trackers publics en
+# complément du sien (pratique courante pour la redondance), il serait aussi
+# étiqueté "Nyaa.si" à tort — accepté en connaissance de cause, à revoir si
+# ça arrive.
+MANUAL_TRACKER_ALIASES = {
+    "nyaa.tracker.wf": "Nyaa.si",
+    "open.stealth.si": "Nyaa.si",
+    "tracker.opentrackr.org": "Nyaa.si",
+    "exodus.desync.com": "Nyaa.si",
+    "tracker.torrent.eu.org": "Nyaa.si",
+}
+
+
 def resolve_tracker_name(hostname, tracker_map):
+    if hostname in MANUAL_TRACKER_ALIASES:
+        return MANUAL_TRACKER_ALIASES[hostname]
     return tracker_map.get(base_domain(hostname), hostname)
 
 
@@ -270,7 +293,12 @@ def tracker_display(torrent, tracker_map):
     hosts = tracker_host(torrent)
     if hosts == "?":
         return "?"
-    return ",".join(resolve_tracker_name(h, tracker_map) for h in hosts.split(","))
+    # dict.fromkeys plutôt qu'un set : dédup en préservant l'ordre. Depuis
+    # MANUAL_TRACKER_ALIASES (Nyaa.si), plusieurs hosts d'un même torrent
+    # peuvent résoudre vers le même nom (les 5 trackers publics de Nyaa) —
+    # sans ça, la colonne affichait "Nyaa.si,Nyaa.si,Nyaa.si,Nyaa.si,Nyaa.si".
+    names = (resolve_tracker_name(h, tracker_map) for h in hosts.split(","))
+    return ",".join(dict.fromkeys(names))
 
 
 def arr_api(container, base_url, api_key, method, path, params=None, json_body=None):

@@ -134,7 +134,22 @@ def build_prowlarr_tracker_map():
     return domain_map
 
 
+# Alias manuels pour des trackers publics génériques — voir la même
+# constante dans torrent-cleanup.py pour le rationale complet (confirmé par
+# l'utilisateur le 2026-07-28, ce bundle exact n'appartient qu'à Nyaa.si
+# dans cette bibliothèque).
+MANUAL_TRACKER_ALIASES = {
+    "nyaa.tracker.wf": "Nyaa.si",
+    "open.stealth.si": "Nyaa.si",
+    "tracker.opentrackr.org": "Nyaa.si",
+    "exodus.desync.com": "Nyaa.si",
+    "tracker.torrent.eu.org": "Nyaa.si",
+}
+
+
 def resolve_tracker_name(hostname, tracker_map):
+    if hostname in MANUAL_TRACKER_ALIASES:
+        return MANUAL_TRACKER_ALIASES[hostname]
     return tracker_map.get(base_domain(hostname), hostname)
 
 
@@ -245,9 +260,19 @@ def main():
         # d'annonce — impossible de départager quel octet a été uploadé "pour"
         # quel tracker côté RPC Transmission, donc le total par tracker
         # surestime légèrement le volume réel global mais reste correct par
-        # tracker pris individuellement.
+        # tracker pris individuellement. Dédupliqué par NOM résolu, pas par
+        # host brut : depuis MANUAL_TRACKER_ALIASES (Nyaa.si), plusieurs
+        # hosts d'un même torrent peuvent résoudre vers le même nom — sans
+        # cette dédup, ce torrent comptait une fois par host (5x pour Nyaa)
+        # au lieu d'une fois par tracker logique, gonflant les volumes
+        # affichés d'un facteur 5 (constaté le 2026-07-28, ratio non affecté
+        # par coïncidence — numérateur et dénominateur gonflés pareil).
+        seen_names = set()
         for host in tracker_hosts(t) or ["?"]:
             name = resolve_tracker_name(host, tracker_map) if host != "?" else "?"
+            if name in seen_names:
+                continue
+            seen_names.add(name)
             entry = per_tracker.setdefault(name, {"uploaded": 0, "downloaded": 0})
             entry["uploaded"] += t.get("uploadedEver", 0)
             entry["downloaded"] += t.get("downloadedEver", 0)
