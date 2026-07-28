@@ -517,13 +517,20 @@ explicitement :
   Confirmé par l'utilisateur le 2026-07-28 que ce bundle exact de 5 domaines
   est bien celui de Nyaa.si (vérifié : toujours les 5 ensemble, jamais
   mélangés à un torrent d'un autre indexeur dans cette bibliothèque) — ajouté
-  en alias manuel `MANUAL_TRACKER_ALIASES` (les deux scripts), matché en
-  exact et non via `base_domain()` : `tracker.torrent.eu.org` réduirait à
-  `eu.org`, un vrai domaine public partagé par d'innombrables sites sans
-  rapport, un faux positif bien pire que l'inverse. Si un futur torrent d'un
-  autre indexeur ajoute l'un de ces trackers publics en complément du sien
-  (pratique courante pour la redondance), il serait aussi étiqueté "Nyaa.si"
-  à tort — accepté en connaissance de cause, à revoir si ça arrive.
+  en alias, matché en exact et non via `base_domain()` : `tracker.torrent.
+  eu.org` réduirait à `eu.org`, un vrai domaine public partagé par
+  d'innombrables sites sans rapport, un faux positif bien pire que
+  l'inverse. Si un futur torrent d'un autre indexeur ajoute l'un de ces
+  trackers publics en complément du sien (pratique courante pour la
+  redondance), il serait aussi étiqueté "Nyaa.si" à tort — accepté en
+  connaissance de cause, à revoir si ça arrive. Ces alias vivent dans
+  `TRACKER_ALIASES` (`arr/.env`, voir `.env.example`), pas en dur dans le
+  code des scripts (premier essai le 2026-07-28, corrigé la même journée
+  suite à une remarque de l'utilisateur) : quels trackers publics un
+  indexeur embarque est une donnée propre à ce déploiement, pas une
+  décision d'architecture qui a sa place dans un script versionné sur un
+  repo public — même principe que les autres valeurs par-déploiement déjà
+  en `.env`/`.env.shared` (voir plus haut).
   Piège annexe repéré en ajoutant cet alias : `transmission-stats.py`
   sommait `uploadedEver`/`downloadedEver` une fois par **host** brut, pas
   par nom résolu — un torrent Nyaa comptait donc son volume 5 fois (une

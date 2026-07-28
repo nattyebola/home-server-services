@@ -51,9 +51,29 @@ def load_env_file(path):
     return values
 
 
-PROWLARR_API_KEY = load_env_file(os.path.join(REPO_ROOT, "arr", ".env")).get("PROWLARR_API_KEY")
+_ARR_ENV = load_env_file(os.path.join(REPO_ROOT, "arr", ".env"))
+PROWLARR_API_KEY = _ARR_ENV.get("PROWLARR_API_KEY")
 DATA_ROOT = load_env_file(os.path.join(REPO_ROOT, ".env.shared")).get("DATA_ROOT")
 HISTORY_PATH = os.path.join(DATA_ROOT, ".transmission-stats-history.jsonl") if DATA_ROOT else None
+
+
+def parse_tracker_aliases(raw):
+    """TRACKER_ALIASES=domaine1=Nom1,domaine2=Nom1,... (arr/.env, voir
+    .env.example) — même mécanisme que torrent-cleanup.py, pour le
+    rationale complet voir son parse_tracker_aliases()."""
+    aliases = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if not pair or "=" not in pair:
+            continue
+        domain, _, name = pair.partition("=")
+        domain, name = domain.strip(), name.strip()
+        if domain and name:
+            aliases[domain] = name
+    return aliases
+
+
+TRACKER_ALIASES = parse_tracker_aliases(_ARR_ENV.get("TRACKER_ALIASES", ""))
 
 
 class RPCError(RuntimeError):
@@ -134,22 +154,9 @@ def build_prowlarr_tracker_map():
     return domain_map
 
 
-# Alias manuels pour des trackers publics génériques — voir la même
-# constante dans torrent-cleanup.py pour le rationale complet (confirmé par
-# l'utilisateur le 2026-07-28, ce bundle exact n'appartient qu'à Nyaa.si
-# dans cette bibliothèque).
-MANUAL_TRACKER_ALIASES = {
-    "nyaa.tracker.wf": "Nyaa.si",
-    "open.stealth.si": "Nyaa.si",
-    "tracker.opentrackr.org": "Nyaa.si",
-    "exodus.desync.com": "Nyaa.si",
-    "tracker.torrent.eu.org": "Nyaa.si",
-}
-
-
 def resolve_tracker_name(hostname, tracker_map):
-    if hostname in MANUAL_TRACKER_ALIASES:
-        return MANUAL_TRACKER_ALIASES[hostname]
+    if hostname in TRACKER_ALIASES:
+        return TRACKER_ALIASES[hostname]
     return tracker_map.get(base_domain(hostname), hostname)
 
 
@@ -261,12 +268,12 @@ def main():
         # quel tracker côté RPC Transmission, donc le total par tracker
         # surestime légèrement le volume réel global mais reste correct par
         # tracker pris individuellement. Dédupliqué par NOM résolu, pas par
-        # host brut : depuis MANUAL_TRACKER_ALIASES (Nyaa.si), plusieurs
-        # hosts d'un même torrent peuvent résoudre vers le même nom — sans
-        # cette dédup, ce torrent comptait une fois par host (5x pour Nyaa)
-        # au lieu d'une fois par tracker logique, gonflant les volumes
-        # affichés d'un facteur 5 (constaté le 2026-07-28, ratio non affecté
-        # par coïncidence — numérateur et dénominateur gonflés pareil).
+        # host brut : via TRACKER_ALIASES, plusieurs hosts d'un même torrent
+        # peuvent résoudre vers le même nom — sans cette dédup, un tel
+        # torrent comptait une fois par host (5x pour Nyaa) au lieu d'une
+        # fois par tracker logique, gonflant les volumes affichés d'un
+        # facteur 5 (constaté le 2026-07-28, ratio non affecté par
+        # coïncidence — numérateur et dénominateur gonflés pareil).
         seen_names = set()
         for host in tracker_hosts(t) or ["?"]:
             name = resolve_tracker_name(host, tracker_map) if host != "?" else "?"

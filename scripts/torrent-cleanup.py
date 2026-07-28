@@ -86,6 +86,31 @@ LOG_PATH = os.path.join(DATA_ROOT, ".torrent-cleanup.log")
 
 _ARR_ENV = load_env_file(os.path.join(REPO_ROOT, "arr", ".env"))
 
+
+def parse_tracker_aliases(raw):
+    """TRACKER_ALIASES=domaine1=Nom1,domaine2=Nom1,... (arr/.env, voir
+    .env.example) — trackers publics génériques qu'aucune API ne permet de
+    rattacher à un indexeur (Prowlarr n'expose que les domaines du site,
+    voir build_prowlarr_tracker_map, pas ceux du tracker BitTorrent
+    lui-même embarqué dans les .torrent). Propre à ce déploiement (quels
+    trackers publics tel ou tel indexeur utilise en pratique) : en config
+    plutôt qu'en dur dans un script versionné sur un repo public — demandé
+    par l'utilisateur le 2026-07-28 après un premier essai en dur pour
+    Nyaa.si."""
+    aliases = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if not pair or "=" not in pair:
+            continue
+        domain, _, name = pair.partition("=")
+        domain, name = domain.strip(), name.strip()
+        if domain and name:
+            aliases[domain] = name
+    return aliases
+
+
+TRACKER_ALIASES = parse_tracker_aliases(_ARR_ENV.get("TRACKER_ALIASES", ""))
+
 PROWLARR_CONTAINER = "arr-prowlarr-1"
 PROWLARR_URL = "http://localhost:9696/api/v1/indexer"
 PROWLARR_API_KEY = _ARR_ENV.get("PROWLARR_API_KEY")
@@ -262,30 +287,14 @@ def build_prowlarr_tracker_map():
     return domain_map
 
 
-# Alias manuels pour des trackers publics génériques que Prowlarr ne peut
-# pas connaître via indexerUrls/legacyUrls (ce ne sont pas des domaines "du
-# site" d'un indexeur, mais bien les trackers que celui-ci embarque dans ses
-# .torrent) — confirmé par l'utilisateur le 2026-07-28 : ce bundle exact (les
-# 5 domaines toujours ensemble) n'apparaît que sur des torrents Nyaa.si dans
-# cette bibliothèque. Matché en exact (pas via base_domain : tracker.torrent.
-# eu.org réduirait à "eu.org", un vrai domaine public partagé par d'innombrables
-# sites sans rapport, risque de faux positif bien pire que l'inverse). Si un
-# futur torrent d'un autre indexeur ajoute l'un de ces trackers publics en
-# complément du sien (pratique courante pour la redondance), il serait aussi
-# étiqueté "Nyaa.si" à tort — accepté en connaissance de cause, à revoir si
-# ça arrive.
-MANUAL_TRACKER_ALIASES = {
-    "nyaa.tracker.wf": "Nyaa.si",
-    "open.stealth.si": "Nyaa.si",
-    "tracker.opentrackr.org": "Nyaa.si",
-    "exodus.desync.com": "Nyaa.si",
-    "tracker.torrent.eu.org": "Nyaa.si",
-}
-
-
 def resolve_tracker_name(hostname, tracker_map):
-    if hostname in MANUAL_TRACKER_ALIASES:
-        return MANUAL_TRACKER_ALIASES[hostname]
+    # TRACKER_ALIASES (arr/.env) d'abord : couvre les trackers publics
+    # génériques qu'aucune API ne permet de rattacher à un indexeur (voir
+    # parse_tracker_aliases). Matché en exact, jamais via base_domain — un
+    # domaine public à 2 labels type eu.org serait un bien pire faux positif
+    # que l'inverse.
+    if hostname in TRACKER_ALIASES:
+        return TRACKER_ALIASES[hostname]
     return tracker_map.get(base_domain(hostname), hostname)
 
 
@@ -293,10 +302,10 @@ def tracker_display(torrent, tracker_map):
     hosts = tracker_host(torrent)
     if hosts == "?":
         return "?"
-    # dict.fromkeys plutôt qu'un set : dédup en préservant l'ordre. Depuis
-    # MANUAL_TRACKER_ALIASES (Nyaa.si), plusieurs hosts d'un même torrent
-    # peuvent résoudre vers le même nom (les 5 trackers publics de Nyaa) —
-    # sans ça, la colonne affichait "Nyaa.si,Nyaa.si,Nyaa.si,Nyaa.si,Nyaa.si".
+    # dict.fromkeys plutôt qu'un set : dédup en préservant l'ordre. Via
+    # TRACKER_ALIASES, plusieurs hosts d'un même torrent peuvent résoudre
+    # vers le même nom (ex. les 5 trackers publics de Nyaa) — sans ça, la
+    # colonne affichait "Nyaa.si,Nyaa.si,Nyaa.si,Nyaa.si,Nyaa.si".
     names = (resolve_tracker_name(h, tracker_map) for h in hosts.split(","))
     return ",".join(dict.fromkeys(names))
 
