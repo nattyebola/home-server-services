@@ -45,29 +45,19 @@ a.card:hover { transform: translateY(-2px); }
 }
 .name { font-weight: 600; font-size: .95rem; }
 .host { font-size: .75rem; opacity: .6; word-break: break-all; text-align: center; }
-/* Groupes de stats (Débits/Ratio) côte à côte sur une même ligne, chacun
-   gardant son titre en haut à gauche — bascule en colonne sur écran étroit
-   (flex-wrap) plutôt qu'un grid figé qui casserait en dessous d'une largeur
-   minimale. */
-.stats-row { display: flex; flex-wrap: wrap; gap: 1.5rem; margin-bottom: 1.5rem; }
-.stats-row .stats-group { flex: 1 1 260px; margin-bottom: 0; }
-.stats-group { margin-bottom: 1.5rem; }
-.stats-group h3 {
-  font-size: .75rem; font-weight: 600; opacity: .55; margin: 0 0 .75rem;
-}
-/* Largeur de colonne fixe (pas minmax(…,1fr)) : sinon chaque .stats-grid
-   calcule sa largeur de carte indépendamment de son propre nombre de cartes
-   et de la largeur de son conteneur — Débits/Ratio (2 cartes, conteneur
-   ~460px dans .stats-row) et Système (3+ cartes, pleine largeur ~960px)
-   obtenaient des cartes visiblement différentes malgré la même règle CSS.
-   Une taille fixe garantit la même largeur de carte partout. */
-.stats-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, 190px);
-  gap: 1rem;
-}
+/* Toutes les cartes de stats (Débits/Ratio/Torrents/Disque/Indexeurs) à
+   plat dans un seul flux — pas de grille CSS, pas de sous-groupes/titres de
+   sous-section : chaque carte porte son propre libellé (voir
+   render_speed_card()/render_ratio_card()/etc. dans generate-dashboard.py).
+   Flexbox plutôt que grid : largeur de carte fixe via flex-basis (pas de
+   dépendance à la largeur du conteneur comme avec grid+1fr), et chaque carte
+   garde sa propre hauteur (align-items: flex-start — pas d'étirement des
+   cartes courtes à la hauteur de la plus haute de leur "rangée" comme le
+   ferait une grille). */
+.stats-flow { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 1rem; margin-bottom: 1.5rem; }
 .stat {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .4rem;
-  padding: 1.25rem 1rem; border-radius: 12px; background: #fff;
+  flex: 0 0 190px; padding: 1.25rem 1rem; border-radius: 12px; background: #fff;
   box-shadow: 0 1px 3px rgba(0,0,0,.1);
 }
 @media (prefers-color-scheme: dark) {
@@ -98,6 +88,7 @@ a.card:hover { transform: translateY(-2px); }
    dans la largeur d'une carte tronquaient les libellés) — voir
    multi-stat-card.html/stat-multi-item.html. */
 .stat-multi { flex-direction: column; align-items: stretch; justify-content: center; gap: .5rem; }
+.stat-multi .stat-label { text-align: left; margin-bottom: -.15rem; }
 .stat-multi-row {
   display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; font-size: .85rem;
 }

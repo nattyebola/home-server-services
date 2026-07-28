@@ -313,8 +313,8 @@ def render_stat_item(value, label, value_class=""):
     return render("stat-multi-item.html", value=value, label=label, value_class=value_class)
 
 
-def render_multi_stat_card(items):
-    return render("multi-stat-card.html", items="\n".join(items))
+def render_multi_stat_card(title, items):
+    return render("multi-stat-card.html", title=title, items="\n".join(items))
 
 
 def render_ratio_card(label, value_human, r):
@@ -339,7 +339,7 @@ def render_disk_card(data_root):
         return None
     used_pct = usage.used / usage.total * 100
     icon = zone_gauge_svg(used_pct, DISK_ZONE_PCT, DISK_ZONE_CLASSES)
-    return render_stat_card(icon, human_size(usage.free), "Espace disque libre")
+    return render_stat_card(icon, human_size(usage.free), "Disque")
 
 
 def render_indexers_card():
@@ -392,44 +392,35 @@ def fetch_transmission_stats(running):
 def build_stats_section(running, data_root):
     """Visible WAN et LAN, pas de gating card-lan-blocked (chiffres agrégés
     en snapshot, pas un accès de contrôle au client — voir CLAUDE.md).
-    Débits/Ratio (même ligne, voir stats-row.html) + torrents actifs/
-    surveillés viennent tous de transmission-stats.py (best-effort, omis
-    ensemble si indisponible) ; espace disque et indexeurs Prowlarr ont
+    Toutes les cartes (Débits/Ratio/Torrents/Disque/Indexeurs) sont à plat
+    dans un seul flux (voir stats-flow.html) — pas de sous-section/titre de
+    groupe : chaque carte porte son propre libellé (le titre de l'ancienne
+    sous-section replié dedans, ex. "Débit descendant", voir CLAUDE.md).
+    Débits/Ratio/Torrents viennent tous de transmission-stats.py (best-effort,
+    omis ensemble si indisponible) ; espace disque et indexeurs Prowlarr ont
     chacun leur propre disponibilité (best-effort indépendant, voir
-    render_disk_card()/render_indexers_card()) — la deuxième ligne ne montre
-    que les groupes (Torrents/Disque/Indexeurs) dont la source a répondu,
-    chacun son propre sous-titre plutôt qu'un groupe "Système" unique.
-    Toute la section est omise seulement si tout est indisponible à la fois."""
+    render_disk_card()/render_indexers_card()). Toute la section est omise
+    seulement si aucune carte n'est disponible."""
     stats = fetch_transmission_stats(running)
 
-    stats_row = ""
+    cards = []
     tracker_details = ""
-    system_groups = []
 
     if stats:
-        speed_cards = [
-            render_speed_card("Descendant", stats["download_speed"], stats["download_speed_human"],
+        cards += [
+            render_speed_card("Débit descendant", stats["download_speed"], stats["download_speed_human"],
                               stats["speed_scale"]["download_max"]),
-            render_speed_card("Montant", stats["upload_speed"], stats["upload_speed_human"],
+            render_speed_card("Débit montant", stats["upload_speed"], stats["upload_speed_human"],
                               stats["speed_scale"]["upload_max"]),
-        ]
-        ratio_cards = [
-            render_ratio_card("Total", stats["total"]["ratio_display"], stats["total"]["ratio"]),
-            render_ratio_card(f"Session ({stats['session']['uptime_human']})",
+            render_ratio_card("Ratio total", stats["total"]["ratio_display"], stats["total"]["ratio"]),
+            render_ratio_card(f"Ratio session ({stats['session']['uptime_human']})",
                               stats["session"]["ratio_display"], stats["session"]["ratio"]),
         ]
-        stats_row = render(
-            "stats-row.html",
-            groups="\n".join([
-                render("stats-group.html", title="Débits", cards="\n".join(speed_cards)),
-                render("stats-group.html", title="Ratio", cards="\n".join(ratio_cards)),
-            ]),
-        )
         if stats.get("trackers"):
             rows = "\n".join(render_tracker_row(t) for t in stats["trackers"])
             tracker_details = render("tracker-details.html", rows=rows)
 
-        torrents_card = render_multi_stat_card([
+        cards.append(render_multi_stat_card("Torrents", [
             render_stat_item(str(stats["torrents_active"]), "Actifs"),
             render_stat_item(str(stats["torrents_total"]), "Surveillés"),
             render_stat_item(str(stats["torrents_downloading"]), "En téléchargement"),
@@ -437,26 +428,22 @@ def build_stats_section(running, data_root):
                 str(stats["torrents_errored"]), "En erreur",
                 value_class="stat-value-critical" if stats["torrents_errored"] else "stat-value-good",
             ),
-        ])
-        system_groups.append(render("stats-group.html", title="Torrents", cards=torrents_card))
-
-    disk_card = render_disk_card(data_root)
-    if disk_card:
-        system_groups.append(render("stats-group.html", title="Disque", cards=disk_card))
+        ]))
 
     indexers_card = render_indexers_card()
     if indexers_card:
-        system_groups.append(render("stats-group.html", title="Indexeurs", cards=indexers_card))
+        cards.append(indexers_card)
 
-    system_row = render("stats-row.html", groups="\n".join(system_groups)) if system_groups else ""
+    disk_card = render_disk_card(data_root)
+    if disk_card:
+        cards.append(disk_card)
 
-    if not stats_row and not system_row:
+    if not cards:
         return ""
 
     return render(
         "section-transmission.html",
-        stats_row=stats_row,
-        system_row=system_row,
+        stats_flow=render("stats-flow.html", cards="\n".join(cards)),
         tracker_details=tracker_details,
     )
 

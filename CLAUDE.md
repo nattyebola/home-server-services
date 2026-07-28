@@ -281,89 +281,66 @@ explicitement :
   absents des échantillons antérieurs à ce changement — lus avec
   `.get(..., 0)`, ne faussent pas le calcul, juste sous-estiment le max tant
   que l'historique pré-existant n'a pas été purgé après ~25h).
-- **Les groupes de cartes Débits/Ratio sont côte à côte sur une même ligne**
-  (`.stats-row`, flex + `flex-wrap` pour retomber en colonne sur écran
-  étroit — ajouté le 2026-07-28, demandé par l'utilisateur), chaque groupe
-  gardant son titre (`h3`) en haut à gauche (`stats-row.html`/`stats-group.html`,
-  `stats-row.html` généralisée à N groupes — `$groups`, pas des slots fixes
-  `$debits_group`/`$ratio_group` — pour être réutilisée par la deuxième
-  ligne ci-dessous). Une deuxième ligne a été ajoutée en dessous (même
-  jour, demandé), d'abord sous un unique groupe "Système", puis éclatée en
-  trois sous-sections avec chacune son propre titre — **Torrents**,
-  **Disque**, **Indexeurs** — demandé explicitement peu après (le titre
-  générique "Système" retiré). Torrents : une carte (actifs, surveillés,
-  en téléchargement, en erreur — 4 lignes distinctes) ; Disque : jauge
-  d'espace disque libre ; Indexeurs : liste des indexeurs Prowlarr (le
-  libellé interne "Indexeurs Prowlarr" de la carte, redondant avec le
-  nouveau titre de sous-section, retiré au passage).
-  La carte torrents a changé de forme plusieurs fois le même jour : d'abord
-  deux cartes séparées (actifs/surveillés en `X/Y`, téléchargement/erreur
-  côte à côte), fusionnées en une seule à la demande de l'utilisateur ; le
-  rendu côte à côte à 3 colonnes dans la largeur d'une carte tronquait les
-  libellés ("En télé­chargement" coupé), donc passé à une **liste empilée
-  label/valeur** (`render_stat_item()`/`stat-multi-item.html`, une ligne par
-  métrique, valeur alignée à droite) plutôt qu'une disposition en colonnes
-  (`.stat-multi`, `flex-direction: column` — le nom de la classe date de
-  l'essai "plusieurs valeurs côte à côte", conservé tel quel après le
-  changement de disposition) ; enfin `X/Y` (actifs/surveillés) éclaté en
-  deux lignes séparées ("Actifs" / "Surveillés"), là aussi demandé
-  explicitement, pour une présentation homogène avec les deux autres lignes
-  de la carte. Téléchargement = torrent avec `status == 4`
-  (spec RPC) ; erreur = champ `error != 0` (tracker injoignable, fichier
-  introuvable sur disque, etc. — `errorString` donne le détail par torrent,
-  pas exposé au dashboard, juste le compte), valeur colorée en rouge si
-  `>0` sinon verte (`stat-value-critical`/`stat-value-good` réappliquées à
-  `.stat-multi-value` cette fois, pas `.stat-value`) — seule la valeur
-  "erreur" est colorée, "téléchargement"/"actifs / surveillés" restent en
-  encre neutre (0 en téléchargement n'est pas anormal, contrairement à une
-  erreur). Espace disque et indexeurs Prowlarr restent des cartes séparées
-  (jauge à zones et liste, voir plus bas — pas concernées par cette fusion).
-  « Torrents actifs » = tout torrent Transmission avec `status != 0` (spec
-  RPC, 0 = stopped/paused) ; « torrents surveillés » = tous les torrents
-  présents dans le client, actifs ou non — hypothèse de lecture de la
-  demande utilisateur ("nombre de torrents actifs" vs "surveillés"),
-  vérifiée en interrogeant le RPC en direct le 2026-07-28 (257 actifs / 278
-  au total à ce moment), à corriger si l'intention était différente.
+- **Les cartes de la section `Transmission &amp; système` sont toutes à
+  plat dans un seul flux (`.stats-flow`, flexbox — pas de grille CSS, pas de
+  sous-section/titre de groupe)** (état stabilisé le 2026-07-28 après
+  plusieurs itérations — voir ci-dessous). Chaque carte porte son propre
+  libellé, y compris ce qui vivait avant dans un titre de groupe désormais
+  disparu : débits ("Débit descendant"/"Débit montant"), ratios ("Ratio
+  total"/"Ratio session (…)"), torrents (titre "Torrents" replié en haut de
+  la carte multi-lignes), indexeurs (titre "Indexeurs" replié en haut de la
+  liste), disque ("Disque" — raccourci depuis "Disque libre" le 2026-07-28,
+  demandé par l'utilisateur ; carte placée après indexeurs, dernière du
+  flux, également demandé). `.stats-flow` utilise flexbox
+  (`flex-wrap`) plutôt qu'une grille CSS — demandé explicitement — avec une
+  largeur de carte fixe par `flex: 0 0 190px` sur `.stat` (pas
+  `grid-template-columns`) : chaque carte garde sa propre hauteur
+  (`align-items: flex-start` sur le conteneur, pas d'étirement à la hauteur
+  de la plus grande carte de sa "rangée" comme le ferait une grille) — plus
+  besoin du hack `justify-content: center` sur `.stat` pour compenser un
+  étirement qui n'existe plus.
+  Itérations précédentes (pour référence, pas l'état actuel) : Débits/Ratio
+  d'abord groupés côte à côte avec un titre `h3` par groupe, puis une
+  deuxième ligne "Système" (un seul titre) éclatée en trois sous-sections
+  titrées (Torrents/Disque/Indexeurs), le tout construit en CSS grid
+  (`.stats-grid`, `grid-template-columns: repeat(auto-fill, …)`) — abandonné
+  au profit du flux plat ci-dessus, toujours à la demande de l'utilisateur.
+  La carte torrents elle-même a changé de forme plusieurs fois avant de se
+  stabiliser en liste empilée label/valeur (`render_stat_item()`/
+  `stat-multi-item.html`, une ligne par métrique, valeur alignée à droite) :
+  Actifs, Surveillés, En téléchargement, En erreur. Téléchargement = torrent
+  avec `status == 4` (spec RPC) ; erreur = champ `error != 0` (tracker
+  injoignable, fichier introuvable sur disque, etc. — `errorString` donne le
+  détail par torrent, pas exposé au dashboard, juste le compte), valeur
+  colorée en rouge si `>0` sinon verte (`stat-value-critical`/
+  `stat-value-good`) — seule la valeur "erreur" est colorée, les autres
+  restent en encre neutre (0 en téléchargement n'est pas anormal,
+  contrairement à une erreur). « Torrents actifs » = tout torrent avec
+  `status != 0` (spec RPC, 0 = stopped/paused) ; « torrents surveillés » =
+  tous les torrents présents dans le client, actifs ou non — hypothèse de
+  lecture de la demande utilisateur ("nombre de torrents actifs" vs
+  "surveillés"), vérifiée en interrogeant le RPC en direct le 2026-07-28
+  (257 actifs / 278 au total à ce moment), à corriger si l'intention était
+  différente.
   Indexeurs Prowlarr : `/api/v1/indexer` (liste + `enable`) croisé avec
   `/api/v1/indexerstatus` (liste des indexeurs actuellement désactivés après
   échecs répétés, vide si tout va bien — un indexeur y figurant compte comme
   en échec, par `indexerId`), via `docker exec arr-prowlarr-1 curl` (même
   mécanisme que `build_prowlarr_tracker_map()` dans `transmission-stats.py`,
-  dupliqué plutôt que partagé, voir plus haut). Chaque source de la
-  deuxième ligne est indépendante des autres (best-effort par sous-section,
-  voir
+  dupliqué plutôt que partagé, voir plus haut) ; liste chaque indexeur avec
+  un point coloré par état plutôt qu'un compte agrégé, pour voir directement
+  LEQUEL est en échec sans changer d'écran.
+  Chaque carte a sa propre disponibilité (best-effort indépendant, voir
   `build_stats_section()`) : espace disque et indexeurs Prowlarr s'affichent
   même si `vpn/transmission-vpn` est arrêté (contrairement à Débits/Ratio/
   torrents, qui dépendent tous de `transmission-stats.py` donc du VPN) ;
-  toute la section (`Transmission &amp; système`, renommée à cette occasion,
-  avant juste "Transmission — ratios & débits") n'est omise que si aucune
-  des deux lignes n'a de contenu. `.stat` alignée sur la taille de `.card`
-  (mêmes `padding`/`gap`, jauge réduite à 68×40px, valeur à `1rem` — avant
-  plus grande que les cartes de service, jugé disproportionné) peu après,
-  puis son contenu centré verticalement (`justify-content: center`, demandé
-  pour la carte torrents actifs/surveillés dont le texte seul, sans jauge,
-  flottait en haut de la carte étirée par le grid à la hauteur des cartes
-  voisines) — sauf `.stat-list` (indexeurs), qui reste ancrée en haut.
-  `.stats-grid` (Débits/Ratio/Système) passée de `repeat(auto-fill,
-  minmax(150px, 1fr))` à `repeat(auto-fill, 190px)` (largeur de colonne
-  fixe) le même jour, cartes visiblement de tailles différentes entre
-  groupes signalé par l'utilisateur : avec `minmax(…, 1fr)`, chaque grille
-  calcule la largeur de ses cartes en fonction de son **propre** nombre de
-  cartes et de la largeur de son **propre** conteneur — Débits/Ratio (2
-  cartes chacun, conteneur ~460px dans `.stats-row`) et Système (3+ cartes,
-  pleine largeur ~960px) obtenaient donc des cartes de tailles différentes
-  malgré une règle CSS identique (les colonnes vides générées par
-  `auto-fill` dans le conteneur pleine largeur se partagent l'espace `1fr`
-  avec les colonnes réellement occupées, rétrécissant ces dernières). Une
-  taille de colonne fixe élimine cette dépendance au conteneur — au prix
-  d'un espace vide en fin de ligne quand une grille a peu de cartes (ex.
-  Système à 3 cartes sur ~960px), accepté comme compromis. Les paragraphes
-  `<p class="note">` sous la section (légende des seuils de couleur ratio/
-  débit/disque) retirés le même jour à la demande de l'utilisateur — les
-  zones de couleur restent identiques sur les jauges elles-mêmes (rouge/
-  jaune/vert), seul le texte d'explication en bas de section a disparu ;
-  `notes`/`.note` supprimés de `build_stats_section()`/`dashboard.css`
-  plutôt que laissés morts.
+  toute la section (`Transmission &amp; système`, renommée depuis
+  "Transmission — ratios & débits" en cours de route) n'est omise que si
+  aucune carte n'est disponible. Les paragraphes `<p class="note">` sous la
+  section (légende des seuils de couleur ratio/débit/disque) retirés le même
+  jour à la demande de l'utilisateur — les zones de couleur restent
+  identiques sur les jauges elles-mêmes (rouge/jaune/vert), seul le texte
+  d'explication en bas de section a disparu.
 - **`scripts/generate-dashboard.py` (réécrit en Python le 2026-07-28,
   remplace l'ancien `generate-dashboard.sh`)** : venait d'un script bash+jq
   qui construisait le HTML par concaténation de chaînes, devenu illisible
@@ -371,16 +348,17 @@ explicitement :
   l'utilisateur pour séparer vues et code avant d'étendre le dashboard
   (future page monitoring évoquée). Vues dans `dashboard/templates/*.html`
   (un fichier par composant : `page`, `section-grid`, `card-clickable`,
-  `card-down`, `stat-card`, `gauge`, `gauge-zones`, `stats-row`,
-  `stats-group`, `mini-meter`, `tracker-row`, `tracker-details`,
-  `section-transmission` — `gauge`/`gauge-zones` ajoutés le 2026-07-28 en
-  remplaçant un premier essai en mètres puis en balance, `stats-row`/
-  `stats-group` le même jour pour le layout Débits/Ratio/Système, voir plus
-  haut), rendues via `string.Template` de
+  `card-down`, `stat-card`, `gauge`, `gauge-zones`, `stats-flow`,
+  `multi-stat-card`, `stat-multi-item`, `indexers-card`, `mini-meter`,
+  `tracker-row`, `tracker-details`, `section-transmission` — `gauge`/
+  `gauge-zones` ajoutés le 2026-07-28 en remplaçant un premier essai en
+  mètres puis en balance ; `stats-flow` le même jour, remplace un détour par
+  `stats-row`/`stats-group` (groupes titrés en CSS grid, voir plus haut) par
+  un flux plat flexbox sans sous-section), rendues via `string.Template` de
   la stdlib (substitution `$variable` uniquement, zéro logique dans un
   template — boucles/conditions et calculs géométriques (angles/points
   d'arc des jauges) restent en Python, ex.
-  `build_cards()`/`build_transmission_section()` décident quelles cartes
+  `build_cards()`/`build_stats_section()` décident quelles cartes
   existent et les joignent avant de les passer au template parent). CSS/JS déplacés en
   fichiers statiques (`dashboard/assets/dashboard.css`/`dashboard.js`, copiés
   vers `dashboard/html/assets/` comme les logos) plutôt qu'embarqués dans le
