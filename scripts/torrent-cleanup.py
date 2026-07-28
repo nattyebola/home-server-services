@@ -996,6 +996,13 @@ if __name__ == "__main__":
         logger.error("arrêt sur erreur : %s", e)
         print(f"Erreur : {e} (voir {LOG_PATH})", file=sys.stderr)
         sys.exit(1)
+    except KeyboardInterrupt:
+        # curses.wrapper restaure déjà le terminal avant de relaisser
+        # filer l'exception (non catchée par `except Exception` ci-dessous,
+        # BaseException pas Exception) — sans ce handler, Ctrl+C affichait
+        # une traceback complète au lieu de quitter comme la touche 'q'.
+        logger.info("=== interrompu (Ctrl+C) ===")
+        sys.exit(130)
     except Exception:
         logger.error("crash inattendu :\n%s", traceback.format_exc())
         print(f"Crash inattendu, trace complète dans {LOG_PATH}", file=sys.stderr)
