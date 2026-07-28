@@ -197,6 +197,47 @@ explicitement :
   main (`make dashboard-refresh`) — sinon un service qui devient
   unhealthy entre deux régénérations manuelles resterait affiché comme
   sain arbitrairement longtemps.
+- **Le dashboard affiche des stats Transmission (ratio session/total/24h,
+  débits, ratio par tracker), visibles WAN et LAN** (ajouté le 2026-07-28) :
+  `scripts/transmission-stats.py` interroge le RPC Transmission via le même
+  mécanisme docker-exec-curl que `scripts/torrent-cleanup.py` (RPC non
+  authentifié, joignable seulement depuis l'intérieur du conteneur — réseau
+  `vpn-internal` isolé) et sort du JSON consommé par
+  `scripts/generate-dashboard.sh`. Ratio session = `current-stats` de
+  `session-stats` (compteurs remis à zéro à chaque redémarrage du daemon,
+  donc "depuis l'uptime" demandé) ; ratio total = `cumulative-stats` (jamais
+  remis à zéro). Ratio 24h : le RPC Transmission n'a pas de fenêtre glissante
+  native, donc chaque appel (un par régénération cron, 5 min) ajoute un
+  échantillon horodaté (`cumulative-stats` uploaded/downloaded) dans
+  `${DATA_ROOT}/.transmission-stats-history.jsonl` (même convention que
+  `.torrent-cleanup.log`, dotfile sous DATA_ROOT plutôt que dans le repo) ;
+  le delta 24h est calculé contre l'échantillon le plus proche d'"il y a 24h"
+  encore présent, purgé après ~25h de rétention. Basé sur `cumulative-stats`
+  (jamais remis à zéro) plutôt que `current-stats` : un redémarrage du daemon
+  pendant la fenêtre fausserait un delta basé sur ce dernier. Avant d'avoir
+  24h d'historique accumulé (premier lancement, ou trou récent type hôte
+  éteint), le libellé affiché reste honnête sur la fenêtre réellement
+  couverte (`"Ratio 3h (historique)"` plutôt que prétendre 24h). Ratio par
+  tracker = somme de `uploadedEver`/`downloadedEver`
+  par host d'annonce (`torrent-get.trackerStats`), noms résolus via Prowlarr
+  (même logique que `tracker_host`/`resolve_tracker_name` dans
+  `torrent-cleanup.py`, dupliquée plutôt que factorisée — `torrent-cleanup.py`
+  est un script curses autonome, pas une lib). Un torrent multi-tracker
+  compte dans chaque tracker auquel il annonce (impossible de départager
+  l'upload par tracker côté RPC Transmission) : le ratio par tracker pris
+  individuellement reste correct, mais la somme des trackers peut dépasser
+  le volume réel total. Contrairement aux cartes de service (grisées côté
+  WAN via `data-probe`, cf. ci-dessus), cette section n'a aucun gating LAN :
+  ce sont des chiffres agrégés en snapshot (recalculés à chaque régénération
+  cron, 5 min), pas un accès de contrôle au client — voulu explicitement.
+  Ratio calculé côté Transmission, peut différer du ratio réel compté par
+  chaque tracker (leur propre comptage d'annonce fait foi, pas les
+  compteurs locaux du client) — pas encore de lecture directe des ratios
+  de compte sur les trackers privés eux-mêmes (tr4cker/c411/nya.si évoqués
+  par l'utilisateur), reporté à plus tard : Prowlarr n'expose aucune notion
+  de compte/ratio (juste un agrégateur de recherche), il faudrait un
+  scraper dédié par tracker (API si le tracker tourne sur UNIT3D/Gazelle,
+  sinon parsing HTML de la page de profil).
 - **`max-file: "3"` sur tous les blocs `logging` json-file** (ajouté le
   2026-07-24) — `max-file` n'était jamais fixé alors que `max-size` l'est
   partout, donc un seul fichier de logs par service : dès qu'il atteignait
@@ -387,6 +428,7 @@ server/
 │   ├── backup.sh                   # sauvegarde restic hebdomadaire
 │   ├── restore.sh                  # restauration guidée d'un snapshot restic
 │   ├── generate-dashboard.sh       # régénère dashboard/html/ — `make dashboard-refresh`
+│   ├── transmission-stats.py       # JSON ratios/débits pour generate-dashboard.sh
 │   └── torrent-cleanup.py          # TUI de nettoyage manuel torrents+library/ — `make cleanup`
 ├── sauvegarde/                # non versionné — dépôt restic + mot de passe + staging
 ├── traefik/                  # socket-proxy + traefik + dashboard (page statique de liens) ; .env(ACME_EMAIL)/.example

@@ -131,6 +131,30 @@ for stack in $STACKS; do
 	done < <(compose_for "$stack" config --format json 2>/dev/null | jq -c "$JQ_PROGRAM")
 done
 
+# Statistiques Transmission (ratios/débits) — voir scripts/transmission-stats.py.
+# Contrairement aux cartes de service ci-dessus, cette section est visible
+# WAN et LAN (pas de gating card-lan-blocked) : ce sont des chiffres agrégés,
+# pas un accès de contrôle au client — décision explicite de l'utilisateur.
+# Snapshot pris au moment de la génération (cron toutes les 5 min, comme le
+# reste du dashboard), pas de rafraîchissement live.
+transmission_stats_html=""
+tracker_rows=""
+if stats_json="$(python3 "$REPO_ROOT/scripts/transmission-stats.py" 2>/dev/null)" \
+	&& [ -n "$stats_json" ] && [ "$(jq -r 'has("error")' <<<"$stats_json")" = "false" ]; then
+	tracker_rows="$(jq -r '.trackers[]
+		| "<tr><td>\(.name)</td><td>\(.ratio_display)</td><td>\(.uploaded_human)</td><td>\(.downloaded_human)</td></tr>"
+	' <<<"$stats_json")"
+	transmission_stats_html="$(jq -r '
+		"<div class=\"stats-grid\">"
+		+ "<div class=\"stat\"><span class=\"stat-value\">" + .total.ratio_display + "</span><span class=\"stat-label\">Ratio total</span></div>"
+		+ "<div class=\"stat\"><span class=\"stat-value\">" + .session.ratio_display + "</span><span class=\"stat-label\">Ratio session (" + .session.uptime_human + ")</span></div>"
+		+ (if .day then "<div class=\"stat\"><span class=\"stat-value\">" + .day.ratio_display + "</span><span class=\"stat-label\">" + .day.label + "</span></div>" else "" end)
+		+ "<div class=\"stat\"><span class=\"stat-value\">↓ " + .download_speed_human + "</span><span class=\"stat-label\">Débit descendant</span></div>"
+		+ "<div class=\"stat\"><span class=\"stat-value\">↑ " + .upload_speed_human + "</span><span class=\"stat-label\">Débit montant</span></div>"
+		+ "</div>"
+	' <<<"$stats_json")"
+fi
+
 mkdir -p "$OUT_DIR/assets/logos"
 cp "$LOGOS_SRC"/*.svg "$OUT_DIR/assets/logos/"
 cp "$REPO_ROOT/dashboard/assets/robots.txt" "$OUT_DIR/robots.txt"
@@ -189,6 +213,30 @@ cat >"$OUT_FILE" <<HTML
   .name { font-weight: 600; font-size: .95rem; }
   .host { font-size: .75rem; opacity: .6; word-break: break-all; text-align: center; }
   .empty { opacity: .5; font-size: .9rem; }
+  .stats-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 1rem; margin-bottom: 1rem;
+  }
+  .stat {
+    display: flex; flex-direction: column; align-items: center; gap: .3rem;
+    padding: 1rem; border-radius: 12px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.1);
+  }
+  @media (prefers-color-scheme: dark) {
+    .stat { background: #27272a; box-shadow: none; }
+  }
+  .stat-value { font-weight: 700; font-size: 1.3rem; }
+  .stat-label { font-size: .75rem; opacity: .6; text-align: center; }
+  .tracker-table {
+    width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px;
+    overflow: hidden; font-size: .85rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    .tracker-table { background: #27272a; }
+  }
+  .tracker-table th, .tracker-table td { padding: .5rem .75rem; text-align: left; }
+  .tracker-table th { font-size: .7rem; text-transform: uppercase; opacity: .6; }
+  .tracker-table tr:nth-child(even) { background: rgba(127,127,127,.08); }
+  .note { font-size: .75rem; opacity: .5; margin: .75rem 0 0; }
 </style>
 </head>
 <body>
@@ -208,6 +256,13 @@ cat >"$OUT_FILE" <<HTML
   <section>
     <h2>Stack non lancée</h2>
     <div class="grid">${down_cards:-<span class=\"empty\">aucune</span>}</div>
+  </section>
+
+  <section>
+    <h2>Transmission — ratios &amp; débits</h2>
+    ${transmission_stats_html:-<p class=\"empty\">indisponible (Transmission arrêté ?)</p>}
+    ${tracker_rows:+<table class=\"tracker-table\"><thead><tr><th>Tracker</th><th>Ratio</th><th>Envoyé</th><th>Reçu</th></tr></thead><tbody>$tracker_rows</tbody></table>}
+    <p class="note">Ratio calculé côté client Transmission — peut différer du ratio réel compté par chaque tracker.</p>
   </section>
 
   <script>
