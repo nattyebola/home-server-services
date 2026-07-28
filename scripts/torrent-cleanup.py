@@ -9,6 +9,11 @@
 # Ne touche pas à Sonarr/Radarr : si le titre est encore monitored, il peut
 # le re-demander plus tard (RSS/recherche manuelle) — désactiver le
 # monitoring ou blacklister la release reste un geste séparé, volontaire.
+#
+# Marqueur 'M' (torrent dont le fichier a disparu du disque, ex. supprimé
+# manuellement hors de cet outil) + Maj+P pour les purger tous en un coup
+# côté Transmission — ajouté le 2026-07-28 après un rattrapage cross-seed
+# qui en a fait remonter 6 d'un coup, tous antérieurs à la stack arr.
 import curses
 import json
 import logging
@@ -487,9 +492,8 @@ def build_library_index():
 def find_library_matches(host_files, library_index):
     matches = []
     for path, _size in host_files:
-        try:
-            st = os.stat(path)
-        except FileNotFoundError:
+        st = resolved_stat(path)
+        if st is None:
             logger.warning("fichier attendu absent du disque (déjà déplacé/supprimé ?) : %s", path)
             continue
         hit = library_index.get((st.st_dev, st.st_ino))
@@ -500,15 +504,50 @@ def find_library_matches(host_files, library_index):
     return matches
 
 
-def has_library_match(host_files, library_index):
+def resolved_stat(path):
+    """os.stat() qui sait traverser un symlink cross-seed vers un chemin
+    absolu /data/... — cross-seed (linkType symlink par défaut) crée ses
+    liens dans .cross-seed-links/<tracker>/... en pointant vers le chemin
+    tel que VU PAR LE CONTENEUR (/data/completed/...), pas le chemin hôte où
+    tourne ce script. Un os.stat() nu suit le lien avec la racine de l'hôte,
+    qui n'a pas de /data : le fichier semble absent alors qu'il existe très
+    bien — constaté le 2026-07-28, 91 faux positifs sur ~230 torrents (tous
+    les cross-seeds injectés dans le rattrapage du jour) avant ce fix.
+    Renvoie None si le fichier (ou sa cible réelle) n'existe pas."""
+    target = path
+    if os.path.islink(path):
+        link_target = os.readlink(path)
+        if link_target.startswith("/data"):
+            link_target = container_path_to_host(link_target)
+        elif not os.path.isabs(link_target):
+            link_target = os.path.join(os.path.dirname(path), link_target)
+        target = link_target
+    try:
+        return os.stat(target)
+    except OSError:
+        return None
+
+
+def classify_torrent_files(host_files, library_index):
+    """Une seule passe resolved_stat() par torrent pour les deux marqueurs
+    affichés (évite de stat chaque fichier deux fois) : linked=True si au
+    moins un fichier a une correspondance library/ (hardlink, marqueur 'L'),
+    missing=True si AUCUN fichier du torrent n'existe plus sur disque — le
+    cas Transmission "No data found!" (torrent orphelin, marqueur 'M'), vu
+    en pratique sur des torrents antérieurs à la mise en place de la stack
+    arr dont le fichier a été supprimé par un autre moyen que cet outil."""
+    if not host_files:
+        return False, False
+    any_exists = False
+    linked = False
     for path, _size in host_files:
-        try:
-            st = os.stat(path)
-        except FileNotFoundError:
+        st = resolved_stat(path)
+        if st is None:
             continue
+        any_exists = True
         if (st.st_dev, st.st_ino) in library_index:
-            return True
-    return False
+            linked = True
+    return linked, not any_exists
 
 
 def prune_empty_dirs(path):
@@ -535,7 +574,7 @@ def visible_rows(h):
     return max(1, h - 4)
 
 
-def draw_list(stdscr, torrents, selected, offset, filter_str, linked_ids, sort_idx, sort_reverse,
+def draw_list(stdscr, torrents, selected, offset, filter_str, linked_ids, missing_ids, sort_idx, sort_reverse,
               session_freed_bytes, session_deletions):
     h, w = stdscr.getmaxyx()
     stdscr.erase()
@@ -554,11 +593,20 @@ def draw_list(stdscr, torrents, selected, offset, filter_str, linked_ids, sort_i
         row = 2 + i
         is_selected = offset + i == selected
         linked = t["id"] in linked_ids
-        marker = "L " if linked else "  "
+        missing = t["id"] in missing_ids
+        marker = ("L" if linked else " ") + ("M" if missing else " ")
         base_attr = curses.A_REVERSE if is_selected else curses.A_NORMAL
+        if is_selected:
+            marker_attr = base_attr
+        elif missing:
+            marker_attr = base_attr | cp(COLOR_DANGER)
+        elif linked:
+            marker_attr = base_attr | cp(COLOR_LINKED)
+        else:
+            marker_attr = base_attr
 
         col = 0
-        stdscr.addstr(row, col, marker, base_attr | (0 if is_selected else cp(COLOR_LINKED) if linked else 0))
+        stdscr.addstr(row, col, marker, marker_attr)
         col += len(marker)
         age_str = f"{human_age(t['addedDate']):<7} "
         stdscr.addstr(row, col, age_str[:max(0, w - 1 - col)], base_attr)
@@ -578,11 +626,11 @@ def draw_list(stdscr, torrents, selected, offset, filter_str, linked_ids, sort_i
     stdscr.addstr(h - 2, 0, session_line[:w - 1], curses.A_BOLD | cp(COLOR_LINKED))
 
     sort_label, _ = SORT_FIELDS[sort_idx]
-    footer = f"{len(torrents)} torrents ({len(linked_ids)} avec fichier(s) bibliothèque, marqués 'L')"
+    footer = f"{len(torrents)} torrents ({len(linked_ids)} avec fichier(s) bibliothèque 'L', {len(missing_ids)} fichier manquant 'M')"
     footer += f" | tri: {sort_label} {'▼' if sort_reverse else '▲'}"
     if filter_str:
         footer += f" | filtre: {filter_str}"
-    footer += " | ↑/↓ naviguer, / filtrer, s tri, S inverser, Entrée confirmer, D suppr. directe, q quitter"
+    footer += " | ↑/↓ naviguer, / filtrer, s tri, S inverser, Entrée confirmer, D suppr. directe, P purge 'M', q quitter"
     stdscr.addstr(h - 1, 0, footer[:w - 1], curses.A_DIM)
     stdscr.refresh()
 
@@ -635,6 +683,38 @@ def confirm_delete(stdscr, torrent, library_index):
     return None
 
 
+def confirm_bulk_delete(stdscr, torrents):
+    """Écran de confirmation pour Maj+P (purge groupée des torrents marqués
+    'M') — mêmes conventions que confirm_delete, mais pas d'espace "libéré"
+    à annoncer : par définition ces fichiers ont déjà disparu du disque."""
+    stdscr.erase()
+    h, w = stdscr.getmaxyx()
+    none_attr = curses.A_NORMAL
+    lines = [
+        (f"Purger {len(torrents)} torrent(s) au fichier disparu (marqués 'M') :",
+         curses.A_BOLD | cp(COLOR_HEADER)),
+        ("", none_attr),
+    ]
+    for t in torrents[:15]:
+        lines.append((f"  - {t['name']}", cp(COLOR_DANGER)))
+    if len(torrents) > 15:
+        lines.append((f"  ... et {len(torrents) - 15} de plus", cp(COLOR_DANGER)))
+    lines.append(("", none_attr))
+    lines.append(("Retirés de Transmission uniquement (rien à supprimer localement, les fichiers", none_attr))
+    lines.append(("sont déjà absents du disque) — vérifiez qu'aucun n'a simplement changé", none_attr))
+    lines.append(("d'emplacement avant de confirmer.", none_attr))
+    lines.append(("", none_attr))
+    lines.append((f"Confirmer la suppression de {len(torrents)} torrent(s) ? [o/N]",
+                   curses.A_BOLD | cp(COLOR_DANGER)))
+    for i, (line, attr) in enumerate(lines[:h - 1]):
+        stdscr.addstr(i, 0, line[:w - 1], attr)
+    stdscr.refresh()
+    curses.echo()
+    key = stdscr.getch()
+    curses.noecho()
+    return key in (ord("o"), ord("O"), ord("y"), ord("Y"))
+
+
 def do_delete(client, torrent, host_files, lib_matches, arr_plan):
     log_deletion(torrent, host_files, lib_matches, arr_plan)
     client.remove_torrent(torrent["id"])
@@ -648,14 +728,16 @@ def do_delete(client, torrent, host_files, lib_matches, arr_plan):
     execute_arr_plan(arr_plan)
 
 
-def apply_deletion(client, torrent, host_files, lib_matches, arr_plan, all_torrents, linked_ids):
+def apply_deletion(client, torrent, host_files, lib_matches, arr_plan, all_torrents, linked_ids, missing_ids):
     """Effectue la suppression et renvoie (nouvelle liste all_torrents, octets
-    libérés) — factorise ce que les chemins Entrée (confirmée) et D (directe)
-    ont en commun une fois host_files/lib_matches/arr_plan connus."""
+    libérés) — factorise ce que les chemins Entrée (confirmée), D (directe)
+    et P (purge groupée) ont en commun une fois host_files/lib_matches/
+    arr_plan connus."""
     do_delete(client, torrent, host_files, lib_matches, arr_plan)
     deleted_id = torrent["id"]
     remaining = [t for t in all_torrents if t["id"] != deleted_id]
     linked_ids.discard(deleted_id)
+    missing_ids.discard(deleted_id)
     freed = sum(s for _, s in host_files) + sum(s for _, s in lib_matches)
     return remaining, freed
 
@@ -691,8 +773,15 @@ def main(stdscr):
     stdscr.clrtoeol()
     stdscr.refresh()
     library_index = build_library_index()
-    linked_ids = {t["id"] for t in all_torrents if has_library_match(torrent_host_files(t), library_index)}
+    linked_ids, missing_ids = set(), set()
+    for t in all_torrents:
+        linked, missing = classify_torrent_files(torrent_host_files(t), library_index)
+        if linked:
+            linked_ids.add(t["id"])
+        if missing:
+            missing_ids.add(t["id"])
     logger.info("torrents avec correspondance library/ : %d/%d", len(linked_ids), len(all_torrents))
+    logger.info("torrents avec fichier manquant sur disque : %d/%d", len(missing_ids), len(all_torrents))
 
     filter_str = ""
     selected = 0
@@ -712,7 +801,7 @@ def main(stdscr):
         if selected >= offset + visible:
             offset = selected - visible + 1
 
-        draw_list(stdscr, torrents, selected, offset, filter_str, linked_ids, sort_idx, sort_reverse,
+        draw_list(stdscr, torrents, selected, offset, filter_str, linked_ids, missing_ids, sort_idx, sort_reverse,
                   session_freed_bytes, session_deletions)
         if message:
             stdscr.addstr(0, 0, message[: stdscr.getmaxyx()[1] - 1], curses.A_BOLD | cp(message_color))
@@ -758,7 +847,7 @@ def main(stdscr):
                 if result:
                     host_files, lib_matches, arr_plan = result
                     all_torrents, freed = apply_deletion(client, torrent, host_files, lib_matches, arr_plan,
-                                                          all_torrents, linked_ids)
+                                                          all_torrents, linked_ids, missing_ids)
                     session_freed_bytes += freed
                     session_deletions += 1
                     message = f"Supprimé : {torrent['name']}"
@@ -777,7 +866,7 @@ def main(stdscr):
                 lib_matches = find_library_matches(host_files, library_index)
                 arr_plan = plan_arr_actions(lib_matches)
                 all_torrents, freed = apply_deletion(client, torrent, host_files, lib_matches, arr_plan,
-                                                      all_torrents, linked_ids)
+                                                      all_torrents, linked_ids, missing_ids)
                 session_freed_bytes += freed
                 session_deletions += 1
                 message = f"Supprimé (sans confirmation) : {torrent['name']}"
@@ -786,6 +875,33 @@ def main(stdscr):
                 logger.error("échec de la suppression rapide de %r : %s", torrent["name"], e)
                 message = f"ÉCHEC (voir {LOG_PATH}) : {e}"
                 message_color = COLOR_DANGER
+        elif key == ord("P"):
+            # Purge groupée de tous les torrents marqués 'M' (fichier disparu
+            # du disque), pas seulement ceux du filtre courant — le but est
+            # un rattrapage global, comme demandé après le cas cross-seed du
+            # 2026-07-28. Chaque suppression est indépendante (échec isolé
+            # n'interrompt pas les suivantes), même logique que execute_arr_plan.
+            missing_torrents = [t for t in all_torrents if t["id"] in missing_ids]
+            if not missing_torrents:
+                message = "Aucun torrent avec fichier manquant (marqué 'M')"
+                message_color = COLOR_WARN
+            elif confirm_bulk_delete(stdscr, missing_torrents):
+                deleted, failed = 0, 0
+                for torrent in missing_torrents:
+                    try:
+                        host_files = torrent_host_files(torrent)
+                        lib_matches = find_library_matches(host_files, library_index)
+                        arr_plan = plan_arr_actions(lib_matches)
+                        all_torrents, freed = apply_deletion(client, torrent, host_files, lib_matches, arr_plan,
+                                                              all_torrents, linked_ids, missing_ids)
+                        session_freed_bytes += freed
+                        session_deletions += 1
+                        deleted += 1
+                    except Exception as e:
+                        logger.error("échec de la purge de %r (id=%s) : %s", torrent["name"], torrent["id"], e)
+                        failed += 1
+                message = f"Purge : {deleted} supprimé(s)" + (f", {failed} échec(s) (voir {LOG_PATH})" if failed else "")
+                message_color = COLOR_DANGER if failed else COLOR_LINKED
 
 
 if __name__ == "__main__":
