@@ -18,7 +18,3 @@ MAILTO=""
 # Refresh the dashboard every 5 minutes — mainly to reflect healthcheck
 # status (see CLAUDE.md) without waiting on a manual `make dashboard-refresh`.
 */5 * * * * __REPO_ROOT__/scripts/generate-dashboard.sh >> __REPO_ROOT__/dashboard/refresh.log 2>&1
-
-# Force a ratio limit of 2 on every Nyaa.si torrent, current and future
-# (requested 2026-07-28) — see scripts/apply-nyaa-ratio-limit.py.
-*/5 * * * * __REPO_ROOT__/scripts/apply-nyaa-ratio-limit.py >> __REPO_ROOT__/scripts/nyaa-ratio-limit.log 2>&1
