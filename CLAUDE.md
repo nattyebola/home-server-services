@@ -97,6 +97,15 @@ explicitement :
   affiché diffère (VO/VF, ponctuation...). Best-effort : une instance arr
   injoignable ou un fichier jamais importé ne bloque jamais la suppression
   des fichiers eux-mêmes.
+  Marqueur `'M'` dans le listing (ajouté le 2026-07-28, suite à 11 torrents
+  antérieurs à la stack arr repérés avec un fichier disparu — cas
+  Transmission `"No data found!"`, jamais nettoyé tout seul : `make cleanup`
+  synchronise Sonarr/Radarr mais ne supprime rien de son propre chef) +
+  raccourci `Maj+P` pour les purger tous de Transmission en une fois après
+  confirmation. Détection via `resolved_stat()` plutôt qu'un `os.stat()` nu
+  — piège rencontré en l'écrivant, voir ci-dessous. Footer devenu trop long
+  une fois ce raccourci ajouté : liste des touches déplacée dans un écran
+  d'aide dédié (touche `?`) plutôt que condensée sur une ou deux lignes.
 - **`dashboard` (`traefik/docker-compose.yml`) accessible en WAN comme en
   LAN** (changé le 2026-07-24, avant restreint par `ipallowlist`) — les
   sous-domaines qu'elle liste sont de toute façon publics via Certificate
@@ -238,6 +247,17 @@ explicitement :
   de compte/ratio (juste un agrégateur de recherche), il faudrait un
   scraper dédié par tracker (API si le tracker tourne sur UNIT3D/Gazelle,
   sinon parsing HTML de la page de profil).
+- **Les sections du dashboard (Public/Local/Stack non lancée/Transmission)
+  ne s'affichent que si elles ont du contenu** (ajouté le 2026-07-28) —
+  plus de placeholder `"aucun"`/`"aucune"`/`"indisponible"` pour une section
+  vide, la section entière est omise. La section Transmission spécifiquement
+  ne s'affiche que si `vpn/transmission-vpn` tourne (vérifié via le même
+  `RUNNING` construit par `docker ps` que les cartes de service), pas
+  seulement si `transmission-stats.py` a réussi à sortir un JSON — évite
+  d'afficher un message d'erreur générique le temps que le conteneur
+  redémarre. Le tableau détaillé "ratio par tracker" est en plus replié par
+  défaut dans un `<details>`/`<summary>` natif (pas de JS) — verbeux avec
+  plusieurs trackers privés, pas l'information qu'on veut voir en premier.
 - **`max-file: "3"` sur tous les blocs `logging` json-file** (ajouté le
   2026-07-24) — `max-file` n'était jamais fixé alors que `max-size` l'est
   partout, donc un seul fichier de logs par service : dès qu'il atteignait
@@ -446,6 +466,23 @@ explicitement :
   restauration jamais exercé peut cacher ce genre de bug arbitrairement
   longtemps — voir la limite `${VAR:-default}` d'un fallback silencieux
   quand `VAR` n'est jamais définie nulle part.
+- **Un `os.stat()` nu sur un fichier `library/`/`.transmission/data/` ne
+  suit pas correctement un symlink cross-seed** (`torrent-cleanup.py`,
+  repéré le 2026-07-28 en ajoutant le marqueur `'M'` ci-dessus) — cross-seed
+  (`linkType` symlink par défaut, `arr/cross-seed/config.js`) crée ses liens
+  dans `.cross-seed-links/<tracker>/...` en pointant vers le chemin **tel
+  que vu par le conteneur** (`/data/completed/...`), pas le chemin hôte où
+  tourne ce script Python. `os.stat()` suit le lien avec la racine de
+  l'hôte, qui n'a pas de `/data` : le fichier semble absent alors qu'il
+  existe très bien à l'intérieur des conteneurs — 91 faux positifs constatés
+  sur ~230 torrents (tous les cross-seeds fraîchement injectés) avant le
+  fix. Solution : `resolved_stat()` détecte le symlink via
+  `os.path.islink()`, lit sa cible via `os.readlink()`, et si elle commence
+  par `/data` la traduit en chemin hôte avec la même fonction
+  `container_path_to_host()` que le reste du script avant de faire le vrai
+  `os.stat()`. Le même bug affectait aussi silencieusement le marqueur `'L'`
+  et `find_library_matches()` (sous-évaluaient les correspondances
+  library/ pour tout torrent cross-seed) — corrigés avec le même helper.
 
 ## Repo
 
