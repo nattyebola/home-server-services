@@ -6,7 +6,7 @@ STACKS := traefik jellyfin nextcloud vpn arr seerr
 
 UPDATE_STACKS := nextcloud vpn jellyfin arr seerr
 
-.PHONY: network up down config logs update update-all backup restore cron-install dashboard-refresh cleanup
+.PHONY: network up down config logs update update-all backup restore cron-install dashboard-refresh cleanup nyaa-ratio-limit
 
 network:
 	@docker network inspect $(NETWORK) >/dev/null 2>&1 || docker network create $(NETWORK)
@@ -74,6 +74,13 @@ dashboard-refresh:
 # dans library/ — voir scripts/torrent-cleanup.py.
 cleanup:
 	@python3 scripts/torrent-cleanup.py
+
+# force un ratio-limite de 2 sur tous les torrents Nyaa.si (actuels et
+# futurs, demandé par l'utilisateur le 2026-07-28) — voir
+# scripts/apply-nyaa-ratio-limit.py. Aussi lancé par cron (scripts/crontab)
+# pour rattraper les torrents Nyaa ajoutés après ce passage.
+nyaa-ratio-limit:
+	@python3 scripts/apply-nyaa-ratio-limit.py
 
 # weekly restic backup (nextcloud DB dump + data + .env secrets + image
 # digest manifest) — see scripts/backup.sh. Also run by cron, see CLAUDE.md.

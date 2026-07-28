@@ -264,6 +264,20 @@ explicitement :
   `max-size`, tout l'historique précédent disparaissait plutôt que d'être
   conservé dans un fichier tourné. Toujours ajouter les deux ensemble sur
   tout nouveau service, jamais `max-size` seul.
+- **`scripts/apply-nyaa-ratio-limit.py` (`make nyaa-ratio-limit`)** : force
+  `seedRatioMode=1`/`seedRatioLimit=2` sur tous les torrents résolus comme
+  `Nyaa.si` (demandé le 2026-07-28 — Nyaa n'a pas de ratio de compte à
+  préserver comme les trackers privés, mais l'utilisateur veut quand même
+  couper l'envoi au-delà de 2x plutôt que de saturer indéfiniment la
+  bande passante dessus). Idempotent (ne modifie que ce qui n'est pas déjà
+  à jour) et tourne via cron toutes les 5 minutes (`scripts/crontab`,
+  même cadence que le rafraîchissement du dashboard) pour couvrir aussi
+  les torrents Nyaa ajoutés après coup, pas seulement ceux présents au
+  moment de la demande. Même mécanisme docker-exec-curl et même résolution
+  de tracker (base_domain + `MANUAL_TRACKER_ALIASES`) que
+  `transmission-stats.py`/`torrent-cleanup.py`, dupliquée une troisième
+  fois plutôt que factorisée — cohérent avec la décision déjà prise pour
+  les deux premiers (voir plus haut).
 
 ## Pièges à ne pas répéter
 
@@ -532,7 +546,8 @@ server/
 │   ├── restore.sh                  # restauration guidée d'un snapshot restic
 │   ├── generate-dashboard.sh       # régénère dashboard/html/ — `make dashboard-refresh`
 │   ├── transmission-stats.py       # JSON ratios/débits pour generate-dashboard.sh
-│   └── torrent-cleanup.py          # TUI de nettoyage manuel torrents+library/ — `make cleanup`
+│   ├── torrent-cleanup.py          # TUI de nettoyage manuel torrents+library/ — `make cleanup`
+│   └── apply-nyaa-ratio-limit.py   # ratio-limite 2 sur les torrents Nyaa.si — `make nyaa-ratio-limit`
 ├── sauvegarde/                # non versionné — dépôt restic + mot de passe + staging
 ├── traefik/                  # socket-proxy + traefik + dashboard (page statique de liens) ; .env(ACME_EMAIL)/.example
 ├── jellyfin/                 # docker-compose.yml + override.yml(.example) pour les bibliothèques

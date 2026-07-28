@@ -23,6 +23,9 @@ traefik/letsencrypt/
 dashboard/html/
 dashboard/refresh.log
 
+# cron log for scripts/apply-nyaa-ratio-limit.py (see scripts/crontab)
+scripts/nyaa-ratio-limit.log
+
 # VPN client credentials (private key + certs, not infra-as-code)
 vpn/custom/
 
