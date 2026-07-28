@@ -33,4 +33,24 @@ module.exports = {
   linkDirs: ["/data/.cross-seed-links"],
   action: "inject",
   duplicateCategories: true,
+  // Sans cadence, le daemon ne recherche que sur événement webhook (nouvel
+  // import Sonarr/Radarr) — jamais l'historique déjà présent avant le fix
+  // des IDs Torznab ci-dessus (2026-07-28). Ajouté pour que les torrents
+  // récents soient re-vérifiés périodiquement (ex. tracker qui vient
+  // d'indexer un titre plus lentement que Sonarr/Radarr ne l'a importé),
+  // pas juste au moment de l'import. Le rattrapage de l'historique complet
+  // (torrents plus anciens que excludeOlder ci-dessous, jamais couverts par
+  // cette cadence récurrente) se fait manuellement via `cross-seed search`
+  // — voir CLAUDE.md, fait une fois le 2026-07-28 suite au fix des IDs.
+  searchCadence: "3 days",
+  // Requis dès que searchCadence est défini, sous deux contraintes de
+  // cross-seed (config invalide sinon, boucle de crash constatée au
+  // premier restart avant ce fix) : excludeRecentSearch >= 3x searchCadence,
+  // et excludeOlder doit être 2-5x excludeRecentSearch. Avec un cadence de
+  // 3 jours : ne resert un torrent que s'il n'a pas déjà été cherché dans
+  // les 9 derniers jours, et seulement s'il a été vu il y a moins de 30
+  // jours — la cadence récurrente cible les ajouts récents, pas tout
+  // l'historique (voir rattrapage manuel ci-dessus).
+  excludeOlder: "30 days",
+  excludeRecentSearch: "9 days",
 };

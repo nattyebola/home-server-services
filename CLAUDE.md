@@ -346,6 +346,22 @@ explicitement :
   tableau `torznab` de `config.js` — ces IDs ne sont pas stables dans le
   temps et rien ne prévient d'un ID devenu obsolète autrement qu'en
   lisant les logs cross-seed.
+- **`searchCadence` dans `arr/cross-seed/config.js` impose deux contraintes
+  de validation non documentées ailleurs que dans l'erreur elle-même**
+  (repéré le 2026-07-28 en l'ajoutant, boucle de crash immédiate sinon —
+  `restart: unless-stopped` redémarre en boucle sur une config invalide,
+  pas de dégradation silencieuse) : `excludeRecentSearch` doit être défini
+  et valoir au moins 3x `searchCadence` ; `excludeOlder` doit lui aussi
+  être défini et valoir 2 à 5x `excludeRecentSearch`. Valeurs retenues :
+  cadence 3 jours, `excludeRecentSearch` 9 jours, `excludeOlder` 30 jours —
+  la recherche périodique automatique ne couvre donc que les torrents vus
+  il y a moins de 30 jours (ajouts récents), jamais tout l'historique. Le
+  rattrapage de l'historique complet (au-delà de 30 jours) se fait à la
+  demande via `docker exec <container> cross-seed search --exclude-older
+  999999999 --exclude-recent-search 0` (bypass explicite des deux filtres),
+  fait une première fois le 2026-07-28 juste après le fix des IDs Torznab
+  ci-dessus — jamais automatisé (potentiellement des centaines de requêtes
+  aux indexeurs en une fois, à ne lancer qu'en connaissance de cause).
 - **`seerr` (image `ghcr.io/seerr-team/seerr`) ne chown pas lui-même son
   volume `/app/config`** — contrairement aux images linuxserver.io (`arr/`),
   il tourne nativement en UID 1000 sans étape root-puis-drop, donc si
