@@ -199,7 +199,7 @@ if [ -n "$transmission_stats_html" ]; then
   <section>
     <h2>Transmission — ratios &amp; débits</h2>
     ${transmission_stats_html}
-    ${tracker_rows:+<table class=\"tracker-table\"><thead><tr><th>Tracker</th><th>Ratio</th><th>Envoyé</th><th>Reçu</th></tr></thead><tbody>$tracker_rows</tbody></table>}
+    ${tracker_rows:+<details class=\"tracker-details\"><summary>Ratio par tracker</summary><table class=\"tracker-table\"><thead><tr><th>Tracker</th><th>Ratio</th><th>Envoyé</th><th>Reçu</th></tr></thead><tbody>$tracker_rows</tbody></table></details>}
     <p class="note">Ratio calculé côté client Transmission — peut différer du ratio réel compté par chaque tracker.</p>
   </section>
 SECTION
@@ -276,6 +276,11 @@ cat >"$OUT_FILE" <<HTML
   }
   .stat-value { font-weight: 700; font-size: 1.3rem; }
   .stat-label { font-size: .75rem; opacity: .6; text-align: center; }
+  .tracker-details summary {
+    cursor: pointer; font-size: .8rem; font-weight: 600; opacity: .8;
+    margin-bottom: .5rem; user-select: none;
+  }
+  .tracker-details summary::marker { color: inherit; }
   .tracker-table {
     width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px;
     overflow: hidden; font-size: .85rem;
