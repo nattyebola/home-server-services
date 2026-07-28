@@ -113,7 +113,7 @@ explicitement :
   restreindre l'accès à la page n'apportait pas de confidentialité réelle.
   Les cartes des services LAN-only (Transmission/Prowlarr/Sonarr/Radarr)
   restent dans le HTML généré et cliquables, mais un script côté client
-  (dans `scripts/generate-dashboard.sh`) les grise dynamiquement pour un
+  (dans `scripts/generate-dashboard.py`) les grise dynamiquement pour un
   visiteur WAN : il sonde une image réelle de chaque service via `<img>`
   (`onload`/`onerror`, pas `fetch`/`XHR` — ceux-ci échouent pareil, bloqués
   ou non par CORS, donc ne distinguent pas un 403 ipallowlist d'un succès).
@@ -197,7 +197,7 @@ explicitement :
   dashboard ci-dessous).
 - **Le dashboard reflète l'état `unhealthy` d'un service** (ajouté le
   2026-07-24, conséquence directe du point ci-dessus) :
-  `scripts/generate-dashboard.sh` lit `docker ps --filter
+  `scripts/generate-dashboard.py` lit `docker ps --filter
   health=unhealthy` (en plus de `docker ps --filter status=running`
   déjà utilisé pour public/local/arrêté) et ajoute un contour rouge
   (`.logo-unhealthy`) autour du logo + un texte d'avertissement sous la
@@ -206,28 +206,24 @@ explicitement :
   main (`make dashboard-refresh`) — sinon un service qui devient
   unhealthy entre deux régénérations manuelles resterait affiché comme
   sain arbitrairement longtemps.
-- **Le dashboard affiche des stats Transmission (ratio session/total/24h,
+- **Le dashboard affiche des stats Transmission (ratio session/total,
   débits, ratio par tracker), visibles WAN et LAN** (ajouté le 2026-07-28) :
   `scripts/transmission-stats.py` interroge le RPC Transmission via le même
   mécanisme docker-exec-curl que `scripts/torrent-cleanup.py` (RPC non
   authentifié, joignable seulement depuis l'intérieur du conteneur — réseau
   `vpn-internal` isolé) et sort du JSON consommé par
-  `scripts/generate-dashboard.sh`. Ratio session = `current-stats` de
+  `scripts/generate-dashboard.py`. Ratio session = `current-stats` de
   `session-stats` (compteurs remis à zéro à chaque redémarrage du daemon,
   donc "depuis l'uptime" demandé) ; ratio total = `cumulative-stats` (jamais
-  remis à zéro). Ratio 24h : le RPC Transmission n'a pas de fenêtre glissante
-  native, donc chaque appel (un par régénération cron, 5 min) ajoute un
-  échantillon horodaté (`cumulative-stats` uploaded/downloaded) dans
-  `${DATA_ROOT}/.transmission-stats-history.jsonl` (même convention que
-  `.torrent-cleanup.log`, dotfile sous DATA_ROOT plutôt que dans le repo) ;
-  le delta 24h est calculé contre l'échantillon le plus proche d'"il y a 24h"
-  encore présent, purgé après ~25h de rétention. Basé sur `cumulative-stats`
-  (jamais remis à zéro) plutôt que `current-stats` : un redémarrage du daemon
-  pendant la fenêtre fausserait un delta basé sur ce dernier. Avant d'avoir
-  24h d'historique accumulé (premier lancement, ou trou récent type hôte
-  éteint), le libellé affiché reste honnête sur la fenêtre réellement
-  couverte (`"Ratio 3h (historique)"` plutôt que prétendre 24h). Ratio par
-  tracker = somme de `uploadedEver`/`downloadedEver`
+  remis à zéro). Un ratio glissant sur 24h avait été ajouté le même jour
+  (delta calculé contre l'échantillon le plus proche d'"il y a 24h" dans un
+  historique persisté sous `${DATA_ROOT}/.transmission-stats-history.jsonl`)
+  puis retiré quelques heures plus tard, jugé pas utile par l'utilisateur —
+  l'historique persisté (même fichier, même convention dotfile sous
+  DATA_ROOT que `.torrent-cleanup.log`) ne sert plus qu'à l'échelle des
+  mètres de débit (`record_speed_sample()`/`historical_max_speed()`,
+  fenêtre de rétention ~25h conservée telle quelle, toujours pertinente pour
+  ça). Ratio par tracker = somme de `uploadedEver`/`downloadedEver`
   par host d'annonce (`torrent-get.trackerStats`), noms résolus via Prowlarr
   (même logique que `tracker_host`/`resolve_tracker_name` dans
   `torrent-cleanup.py`, dupliquée plutôt que factorisée — `torrent-cleanup.py`
@@ -247,6 +243,158 @@ explicitement :
   de compte/ratio (juste un agrégateur de recherche), il faudrait un
   scraper dédié par tracker (API si le tracker tourne sur UNIT3D/Gazelle,
   sinon parsing HTML de la page de profil).
+- **La section Transmission du dashboard affiche des cartes (débits, ratios
+  total/session, ratio par tracker dans la table dépliée), pas du texte
+  brut** (ajouté le 2026-07-28, demandé par l'utilisateur — un premier essai
+  en mètres/barres horizontales le même jour a été remplacé par des cartes
+  après retour direct de l'utilisateur : il voulait retrouver le style carte
+  du reste du dashboard). Chaque carte de débit et chaque carte de ratio
+  affiche une **jauge** en arc de cercle (`gauge_svg()`/`zone_gauge_svg()`
+  dans `scripts/generate-dashboard.py`, rendues via `dashboard/templates/
+  gauge.html` et `gauge-zones.html` : pur SVG, pas de lib JS de graphiques —
+  cohérent avec le reste du dashboard, aucune dépendance externe). Jauge de
+  débit : arc de fond + arc coloré proportionnel + aiguille. Jauge de ratio :
+  pas d'arc de remplissage, le fond est directement divisé en 3 zones de
+  sévérité fixes (rouge/jaune/vert) sur l'échelle 0-4 de `ratio_pct()`,
+  l'aiguille pointe juste sa position dessus (`zone_gauge_svg()` généralisée
+  le même jour pour être réutilisée par l'espace disque, voir plus bas) —
+  remplace une **balance à
+  bascule** (`balance_svg()`, fléau tournant selon le log2(ratio)) essayée le
+  même jour et écartée après retour direct de l'utilisateur : peu pratique à
+  l'usage (sens de bascule pas immédiat). Jauge de ratio préférée à un
+  anneau de progression pour la cohérence avec la jauge de débit (un seul
+  type d'icône sur tout le dashboard). La table détaillée par tracker
+  (repliée par défaut) garde une mini-barre horizontale, pas une mini-jauge :
+  trop peu de place dans une cellule de tableau. Zone de sévérité (couleurs
+  de la jauge de ratio / de la mini-barre) par seuil générique torrenting
+  (rouge `<1` en dessous de l'équilibre, jaune `1–2`, vert `≥2` — pas le
+  seuil `seedRatio=2` propre à Nyaa.si côté Sonarr, voir plus haut, qui ne
+  s'applique qu'à cet indexeur). Jauge de débit cappée sur `speed_scale`
+  (maximum observé sur l'historique ~25h persisté par `transmission-stats.py`,
+  calculé par `historical_max_speed()`, avec un
+  plancher de 1 Mo/s tant que rien n'a encore été échantillonné à pleine
+  vitesse) plutôt qu'une capacité de ligne figée en config : le débit VPN
+  réel dépend du pair/tracker distant et de l'overhead du tunnel, pas
+  seulement de la capacité FAI — une valeur figée aurait été fausse dès le
+  premier changement de serveur VPN ou de tracker. Conséquence : `.transmission-stats-history.jsonl`
+  gagne deux champs par échantillon (`download_speed`/`upload_speed`,
+  absents des échantillons antérieurs à ce changement — lus avec
+  `.get(..., 0)`, ne faussent pas le calcul, juste sous-estiment le max tant
+  que l'historique pré-existant n'a pas été purgé après ~25h).
+- **Les groupes de cartes Débits/Ratio sont côte à côte sur une même ligne**
+  (`.stats-row`, flex + `flex-wrap` pour retomber en colonne sur écran
+  étroit — ajouté le 2026-07-28, demandé par l'utilisateur), chaque groupe
+  gardant son titre (`h3`) en haut à gauche (`stats-row.html`/`stats-group.html`,
+  `stats-row.html` généralisée à N groupes — `$groups`, pas des slots fixes
+  `$debits_group`/`$ratio_group` — pour être réutilisée par la deuxième
+  ligne ci-dessous). Une deuxième ligne a été ajoutée en dessous (même
+  jour, demandé), d'abord sous un unique groupe "Système", puis éclatée en
+  trois sous-sections avec chacune son propre titre — **Torrents**,
+  **Disque**, **Indexeurs** — demandé explicitement peu après (le titre
+  générique "Système" retiré). Torrents : une carte (actifs, surveillés,
+  en téléchargement, en erreur — 4 lignes distinctes) ; Disque : jauge
+  d'espace disque libre ; Indexeurs : liste des indexeurs Prowlarr (le
+  libellé interne "Indexeurs Prowlarr" de la carte, redondant avec le
+  nouveau titre de sous-section, retiré au passage).
+  La carte torrents a changé de forme plusieurs fois le même jour : d'abord
+  deux cartes séparées (actifs/surveillés en `X/Y`, téléchargement/erreur
+  côte à côte), fusionnées en une seule à la demande de l'utilisateur ; le
+  rendu côte à côte à 3 colonnes dans la largeur d'une carte tronquait les
+  libellés ("En télé­chargement" coupé), donc passé à une **liste empilée
+  label/valeur** (`render_stat_item()`/`stat-multi-item.html`, une ligne par
+  métrique, valeur alignée à droite) plutôt qu'une disposition en colonnes
+  (`.stat-multi`, `flex-direction: column` — le nom de la classe date de
+  l'essai "plusieurs valeurs côte à côte", conservé tel quel après le
+  changement de disposition) ; enfin `X/Y` (actifs/surveillés) éclaté en
+  deux lignes séparées ("Actifs" / "Surveillés"), là aussi demandé
+  explicitement, pour une présentation homogène avec les deux autres lignes
+  de la carte. Téléchargement = torrent avec `status == 4`
+  (spec RPC) ; erreur = champ `error != 0` (tracker injoignable, fichier
+  introuvable sur disque, etc. — `errorString` donne le détail par torrent,
+  pas exposé au dashboard, juste le compte), valeur colorée en rouge si
+  `>0` sinon verte (`stat-value-critical`/`stat-value-good` réappliquées à
+  `.stat-multi-value` cette fois, pas `.stat-value`) — seule la valeur
+  "erreur" est colorée, "téléchargement"/"actifs / surveillés" restent en
+  encre neutre (0 en téléchargement n'est pas anormal, contrairement à une
+  erreur). Espace disque et indexeurs Prowlarr restent des cartes séparées
+  (jauge à zones et liste, voir plus bas — pas concernées par cette fusion).
+  « Torrents actifs » = tout torrent Transmission avec `status != 0` (spec
+  RPC, 0 = stopped/paused) ; « torrents surveillés » = tous les torrents
+  présents dans le client, actifs ou non — hypothèse de lecture de la
+  demande utilisateur ("nombre de torrents actifs" vs "surveillés"),
+  vérifiée en interrogeant le RPC en direct le 2026-07-28 (257 actifs / 278
+  au total à ce moment), à corriger si l'intention était différente.
+  Indexeurs Prowlarr : `/api/v1/indexer` (liste + `enable`) croisé avec
+  `/api/v1/indexerstatus` (liste des indexeurs actuellement désactivés après
+  échecs répétés, vide si tout va bien — un indexeur y figurant compte comme
+  en échec, par `indexerId`), via `docker exec arr-prowlarr-1 curl` (même
+  mécanisme que `build_prowlarr_tracker_map()` dans `transmission-stats.py`,
+  dupliqué plutôt que partagé, voir plus haut). Chaque source de la
+  deuxième ligne est indépendante des autres (best-effort par sous-section,
+  voir
+  `build_stats_section()`) : espace disque et indexeurs Prowlarr s'affichent
+  même si `vpn/transmission-vpn` est arrêté (contrairement à Débits/Ratio/
+  torrents, qui dépendent tous de `transmission-stats.py` donc du VPN) ;
+  toute la section (`Transmission &amp; système`, renommée à cette occasion,
+  avant juste "Transmission — ratios & débits") n'est omise que si aucune
+  des deux lignes n'a de contenu. `.stat` alignée sur la taille de `.card`
+  (mêmes `padding`/`gap`, jauge réduite à 68×40px, valeur à `1rem` — avant
+  plus grande que les cartes de service, jugé disproportionné) peu après,
+  puis son contenu centré verticalement (`justify-content: center`, demandé
+  pour la carte torrents actifs/surveillés dont le texte seul, sans jauge,
+  flottait en haut de la carte étirée par le grid à la hauteur des cartes
+  voisines) — sauf `.stat-list` (indexeurs), qui reste ancrée en haut.
+  `.stats-grid` (Débits/Ratio/Système) passée de `repeat(auto-fill,
+  minmax(150px, 1fr))` à `repeat(auto-fill, 190px)` (largeur de colonne
+  fixe) le même jour, cartes visiblement de tailles différentes entre
+  groupes signalé par l'utilisateur : avec `minmax(…, 1fr)`, chaque grille
+  calcule la largeur de ses cartes en fonction de son **propre** nombre de
+  cartes et de la largeur de son **propre** conteneur — Débits/Ratio (2
+  cartes chacun, conteneur ~460px dans `.stats-row`) et Système (3+ cartes,
+  pleine largeur ~960px) obtenaient donc des cartes de tailles différentes
+  malgré une règle CSS identique (les colonnes vides générées par
+  `auto-fill` dans le conteneur pleine largeur se partagent l'espace `1fr`
+  avec les colonnes réellement occupées, rétrécissant ces dernières). Une
+  taille de colonne fixe élimine cette dépendance au conteneur — au prix
+  d'un espace vide en fin de ligne quand une grille a peu de cartes (ex.
+  Système à 3 cartes sur ~960px), accepté comme compromis. Les paragraphes
+  `<p class="note">` sous la section (légende des seuils de couleur ratio/
+  débit/disque) retirés le même jour à la demande de l'utilisateur — les
+  zones de couleur restent identiques sur les jauges elles-mêmes (rouge/
+  jaune/vert), seul le texte d'explication en bas de section a disparu ;
+  `notes`/`.note` supprimés de `build_stats_section()`/`dashboard.css`
+  plutôt que laissés morts.
+- **`scripts/generate-dashboard.py` (réécrit en Python le 2026-07-28,
+  remplace l'ancien `generate-dashboard.sh`)** : venait d'un script bash+jq
+  qui construisait le HTML par concaténation de chaînes, devenu illisible
+  avec l'ajout des mètres ci-dessus — demandé explicitement par
+  l'utilisateur pour séparer vues et code avant d'étendre le dashboard
+  (future page monitoring évoquée). Vues dans `dashboard/templates/*.html`
+  (un fichier par composant : `page`, `section-grid`, `card-clickable`,
+  `card-down`, `stat-card`, `gauge`, `gauge-zones`, `stats-row`,
+  `stats-group`, `mini-meter`, `tracker-row`, `tracker-details`,
+  `section-transmission` — `gauge`/`gauge-zones` ajoutés le 2026-07-28 en
+  remplaçant un premier essai en mètres puis en balance, `stats-row`/
+  `stats-group` le même jour pour le layout Débits/Ratio/Système, voir plus
+  haut), rendues via `string.Template` de
+  la stdlib (substitution `$variable` uniquement, zéro logique dans un
+  template — boucles/conditions et calculs géométriques (angles/points
+  d'arc des jauges) restent en Python, ex.
+  `build_cards()`/`build_transmission_section()` décident quelles cartes
+  existent et les joignent avant de les passer au template parent). CSS/JS déplacés en
+  fichiers statiques (`dashboard/assets/dashboard.css`/`dashboard.js`, copiés
+  vers `dashboard/html/assets/` comme les logos) plutôt qu'embarqués dans le
+  heredoc. Zéro nouvelle dépendance (`python3` déjà requis par
+  `transmission-stats.py`/`torrent-cleanup.py`, `string.Template` est
+  stdlib) — et ça fait disparaître `jq` du chemin de génération du
+  dashboard (extraction des labels Traefik via `docker compose config
+  --format json` + `re`/`json` du stdlib plutôt qu'un programme `jq`
+  embarqué). Alternative envisagée et écartée : rester en bash avec des
+  templates substitués par `envsubst` — diff plus petit mais les boucles
+  (cartes/mètres/lignes de tracker) restent aussi pénibles qu'avant, ce qui
+  était précisément le problème à résoudre. `make cron-install` doit être
+  relancé après ce changement (`scripts/crontab` invoque désormais `python3
+  .../generate-dashboard.py`, pas plus le `.sh`).
 - **Les sections du dashboard (Public/Local/Stack non lancée/Transmission)
   ne s'affichent que si elles ont du contenu** (ajouté le 2026-07-28) —
   plus de placeholder `"aucun"`/`"aucune"`/`"indisponible"` pour une section
@@ -424,7 +572,7 @@ explicitement :
   sur `arr/cross-seed` (`config.js` vs volume `/links`, voir son compose
   file) et à nouveau le 2026-07-23 sur `dashboard/` (voulait monter
   `./assets` sous `./html:...:ro`) — solution : un seul mount, le script
-  de génération (`scripts/generate-dashboard.sh`) copie les logos dans le
+  de génération (`scripts/generate-dashboard.py`) copie les logos dans le
   dossier généré plutôt que de les monter séparément.
 - **Deux bind-mounts Docker séparés du même disque physique n'autorisent
   pas les hardlinks entre eux**, même si `stat` rapporte le même `st_dev`
@@ -555,8 +703,8 @@ server/
 │   ├── crontab                    # source de vérité du crontab hôte — `make cron-install`
 │   ├── backup.sh                   # sauvegarde restic hebdomadaire
 │   ├── restore.sh                  # restauration guidée d'un snapshot restic
-│   ├── generate-dashboard.sh       # régénère dashboard/html/ — `make dashboard-refresh`
-│   ├── transmission-stats.py       # JSON ratios/débits pour generate-dashboard.sh
+│   ├── generate-dashboard.py       # régénère dashboard/html/ — `make dashboard-refresh`
+│   ├── transmission-stats.py       # JSON ratios/débits pour generate-dashboard.py
 │   └── torrent-cleanup.py          # TUI de nettoyage manuel torrents+library/ — `make cleanup`
 ├── sauvegarde/                # non versionné — dépôt restic + mot de passe + staging
 ├── traefik/                  # socket-proxy + traefik + dashboard (page statique de liens) ; .env(ACME_EMAIL)/.example
@@ -565,7 +713,7 @@ server/
 ├── vpn/                       # transmission-vpn (réseau isolé) + sidecar transmission-proxy ; .env/.example
 ├── arr/                       # prowlarr/sonarr/radarr/cross-seed/recyclarr ; .env/.example ; override.yml.example (optionnel)
 ├── seerr/                     # recherche/requête unifiée (successeur Jellyseerr/Overseerr) ; pas de .env (config via son assistant web)
-└── dashboard/                 # assets (logos) + html/ généré — pas de compose file, servi par traefik/ (voir ci-dessus)
+└── dashboard/                 # templates/ (vues, string.Template) + assets (logos, css, js) + html/ généré — pas de compose file, servi par traefik/ (voir ci-dessus)
 ```
 
 `make network` (crée `traefik-public` si absent) avant tout `make up`.

@@ -1,0 +1,162 @@
+:root {
+  color-scheme: light dark;
+  /* Palette de statut fixe (jamais themée) — mêmes hex clair/sombre, les
+     deux passent 3:1 sur les deux surfaces (voir dataviz skill palette.md). */
+  --status-critical: #d03b3b;
+  --status-warning: #fab219;
+  --status-good: #0ca30c;
+}
+body {
+  margin: 0; padding: 2.5rem 1.5rem; font-family: system-ui, sans-serif;
+  background: #f4f4f5; color: #18181b;
+}
+@media (prefers-color-scheme: dark) {
+  body { background: #18181b; color: #f4f4f5; }
+}
+h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
+.updated { font-size: .85rem; opacity: .6; margin: 0 0 2rem; }
+section { max-width: 960px; margin: 0 auto 2.5rem; }
+section h2 {
+  font-size: .8rem; text-transform: uppercase; letter-spacing: .08em;
+  opacity: .6; margin: 0 0 .75rem;
+}
+.grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 1rem;
+}
+.card {
+  display: flex; flex-direction: column; align-items: center; gap: .4rem;
+  padding: 1.25rem 1rem; border-radius: 12px; text-decoration: none;
+  color: inherit; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.1);
+  transition: transform .1s ease;
+}
+@media (prefers-color-scheme: dark) {
+  .card { background: #27272a; box-shadow: none; }
+}
+a.card:hover { transform: translateY(-2px); }
+.card-down { opacity: .45; }
+.card-lan-blocked { opacity: .45; pointer-events: none; }
+.logo { width: 40px; height: 40px; object-fit: contain; }
+.logo-unhealthy {
+  outline: 3px solid #ef4444; outline-offset: 3px; border-radius: 8px;
+}
+.warning {
+  font-size: .7rem; font-weight: 600; color: #ef4444; text-align: center;
+}
+.name { font-weight: 600; font-size: .95rem; }
+.host { font-size: .75rem; opacity: .6; word-break: break-all; text-align: center; }
+/* Groupes de stats (Débits/Ratio) côte à côte sur une même ligne, chacun
+   gardant son titre en haut à gauche — bascule en colonne sur écran étroit
+   (flex-wrap) plutôt qu'un grid figé qui casserait en dessous d'une largeur
+   minimale. */
+.stats-row { display: flex; flex-wrap: wrap; gap: 1.5rem; margin-bottom: 1.5rem; }
+.stats-row .stats-group { flex: 1 1 260px; margin-bottom: 0; }
+.stats-group { margin-bottom: 1.5rem; }
+.stats-group h3 {
+  font-size: .75rem; font-weight: 600; opacity: .55; margin: 0 0 .75rem;
+}
+/* Largeur de colonne fixe (pas minmax(…,1fr)) : sinon chaque .stats-grid
+   calcule sa largeur de carte indépendamment de son propre nombre de cartes
+   et de la largeur de son conteneur — Débits/Ratio (2 cartes, conteneur
+   ~460px dans .stats-row) et Système (3+ cartes, pleine largeur ~960px)
+   obtenaient des cartes visiblement différentes malgré la même règle CSS.
+   Une taille fixe garantit la même largeur de carte partout. */
+.stats-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, 190px);
+  gap: 1rem;
+}
+.stat {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .4rem;
+  padding: 1.25rem 1rem; border-radius: 12px; background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,.1);
+}
+@media (prefers-color-scheme: dark) {
+  .stat { background: #27272a; box-shadow: none; }
+}
+.stat svg { width: 68px; height: 40px; }
+.stat-value { font-weight: 700; font-size: 1rem; font-variant-numeric: tabular-nums; }
+.stat-value-good { color: var(--status-good); }
+.stat-value-critical { color: var(--status-critical); }
+.stat-label { font-size: .75rem; opacity: .6; text-align: center; }
+
+/* Carte liste (indexeurs Prowlarr) : contenu variable en hauteur, mieux
+   ancré en haut qu'au centre du .stat générique — voir indexers-card.html. */
+.stat-list { align-items: stretch; justify-content: flex-start; }
+.stat-list .stat-label { text-align: left; }
+.indexer-list {
+  list-style: none; margin: 0; padding: 0; font-size: .8rem;
+  display: flex; flex-direction: column; gap: .3rem;
+}
+.indexer-list li { display: flex; align-items: center; gap: .5rem; }
+.indexer-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.indexer-dot-good { background: var(--status-good); }
+.indexer-dot-critical { background: var(--status-critical); }
+
+/* Carte à plusieurs valeurs (torrents actifs/surveillés, téléchargement,
+   erreur — fusionnées en une seule carte à la demande de l'utilisateur) :
+   liste empilée label/valeur plutôt que côte à côte (3 colonnes serrées
+   dans la largeur d'une carte tronquaient les libellés) — voir
+   multi-stat-card.html/stat-multi-item.html. */
+.stat-multi { flex-direction: column; align-items: stretch; justify-content: center; gap: .5rem; }
+.stat-multi-row {
+  display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; font-size: .85rem;
+}
+.stat-multi-label { opacity: .7; }
+.stat-multi-value { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* Jauge de débit : arc de fond + arc coloré proportionnel + aiguille. */
+.gauge-track, .gauge-fill { fill: none; stroke-width: 8; stroke-linecap: round; }
+.gauge-track { stroke: #cde2fb; }
+.gauge-fill { stroke: #2a78d6; }
+@media (prefers-color-scheme: dark) {
+  .gauge-track { stroke: rgba(57,135,229,.18); }
+  .gauge-fill { stroke: #3987e5; }
+}
+.gauge-needle { stroke: currentColor; stroke-width: 3; stroke-linecap: round; opacity: .75; }
+.gauge-hub { fill: currentColor; opacity: .75; }
+
+/* Jauge de ratio (gauge-ratio.html) : pas d'arc de remplissage — le fond est
+   lui-même divisé en 3 zones de sévérité fixes (mêmes seuils que la
+   mini-barre du tableau par tracker : rouge <1, jaune 1-2, vert >=2),
+   l'aiguille se contente de pointer sa position dessus. Remplace une
+   balance à bascule (log2(ratio)) essayée le 2026-07-28 et jugée peu
+   lisible à l'usage par l'utilisateur — préféré pour la cohérence avec la
+   jauge de débit (même composant, un seul type d'icône sur tout le
+   dashboard) plutôt qu'un anneau de progression. */
+.gauge-zone-critical, .gauge-zone-warning, .gauge-zone-good {
+  fill: none; stroke-width: 8; stroke-linecap: round;
+}
+.gauge-zone-critical { stroke: var(--status-critical); }
+.gauge-zone-warning { stroke: var(--status-warning); }
+.gauge-zone-good { stroke: var(--status-good); }
+
+/* Table détaillée par tracker (voir tracker-details.html) : mini-barre,
+   plus adaptée qu'une jauge à la taille d'une cellule de tableau. */
+.mini-meter { display: flex; align-items: center; gap: .5rem; }
+.mini-meter span { font-variant-numeric: tabular-nums; }
+.meter-track {
+  position: relative; height: 6px; width: 70px; flex: none;
+  border-radius: 6px; overflow: hidden; background: #e1e0d9;
+}
+@media (prefers-color-scheme: dark) {
+  .meter-track { background: #2c2c2a; }
+}
+.meter-fill { position: absolute; inset: 0; width: 0; border-radius: 6px; }
+.meter-fill-critical { background: var(--status-critical); }
+.meter-fill-warning { background: var(--status-warning); }
+.meter-fill-good { background: var(--status-good); }
+.tracker-details summary {
+  cursor: pointer; font-size: .8rem; font-weight: 600; opacity: .8;
+  margin-bottom: .5rem; user-select: none;
+}
+.tracker-details summary::marker { color: inherit; }
+.tracker-table {
+  width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px;
+  overflow: hidden; font-size: .85rem;
+}
+@media (prefers-color-scheme: dark) {
+  .tracker-table { background: #27272a; }
+}
+.tracker-table th, .tracker-table td { padding: .5rem .75rem; text-align: left; }
+.tracker-table th { font-size: .7rem; text-transform: uppercase; opacity: .6; }
+.tracker-table tr:nth-child(even) { background: rgba(127,127,127,.08); }

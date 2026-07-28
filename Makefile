@@ -63,11 +63,11 @@ update-all:
 
 # régénère dashboard/html/index.html à partir des labels Traefik réels
 # (docker compose config) et de l'état d'exécution courant (docker ps) —
-# voir scripts/generate-dashboard.sh. Servi par le service dashboard de
-# traefik/docker-compose.yml (make up STACK=traefik), pas besoin qu'il
-# tourne pour régénérer le contenu.
+# voir scripts/generate-dashboard.py (vues dans dashboard/templates/).
+# Servi par le service dashboard de traefik/docker-compose.yml (make up
+# STACK=traefik), pas besoin qu'il tourne pour régénérer le contenu.
 dashboard-refresh:
-	@scripts/generate-dashboard.sh
+	@python3 scripts/generate-dashboard.py
 
 # TUI de nettoyage manuel : liste les torrents Transmission, supprime à la
 # demande le torrent (+ fichiers) et les fichiers hardlinkés correspondants

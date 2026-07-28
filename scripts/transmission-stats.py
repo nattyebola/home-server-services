@@ -2,17 +2,17 @@
 # Interroge l'API RPC Transmission (même mécanisme docker-exec-curl que
 # torrent-cleanup.py — RPC_URL n'est joignable que depuis l'intérieur du
 # conteneur, réseau vpn-internal isolé) pour produire un JSON de stats
-# consommé par generate-dashboard.sh : ratio de session (depuis le dernier
-# démarrage du daemon), ratio total (cumulatif) et ratio sur les dernières
-# 24h (voir history_and_day_delta — pas de fenêtre glissante native côté RPC
-# Transmission) via session-stats, débits instantanés (mêmes champs), et
-# ratio par tracker en sommant uploadedEver/downloadedEver de chaque torrent
-# groupé par host d'annonce (noms résolus via Prowlarr — même logique que
-# torrent-cleanup.py).
+# consommé par generate-dashboard.py : ratio de session (depuis le dernier
+# démarrage du daemon) et ratio total (cumulatif) via session-stats, débits
+# instantanés (mêmes champs) accompagnés d'une échelle ("speed_scale", max
+# observé sur l'historique récent — voir historical_max_speed()), nombre de
+# torrents actifs/surveillés, et ratio par tracker en sommant
+# uploadedEver/downloadedEver de chaque torrent groupé par host d'annonce
+# (noms résolus via Prowlarr — même logique que torrent-cleanup.py).
 #
 # Sortie best-effort : {"error": "..."} sur stdout si Transmission ou le
 # docker exec est injoignable, jamais de sortie vide ni de code de retour
-# non-zéro — generate-dashboard.sh doit pouvoir afficher un état
+# non-zéro — generate-dashboard.py doit pouvoir afficher un état
 # "indisponible" plutôt que planter toute la régénération du dashboard.
 import json
 import os
@@ -28,12 +28,10 @@ RPC_URL = "http://localhost:9091/transmission/rpc"
 PROWLARR_CONTAINER = "arr-prowlarr-1"
 PROWLARR_URL = "http://localhost:9696/api/v1/indexer"
 
-DAY_WINDOW = 24 * 3600
-# Marge au-delà des 24h visées : encaisse les intervalles cron ratés (dashboard
-# généré toutes les 5 min, mais un `make dashboard-refresh` manuel ou un hôte
-# éteint peut créer des trous) sans perdre l'échantillon le plus proche de
-# "il y a 24h".
-HISTORY_RETENTION = DAY_WINDOW + 3600
+# Fenêtre de rétention de l'historique de débit (voir record_speed_sample) —
+# assez large pour couvrir un cycle jour/nuit d'usage typique sans faire
+# dériver l'échelle des mètres sur un pic isolé trop ancien.
+HISTORY_RETENTION = 25 * 3600
 
 
 def load_env_file(path):
@@ -220,44 +218,55 @@ def save_history(path, entries):
             f.write(json.dumps(e) + "\n")
 
 
-def history_and_day_delta(now, cum_uploaded, cum_downloaded):
-    """Persiste un échantillon (uploaded/downloaded cumulatifs, horodatage) à
-    chaque appel (un par régénération du dashboard, cron 5 min) sous
-    HISTORY_PATH, puis calcule le delta depuis l'échantillon le plus proche
-    de "il y a 24h". Basé sur cumulative-stats (jamais remis à zéro, même à
-    travers un redémarrage du daemon) plutôt que current-stats : un delta sur
-    current-stats serait faux si le daemon a redémarré pendant la fenêtre.
-    Best-effort : DATA_ROOT absent ou fichier illisible/non-inscriptible ->
-    pas de section "day" plutôt qu'un crash de tout le script (voir appelant)."""
+SPEED_SCALE_FLOOR = 1024 * 1024  # 1 Mo/s — plancher pour éviter un mètre dégénéré (division par ~0) tant que l'historique est vide/plat
+
+
+def historical_max_speed(history, download_speed, upload_speed):
+    """Échelle des mètres de débit (voir generate-dashboard.py) : pas de
+    valeur "ligne max" figée en config (le débit VPN réel dépend du serveur
+    distant, de la charge du tracker, etc., pas juste de la capacité FAI) —
+    le maximum observé sur l'historique récent (HISTORY_RETENTION) sert
+    d'échelle, avec un plancher pour rester lisible tant que rien n'a encore
+    été échantillonné à pleine vitesse."""
+    down_max = max([e.get("download_speed", 0) for e in history] + [download_speed, SPEED_SCALE_FLOOR])
+    up_max = max([e.get("upload_speed", 0) for e in history] + [upload_speed, SPEED_SCALE_FLOOR])
+    return {"download_max": down_max, "upload_max": up_max}
+
+
+def record_speed_sample(now, download_speed, upload_speed):
+    """Persiste un échantillon de débit (horodatage) à chaque appel (un par
+    régénération du dashboard, cron 5 min) sous HISTORY_PATH, purgé au-delà
+    de HISTORY_RETENTION, et renvoie l'échelle des mètres de débit (voir
+    historical_max_speed). Best-effort : DATA_ROOT absent ou fichier
+    illisible/non-inscriptible -> None (l'appelant retombe alors sur un
+    fallback sans historique) plutôt qu'un crash de tout le script.
+    Portait aussi un ratio glissant sur 24h jusqu'au 2026-07-28 (retiré à la
+    demande de l'utilisateur, jugé pas utile) — l'historique persisté ne sert
+    plus qu'à cette échelle de débit."""
     if not HISTORY_PATH:
         return None
     history = load_history(HISTORY_PATH)
-    history.append({"ts": now, "uploaded": cum_uploaded, "downloaded": cum_downloaded})
+    history.append({"ts": now, "download_speed": download_speed, "upload_speed": upload_speed})
     history = [e for e in history if now - e["ts"] <= HISTORY_RETENTION]
     save_history(HISTORY_PATH, history)
-
-    older_than_window = [e for e in history if now - e["ts"] >= DAY_WINDOW]
-    anchor = max(older_than_window, key=lambda e: e["ts"]) if older_than_window \
-        else min(history, key=lambda e: e["ts"])
-    elapsed = now - anchor["ts"]
-    day_uploaded = cum_uploaded - anchor["uploaded"]
-    day_downloaded = cum_downloaded - anchor["downloaded"]
-    day_ratio = ratio(day_uploaded, day_downloaded)
-    # Historique < 24h (premier lancement, ou trou récent) : on affiche quand
-    # même le delta disponible plutôt que rien, mais le libellé doit rester
-    # honnête sur la fenêtre réellement couverte.
-    label = "Ratio 24h" if abs(elapsed - DAY_WINDOW) < 600 else f"Ratio {human_duration(elapsed)} (historique)"
-    return {
-        "uploaded": day_uploaded, "uploaded_human": human_size(day_uploaded),
-        "downloaded": day_downloaded, "downloaded_human": human_size(day_downloaded),
-        "ratio": day_ratio, "ratio_display": ratio_display(day_ratio),
-        "window_seconds": elapsed, "label": label,
-    }
+    return historical_max_speed(history, download_speed, upload_speed)
 
 
 def main():
     session = rpc("session-stats")
-    torrents = rpc("torrent-get", {"fields": ["trackerStats", "uploadedEver", "downloadedEver"]})["torrents"]
+    torrents = rpc("torrent-get", {"fields": ["trackerStats", "uploadedEver", "downloadedEver",
+                                               "status", "error"]})["torrents"]
+
+    # status 0 = stopped/paused côté Transmission (spec RPC) — "actifs" =
+    # tout le reste (en train de télécharger, de vérifier, ou en seed) ;
+    # "surveillés" = tous les torrents présents dans le client, actifs ou non.
+    torrents_active = sum(1 for t in torrents if t.get("status", 0) != 0)
+    torrents_total = len(torrents)
+    # status 4 = downloading (spec RPC). error != 0 = torrent en erreur
+    # (tracker injoignable, fichier introuvable sur disque, etc. —
+    # errorString donne le détail, pas exposé ici, juste le compte).
+    torrents_downloading = sum(1 for t in torrents if t.get("status", 0) == 4)
+    torrents_errored = sum(1 for t in torrents if t.get("error", 0) != 0)
 
     tracker_map = build_prowlarr_tracker_map()
     per_tracker = {}
@@ -297,17 +306,27 @@ def main():
 
     cur = session["current-stats"]
     cum = session["cumulative-stats"]
+    download_speed, upload_speed = session["downloadSpeed"], session["uploadSpeed"]
     session_ratio = ratio(cur["uploadedBytes"], cur["downloadedBytes"])
     total_ratio = ratio(cum["uploadedBytes"], cum["downloadedBytes"])
     try:
-        day = history_and_day_delta(time.time(), cum["uploadedBytes"], cum["downloadedBytes"])
+        speed_scale = record_speed_sample(time.time(), download_speed, upload_speed)
     except OSError:
-        day = None
+        speed_scale = None
+    # Fallback sans historique (DATA_ROOT absent/illisible, ou erreur
+    # d'écriture) : le mètre de débit retombe sur le seul échantillon
+    # courant, pas d'échelle basée sur le passé récent.
+    speed_scale = speed_scale or historical_max_speed([], download_speed, upload_speed)
     return {
-        "download_speed": session["downloadSpeed"],
-        "download_speed_human": human_rate(session["downloadSpeed"]),
-        "upload_speed": session["uploadSpeed"],
-        "upload_speed_human": human_rate(session["uploadSpeed"]),
+        "download_speed": download_speed,
+        "download_speed_human": human_rate(download_speed),
+        "upload_speed": upload_speed,
+        "upload_speed_human": human_rate(upload_speed),
+        "speed_scale": speed_scale,
+        "torrents_active": torrents_active,
+        "torrents_total": torrents_total,
+        "torrents_downloading": torrents_downloading,
+        "torrents_errored": torrents_errored,
         "session": {
             "uploaded": cur["uploadedBytes"],
             "uploaded_human": human_size(cur["uploadedBytes"]),
@@ -326,7 +345,6 @@ def main():
             "ratio": total_ratio,
             "ratio_display": ratio_display(total_ratio),
         },
-        "day": day,
         "trackers": trackers_out,
     }
 

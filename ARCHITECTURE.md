@@ -297,7 +297,7 @@ distinguer les deux cas ; `<img>` s'appuie sur `onload`/`onerror`, qui eux
 reflètent le vrai statut HTTP sans dépendre de CORS). `onerror` (403 renvoyé
 par l'ipallowlist du service, appelant hors LAN) grise la carte et retire
 son lien ; `onload` (LAN) ne change rien. Le chemin sondé par service est
-dans `PROBE_PATH` (`scripts/generate-dashboard.sh`, `/favicon.ico` par
+dans `PROBE_PATH` (`scripts/generate-dashboard.py`, `/favicon.ico` par
 défaut) — attention, ce chemin doit répondre par une véritable image (pas
 une redirection vers du HTML) : `transmission-proxy` redirige
 `/favicon.ico` vers `/transmission/web/` (HTML), d'où l'override vers
@@ -307,13 +307,13 @@ une redirection vers du HTML) : `transmission-proxy` redirige
 des crawlers d'entraînement IA : balise
 `<meta name="robots" content="noindex, nofollow, noarchive">` dans le HTML
 généré, `dashboard/assets/robots.txt` (`Disallow: /`, versionné, copié tel
-quel par `scripts/generate-dashboard.sh`) et en-tête `X-Robots-Tag` posé
+quel par `scripts/generate-dashboard.py`) et en-tête `X-Robots-Tag` posé
 par le middleware partagé `security-headers` (voir
 [Traefik](#traefik-traefik)) — redondant avec la balise `<meta>` mais
 couvre aussi les crawlers qui ne parsent pas le HTML.
 
 Le contenu (`dashboard/html/`, gitignoré) est entièrement généré par
-`make dashboard-refresh` (`scripts/generate-dashboard.sh`), qui dérive
+`make dashboard-refresh` (`scripts/generate-dashboard.py`), qui dérive
 public/local/arrêté de l'état réel plutôt que d'une liste à maintenir à la
 main :
 
@@ -324,7 +324,7 @@ main :
 
 Seule metadata non dérivable des compose files : le nom affiché et le
 fichier logo (`dashboard/assets/logos/*.svg`, versionnés) associés à
-chaque service — à compléter dans `scripts/generate-dashboard.sh` quand un
+chaque service — à compléter dans `scripts/generate-dashboard.py` quand un
 nouveau service exposé via Traefik apparaît. La regénération n'a pas
 besoin que le container tourne ; démarrer/mettre à jour la stack (`make up`
 / `make update STACK=traefik`) sert juste le résultat déjà généré.

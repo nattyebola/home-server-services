@@ -17,4 +17,4 @@ MAILTO=""
 
 # Refresh the dashboard every 5 minutes — mainly to reflect healthcheck
 # status (see CLAUDE.md) without waiting on a manual `make dashboard-refresh`.
-*/5 * * * * __REPO_ROOT__/scripts/generate-dashboard.sh >> __REPO_ROOT__/dashboard/refresh.log 2>&1
+*/5 * * * * python3 __REPO_ROOT__/scripts/generate-dashboard.py >> __REPO_ROOT__/dashboard/refresh.log 2>&1
