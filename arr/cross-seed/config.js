@@ -7,7 +7,16 @@
 // mais à confirmer) : https://www.cross-seed.org/docs/basics/options
 
 module.exports = {
-  torznab: [`http://prowlarr:9696/1/api?apikey=${process.env.PROWLARR_API_KEY}`],
+  // Un indexeur Prowlarr = une URL Torznab dédiée par ID (pas d'endpoint
+  // agrégé côté Prowlarr) — lister explicitement chaque ID actif plutôt que
+  // le seul "1" d'origine ("Torr9", supprimé depuis) : bug repéré le
+  // 2026-07-28, cross-seed cherchait sur un indexeur mort depuis le
+  // déploiement (410 Gone), donc 0 résultat/0 injection à chaque webhook.
+  // IDs à vérifier dans Prowlarr (Indexers) si un indexeur est
+  // ajouté/supprimé/recréé — ils ne sont pas stables dans le temps.
+  torznab: [2, 3, 4, 5].map(
+    (id) => `http://prowlarr:9696/${id}/api?apikey=${process.env.PROWLARR_API_KEY}`
+  ),
   sonarr: [`http://sonarr:8989/?apikey=${process.env.SONARR_API_KEY}`],
   radarr: [`http://radarr:7878/?apikey=${process.env.RADARR_API_KEY}`],
   torrentClients: ["transmission:http://transmission-vpn:9091/transmission/rpc"],

@@ -329,6 +329,23 @@ explicitement :
   présent (vérifié le 2026-07-22 en interrogeant directement l'API RPC de
   `transmission-vpn`). Le job périodique "inject" ne rattrape pas ces
   échecs non plus tant que ce réglage manque.
+- **`arr/cross-seed/config.js` : les URLs Torznab Prowlarr sont par ID
+  d'indexeur (`http://prowlarr:9696/<id>/api`), pas un endpoint agrégé** —
+  repéré le 2026-07-28 : la config pointait en dur sur l'ID 1 ("Torr9"),
+  supprimé depuis dans Prowlarr et remplacé par 4 indexeurs différents
+  (IDs 2-5). Résultat silencieux pendant 4 jours depuis le déploiement :
+  chaque webhook `cross-seed-notify.sh` déclenchait bien une recherche,
+  mais toujours contre un indexeur mort (`410 Gone` dans les logs), donc
+  0 résultat/0 injection à chaque fois — jamais d'erreur bloquante côté
+  Sonarr/Radarr, juste un `[webhook] Found 0 torrents` systématique.
+  Confirmé en comparant les IDs actifs à ceux synchronisés côté Sonarr
+  (`GET /api/v3/indexer`, champ `baseUrl` de chaque indexeur `(Prowlarr)`).
+  Si un indexeur est ajouté/supprimé/recréé dans Prowlarr, penser à
+  vérifier ses ID(s) actuel(s) (page Indexers, ou l'URL de chaque
+  indexeur `(Prowlarr)` côté Sonarr/Radarr) et à les refléter dans le
+  tableau `torznab` de `config.js` — ces IDs ne sont pas stables dans le
+  temps et rien ne prévient d'un ID devenu obsolète autrement qu'en
+  lisant les logs cross-seed.
 - **`seerr` (image `ghcr.io/seerr-team/seerr`) ne chown pas lui-même son
   volume `/app/config`** — contrairement aux images linuxserver.io (`arr/`),
   il tourne nativement en UID 1000 sans étape root-puis-drop, donc si
