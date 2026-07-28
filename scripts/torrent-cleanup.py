@@ -630,9 +630,44 @@ def draw_list(stdscr, torrents, selected, offset, filter_str, linked_ids, missin
     footer += f" | tri: {sort_label} {'▼' if sort_reverse else '▲'}"
     if filter_str:
         footer += f" | filtre: {filter_str}"
-    footer += " | ↑/↓ naviguer, / filtrer, s tri, S inverser, Entrée confirmer, D suppr. directe, P purge 'M', q quitter"
+    footer += " | ? aide"
     stdscr.addstr(h - 1, 0, footer[:w - 1], curses.A_DIM)
     stdscr.refresh()
+
+
+# Un raccourci par ligne (touche, description) — source unique pour show_help(),
+# plutôt que la liste condensée qu'affichait le footer avant (devenue illisible
+# une fois 'P' ajouté, cf. discussion utilisateur du 2026-07-28).
+HELP_KEYS = [
+    ("↑/↓, j/k", "naviguer"),
+    ("PgUp/PgDown", "naviguer par page"),
+    ("/", "filtrer par nom"),
+    ("s", "champ de tri suivant"),
+    ("S", "inverser le sens du tri"),
+    ("Entrée", "supprimer (avec confirmation)"),
+    ("D", "supprimer sans confirmation"),
+    ("P", "purger tous les torrents marqués 'M' (avec confirmation)"),
+    ("?", "cette aide"),
+    ("q / Échap", "quitter"),
+]
+
+
+def show_help(stdscr):
+    stdscr.erase()
+    h, w = stdscr.getmaxyx()
+    lines = [("Raccourcis", curses.A_BOLD | cp(COLOR_HEADER)), ("", curses.A_NORMAL)]
+    key_width = max(len(k) for k, _ in HELP_KEYS)
+    for key, desc in HELP_KEYS:
+        lines.append((f"  {key:<{key_width}}  {desc}", curses.A_NORMAL))
+    lines.append(("", curses.A_NORMAL))
+    lines.append(("Marqueurs : L = fichier(s) présents dans library/, M = fichier manquant sur disque",
+                   curses.A_NORMAL))
+    lines.append(("", curses.A_NORMAL))
+    lines.append(("Appuyez sur une touche pour revenir", curses.A_DIM))
+    for i, (line, attr) in enumerate(lines[:h - 1]):
+        stdscr.addstr(i, 0, line[:w - 1], attr)
+    stdscr.refresh()
+    stdscr.getch()
 
 
 def confirm_delete(stdscr, torrent, library_index):
@@ -811,6 +846,8 @@ def main(stdscr):
         key = stdscr.getch()
         if key in (ord("q"), 27):
             break
+        elif key == ord("?"):
+            show_help(stdscr)
         elif key in (curses.KEY_DOWN, ord("j")):
             selected = min(selected + 1, len(torrents) - 1) if torrents else 0
         elif key in (curses.KEY_UP, ord("k")):
