@@ -96,9 +96,17 @@ def rpc(method, arguments=None):
     return data["arguments"]
 
 
+def base_domain(hostname):
+    """Domaine de base (2 derniers labels) — voir la même fonction dans
+    torrent-cleanup.py pour le rationale complet (sous-domaines frères type
+    tracker.yggreborn.org vs www.yggreborn.org, un suffix match nu échoue)."""
+    parts = hostname.split(".")
+    return ".".join(parts[-2:]) if len(parts) >= 2 else hostname
+
+
 def build_prowlarr_tracker_map():
-    """domaine -> nom d'indexeur Prowlarr. Best-effort : une erreur ici ne
-    doit jamais faire échouer tout le script, juste faire retomber
+    """domaine de base -> nom d'indexeur Prowlarr. Best-effort : une erreur
+    ici ne doit jamais faire échouer tout le script, juste faire retomber
     l'affichage sur le hostname brut (voir resolve_tracker_name)."""
     if not PROWLARR_API_KEY:
         return {}
@@ -122,15 +130,12 @@ def build_prowlarr_tracker_map():
         for url in (idx.get("indexerUrls") or []) + (idx.get("legacyUrls") or []):
             host = urllib.parse.urlparse(url).hostname
             if host:
-                domain_map[host.lower()] = name
+                domain_map[base_domain(host.lower())] = name
     return domain_map
 
 
 def resolve_tracker_name(hostname, tracker_map):
-    for domain, name in tracker_map.items():
-        if hostname == domain or hostname.endswith("." + domain):
-            return name
-    return hostname
+    return tracker_map.get(base_domain(hostname), hostname)
 
 
 def tracker_hosts(torrent):

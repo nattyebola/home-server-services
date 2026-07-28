@@ -483,6 +483,22 @@ explicitement :
   `os.stat()`. Le même bug affectait aussi silencieusement le marqueur `'L'`
   et `find_library_matches()` (sous-évaluaient les correspondances
   library/ pour tout torrent cross-seed) — corrigés avec le même helper.
+- **La résolution nom-de-tracker (`resolve_tracker_name`, dupliquée dans
+  `torrent-cleanup.py` et `scripts/transmission-stats.py`, voir ci-dessus)
+  échouait sur YggReborn** (repéré le 2026-07-28) — le domaine d'annonce
+  BitTorrent réel (`tracker.yggreborn.org`) et celui listé par Prowlarr
+  (`indexerUrls: www.yggreborn.org`) sont deux sous-domaines **frères** du
+  même domaine de base (`yggreborn.org`), pas l'un suffixe de l'autre : un
+  `hostname.endswith("." + domain)` nu ne matche jamais. Fix : `base_domain()`
+  (2 derniers labels du hostname, ex. `www.yggreborn.org` → `yggreborn.org`)
+  appliqué des deux côtés avant de comparer, dans les deux scripts. Nyaa.si
+  reste non résolu et le restera : ses torrents n'utilisent aucun tracker
+  qui lui soit propre, seulement des trackers publics génériques partagés
+  avec n'importe quel autre torrent (`nyaa.tracker.wf`, `open.stealth.si`,
+  `tracker.opentrackr.org`, `exodus.desync.com`, `tracker.torrent.eu.org`)
+  — aucune information de domaine ne permet de les rattacher à Nyaa
+  spécifiquement, contrairement à YggReborn/TR4KER/C411 qui ont un tracker
+  privé dédié à leur propre domaine.
 
 ## Repo
 

@@ -206,16 +206,29 @@ def tracker_host(torrent):
     return ",".join(hosts) if hosts else "?"
 
 
-def build_prowlarr_tracker_map():
-    """domaine (ex. torr9.net) -> nom d'indexeur Prowlarr (ex. Torr9).
+def base_domain(hostname):
+    """Domaine de base (2 derniers labels : www.yggreborn.org -> yggreborn.org,
+    tracker.yggreborn.org -> yggreborn.org) — heuristique suffisante ici (pas
+    de TLD à deux parties type .co.uk chez les indexeurs concernés), pas une
+    vraie public-suffix-list. Nécessaire car le domaine d'annonce BitTorrent
+    réel et le(s) domaine(s) de site listés par Prowlarr (indexerUrls/
+    legacyUrls) sont souvent des sous-domaines FRÈRES du même domaine de
+    base, pas l'un suffixe de l'autre : `tracker.yggreborn.org` (annonce) vs
+    `www.yggreborn.org` (indexerUrls) — un simple `hostname.endswith(domain)`
+    échoue alors qu'ils dérivent bien du même indexeur (repéré le 2026-07-28,
+    YggReborn ne se résolvait jamais)."""
+    parts = hostname.split(".")
+    return ".".join(parts[-2:]) if len(parts) >= 2 else hostname
 
-    Le domaine du site (indexerUrls/legacyUrls, ce que Prowlarr connaît)
-    n'est pas forcément celui du tracker BitTorrent (announce URL vu par
-    Transmission) — ex. tracker.torr9.net vs torr9.net. Matché par suffixe
-    de domaine, donc ça couvre les sous-domaines type tracker./tk./announce.
-    Si le tracker BT utilise un domaine sans rapport (mutualisé entre
-    plusieurs sites, vu en pratique), aucun match : on retombe sur le
-    hostname brut plutôt que d'inventer un nom."""
+
+def build_prowlarr_tracker_map():
+    """domaine de base (ex. tr4ker.net) -> nom d'indexeur Prowlarr (ex.
+    TR4KER). Si le tracker BT utilise un domaine de base sans rapport avec
+    le(s) site(s) Prowlarr (mutualisé entre plusieurs indexeurs — ex. les
+    trackers publics génériques que Nyaa.si ajoute en plus du sien,
+    open.stealth.si/opentrackr.org/exodus.desync.com/tracker.torrent.eu.org,
+    aucun n'appartenant à Nyaa en propre), aucun match possible : on retombe
+    sur le hostname brut plutôt que d'inventer un nom — cf. base_domain()."""
     if not PROWLARR_API_KEY:
         logger.warning("PROWLARR_API_KEY introuvable dans arr/.env — noms de tracker non résolus")
         return {}
@@ -243,17 +256,14 @@ def build_prowlarr_tracker_map():
         for url in (idx.get("indexerUrls") or []) + (idx.get("legacyUrls") or []):
             host = urllib.parse.urlparse(url).hostname
             if host:
-                domain_map[host.lower()] = name
+                domain_map[base_domain(host.lower())] = name
     logger.info("noms de tracker Prowlarr chargés : %d indexeur(s), %d domaine(s)",
                 len(indexers), len(domain_map))
     return domain_map
 
 
 def resolve_tracker_name(hostname, tracker_map):
-    for domain, name in tracker_map.items():
-        if hostname == domain or hostname.endswith("." + domain):
-            return name
-    return hostname
+    return tracker_map.get(base_domain(hostname), hostname)
 
 
 def tracker_display(torrent, tracker_map):
