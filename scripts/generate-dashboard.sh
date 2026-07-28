@@ -136,10 +136,13 @@ done
 # WAN et LAN (pas de gating card-lan-blocked) : ce sont des chiffres agrégés,
 # pas un accès de contrôle au client — décision explicite de l'utilisateur.
 # Snapshot pris au moment de la génération (cron toutes les 5 min, comme le
-# reste du dashboard), pas de rafraîchissement live.
+# reste du dashboard), pas de rafraîchissement live. N'est calculée que si la
+# stack vpn (transmission-vpn) tourne — sinon la section entière est omise
+# plutôt que d'afficher un message "indisponible" : voir CLAUDE.md.
 transmission_stats_html=""
 tracker_rows=""
-if stats_json="$(python3 "$REPO_ROOT/scripts/transmission-stats.py" 2>/dev/null)" \
+if [ -n "${RUNNING[vpn/transmission-vpn]:-}" ] \
+	&& stats_json="$(python3 "$REPO_ROOT/scripts/transmission-stats.py" 2>/dev/null)" \
 	&& [ -n "$stats_json" ] && [ "$(jq -r 'has("error")' <<<"$stats_json")" = "false" ]; then
 	tracker_rows="$(jq -r '.trackers[]
 		| "<tr><td>\(.name)</td><td>\(.ratio_display)</td><td>\(.uploaded_human)</td><td>\(.downloaded_human)</td></tr>"
@@ -153,6 +156,54 @@ if stats_json="$(python3 "$REPO_ROOT/scripts/transmission-stats.py" 2>/dev/null)
 		+ "<div class=\"stat\"><span class=\"stat-value\">↑ " + .upload_speed_human + "</span><span class=\"stat-label\">Débit montant</span></div>"
 		+ "</div>"
 	' <<<"$stats_json")"
+fi
+
+# Chaque section n'est incluse que si elle a du contenu — pas de placeholder
+# "aucun"/"indisponible" pour une section vide (demandé le 2026-07-28).
+public_section=""
+if [ -n "$public_cards" ]; then
+	public_section="$(cat <<SECTION
+  <section>
+    <h2>Public</h2>
+    <div class="grid">${public_cards}</div>
+  </section>
+SECTION
+)"
+fi
+
+local_section=""
+if [ -n "$local_cards" ]; then
+	local_section="$(cat <<SECTION
+  <section>
+    <h2>Local (LAN)</h2>
+    <div class="grid">${local_cards}</div>
+  </section>
+SECTION
+)"
+fi
+
+down_section=""
+if [ -n "$down_cards" ]; then
+	down_section="$(cat <<SECTION
+  <section>
+    <h2>Stack non lancée</h2>
+    <div class="grid">${down_cards}</div>
+  </section>
+SECTION
+)"
+fi
+
+transmission_section=""
+if [ -n "$transmission_stats_html" ]; then
+	transmission_section="$(cat <<SECTION
+  <section>
+    <h2>Transmission — ratios &amp; débits</h2>
+    ${transmission_stats_html}
+    ${tracker_rows:+<table class=\"tracker-table\"><thead><tr><th>Tracker</th><th>Ratio</th><th>Envoyé</th><th>Reçu</th></tr></thead><tbody>$tracker_rows</tbody></table>}
+    <p class="note">Ratio calculé côté client Transmission — peut différer du ratio réel compté par chaque tracker.</p>
+  </section>
+SECTION
+)"
 fi
 
 mkdir -p "$OUT_DIR/assets/logos"
@@ -212,7 +263,6 @@ cat >"$OUT_FILE" <<HTML
   }
   .name { font-weight: 600; font-size: .95rem; }
   .host { font-size: .75rem; opacity: .6; word-break: break-all; text-align: center; }
-  .empty { opacity: .5; font-size: .9rem; }
   .stats-grid {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap: 1rem; margin-bottom: 1rem;
@@ -243,27 +293,10 @@ cat >"$OUT_FILE" <<HTML
   <h1>Services</h1>
   <p class="updated">Généré le $(date '+%Y-%m-%d %H:%M') — make dashboard-refresh</p>
 
-  <section>
-    <h2>Public</h2>
-    <div class="grid">${public_cards:-<span class=\"empty\">aucun</span>}</div>
-  </section>
-
-  <section>
-    <h2>Local (LAN)</h2>
-    <div class="grid">${local_cards:-<span class=\"empty\">aucun</span>}</div>
-  </section>
-
-  <section>
-    <h2>Stack non lancée</h2>
-    <div class="grid">${down_cards:-<span class=\"empty\">aucune</span>}</div>
-  </section>
-
-  <section>
-    <h2>Transmission — ratios &amp; débits</h2>
-    ${transmission_stats_html:-<p class=\"empty\">indisponible (Transmission arrêté ?)</p>}
-    ${tracker_rows:+<table class=\"tracker-table\"><thead><tr><th>Tracker</th><th>Ratio</th><th>Envoyé</th><th>Reçu</th></tr></thead><tbody>$tracker_rows</tbody></table>}
-    <p class="note">Ratio calculé côté client Transmission — peut différer du ratio réel compté par chaque tracker.</p>
-  </section>
+${public_section}
+${local_section}
+${down_section}
+${transmission_section}
 
   <script>
     // Grise les cartes LAN-only quand l'appelant est sur le WAN : leur
