@@ -14,6 +14,20 @@
 # manuellement hors de cet outil) + Maj+P pour les purger tous en un coup
 # côté Transmission — ajouté le 2026-07-28 après un rattrapage cross-seed
 # qui en a fait remonter 6 d'un coup, tous antérieurs à la stack arr.
+#
+# Arbre cross-seed (→/l déplier, ←/h replier) : les torrents qui partagent
+# au moins un fichier réel (même (dev, inode), voir build_cross_seed_groups)
+# sont une seule et même release injectée sur plusieurs indexeurs par
+# arr/cross-seed — regroupés sous un parent (le téléchargement d'origine,
+# pas une entrée .cross-seed-links/) avec un compteur repliable plutôt que
+# listés comme des torrents indépendants sans rapport apparent entre eux.
+# Supprimer le parent supprime aussi ses enfants cross-seed (voir
+# do_delete/apply_deletion, ajouté le 2026-07-29) : une fois le
+# téléchargement d'origine parti, ses cross-seeds n'ont plus rien à seeder.
+# Supprimer un enfant seul ne touche ni au parent ni aux autres cross-seeds
+# — comme pour n'importe quel torrent, delete-local-data retire son propre
+# fichier (un symlink .cross-seed-links/<tracker>/... pour un enfant), sans
+# suivre le lien vers sa cible.
 import curses
 import json
 import logging
@@ -468,7 +482,14 @@ def execute_arr_plan(plan):
 
 # Champs de tri disponibles (touche 's' pour passer au suivant, 'S' pour
 # inverser le sens du champ courant) — même ordre que les colonnes affichées.
+# BIB/ABS (bibliothèque/absent, ex-marqueurs 'L'/'M') lisent des attributs
+# précalculés (_linked/_missing, posés une seule fois dans main() en même
+# temps que linked_ids/missing_ids) plutôt que de refaire un lookup dans ces
+# sets ici : un lambda de SORT_FIELDS ne reçoit que le torrent, pas les sets
+# externes.
 SORT_FIELDS = [
+    ("BIB", lambda t: t["_linked"]),
+    ("ABS", lambda t: t["_missing"]),
     ("AGE", lambda t: t["addedDate"]),
     ("TAILLE", lambda t: t["totalSize"]),
     ("RATIO", lambda t: t["uploadRatio"]),
@@ -616,26 +637,125 @@ def delete_by_inode_cli(dev, ino, dry_run):
     print(json.dumps({"found": True, "deleted": True, "torrent": torrent["name"]}))
 
 
-def classify_torrent_files(host_files, library_index):
-    """Une seule passe resolved_stat() par torrent pour les deux marqueurs
-    affichés (évite de stat chaque fichier deux fois) : linked=True si au
-    moins un fichier a une correspondance library/ (hardlink, marqueur 'L'),
-    missing=True si AUCUN fichier du torrent n'existe plus sur disque — le
-    cas Transmission "No data found!" (torrent orphelin, marqueur 'M'), vu
-    en pratique sur des torrents antérieurs à la mise en place de la stack
-    arr dont le fichier a été supprimé par un autre moyen que cet outil."""
+def analyze_torrent_files(host_files, library_index):
+    """Une seule passe resolved_stat() par torrent, qui alimente à la fois les
+    marqueurs affichés (évite de stat chaque fichier deux fois) et le
+    regroupement cross-seed (build_cross_seed_groups, via les inodes
+    renvoyés) : linked=True si au moins un fichier a une correspondance
+    library/ (hardlink, colonne BIB), missing=True si AUCUN fichier du
+    torrent n'existe plus sur disque — le cas Transmission "No data found!"
+    (torrent orphelin, colonne ABS), vu en pratique sur des torrents
+    antérieurs à la mise en place de la stack arr dont le fichier a été
+    supprimé par un autre moyen que cet outil. inodes = (dev, inode) de
+    chaque fichier réellement présent — un torrent cross-seedé et l'original
+    dont il dérive partagent ces mêmes inodes malgré deux entrées
+    Transmission distinctes."""
     if not host_files:
-        return False, False
+        return False, False, set()
     any_exists = False
     linked = False
+    inodes = set()
     for path, _size in host_files:
         st = resolved_stat(path)
         if st is None:
             continue
         any_exists = True
+        inodes.add((st.st_dev, st.st_ino))
         if (st.st_dev, st.st_ino) in library_index:
             linked = True
-    return linked, not any_exists
+    return linked, not any_exists, inodes
+
+
+def is_cross_seed_entry(torrent):
+    """True si ce torrent est une entrée injectée par arr/cross-seed (pas le
+    téléchargement d'origine) — son downloadDir vit sous le sous-dossier
+    dédié .cross-seed-links/<tracker>/... (cf. CLAUDE.md, fix hardlink
+    cross-seed) plutôt que directement sous /data/completed. Sert à choisir
+    le "parent" d'un groupe cross-seed (build_cross_seed_groups) : le
+    téléchargement réel, pas l'un des symlinks pointant dessus."""
+    return "/.cross-seed-links/" in torrent.get("downloadDir", "")
+
+
+def build_cross_seed_groups(all_torrents):
+    """Regroupe les torrents qui partagent au moins un fichier réel (même
+    (dev, inode), voir analyze_torrent_files/t["_inodes"]) — un torrent
+    cross-seedé (arr/cross-seed, linkType symlink par défaut, cf. CLAUDE.md)
+    pointe vers les mêmes données qu'un torrent déjà présent sur un autre
+    indexeur : même contenu, deux entrées Transmission distinctes qui
+    n'apparaissent autrement reliées par rien dans la liste. Union-find sur
+    les inodes partagés plutôt qu'une comparaison torrent x torrent (O(n²),
+    ~300 torrents sur ce déploiement). N'a besoin d'aucun nouveau stat — les
+    inodes sont déjà mis en cache sur chaque torrent (t["_inodes"]) au
+    chargement, donc peut être rappelée à bas coût après chaque suppression
+    pour refléter les groupes restants (un cross-seed dont l'original a été
+    supprimé redevient un torrent seul, potentiellement marqué ABS — son
+    symlink pointe alors dans le vide). Renvoie (groups, child_ids) :
+    groups = {parent_id: [torrent_enfant, ...]} (uniquement les groupes de
+    taille >= 2), child_ids = ids à retirer du niveau racine de l'arbre
+    (déjà représentés sous leur parent, voir build_tree)."""
+    parent_of = {t["id"]: t["id"] for t in all_torrents}
+
+    def find(x):
+        while parent_of[x] != x:
+            parent_of[x] = parent_of[parent_of[x]]
+            x = parent_of[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent_of[ra] = rb
+
+    inode_owner = {}
+    for t in all_torrents:
+        for inode in t.get("_inodes", ()):
+            if inode in inode_owner:
+                union(inode_owner[inode], t["id"])
+            else:
+                inode_owner[inode] = t["id"]
+
+    clusters = {}
+    for t in all_torrents:
+        clusters.setdefault(find(t["id"]), []).append(t)
+
+    groups, child_ids = {}, set()
+    for members in clusters.values():
+        if len(members) < 2:
+            continue
+        # Le parent est le téléchargement d'origine (pas une entrée
+        # .cross-seed-links/) s'il en reste un ; sinon (original déjà
+        # supprimé) le plus ancien du groupe fait office de parent, pour
+        # toujours avoir une racine plutôt que de casser le groupement.
+        originals = [t for t in members if not is_cross_seed_entry(t)]
+        parent = originals[0] if originals else min(members, key=lambda t: t["addedDate"])
+        children = [t for t in members if t["id"] != parent["id"]]
+        groups[parent["id"]] = children
+        child_ids.update(t["id"] for t in children)
+    return groups, child_ids
+
+
+def build_tree(top_level, cross_seed_groups, expanded_ids, filter_str):
+    """Aplatit les groupes cross-seed en lignes affichables/navigables : une
+    ligne racine par torrent parent (depth=0), suivie de ses enfants
+    (depth=1, un par cross-seed) si le groupe est déplié (expanded_ids) — ou
+    si le filtre ne matche qu'un enfant, auquel cas le groupe est forcé
+    ouvert pour révéler ce match plutôt que de le masquer silencieusement.
+    top_level : torrents dont l'id n'est pas dans child_ids de
+    build_cross_seed_groups (déjà filtré par l'appelant, un enfant ne doit
+    apparaître qu'une fois, sous son parent)."""
+    needle = filter_str.lower()
+    rows = []
+    for t in top_level:
+        children = cross_seed_groups.get(t["id"], [])
+        parent_match = needle in t["name"].lower()
+        matching_children = [c for c in children if needle in c["name"].lower()]
+        if needle and not parent_match and not matching_children:
+            continue
+        rows.append({"torrent": t, "depth": 0, "child_count": len(children), "parent_id": None})
+        if children and (t["id"] in expanded_ids or (needle and matching_children and not parent_match)):
+            for c in sorted(children, key=lambda c: c.get("_tracker_name", "")):
+                rows.append({"torrent": c, "depth": 1, "child_count": 0, "parent_id": t["id"]})
+    return rows
 
 
 def prune_empty_dirs(path):
@@ -662,40 +782,39 @@ def visible_rows(h):
     return max(1, h - 4)
 
 
-def draw_list(stdscr, torrents, selected, offset, filter_str, linked_ids, missing_ids, sort_idx, sort_reverse,
-              session_freed_bytes, session_deletions):
+def draw_list(stdscr, tree_rows, selected, offset, filter_str, linked_ids, missing_ids, sort_idx, sort_reverse,
+              session_freed_bytes, session_deletions, expanded_ids, total_torrents, group_count):
     h, w = stdscr.getmaxyx()
     stdscr.erase()
     header = (
-        f"{'':<2}"
-        f"{col_label('AGE', 7, sort_idx == 0, sort_reverse)} "
-        f"{col_label('TAILLE', 9, sort_idx == 1, sort_reverse)} "
-        f"{col_label('RATIO', 6, sort_idx == 2, sort_reverse)} "
-        f"{col_label('TRACKER', 20, sort_idx == 3, sort_reverse)} "
-        f"{col_label('NOM', 3, sort_idx == 4, sort_reverse)}"
+        f"{col_label('BIB', 3, sort_idx == 0, sort_reverse)} "
+        f"{col_label('ABS', 3, sort_idx == 1, sort_reverse)} "
+        f"{col_label('AGE', 7, sort_idx == 2, sort_reverse)} "
+        f"{col_label('TAILLE', 9, sort_idx == 3, sort_reverse)} "
+        f"{col_label('RATIO', 6, sort_idx == 4, sort_reverse)} "
+        f"{col_label('TRACKER', 20, sort_idx == 5, sort_reverse)} "
+        f"{col_label('NOM', 3, sort_idx == 6, sort_reverse)}"
     )
     stdscr.addstr(0, 0, header[:w - 1], curses.A_BOLD | cp(COLOR_HEADER))
     stdscr.addstr(1, 0, "-" * min(w - 1, len(header)), cp(COLOR_HEADER))
     visible = visible_rows(h)
-    for i, t in enumerate(torrents[offset:offset + visible]):
+    for i, tree_row in enumerate(tree_rows[offset:offset + visible]):
+        t = tree_row["torrent"]
         row = 2 + i
         is_selected = offset + i == selected
         linked = t["id"] in linked_ids
         missing = t["id"] in missing_ids
-        marker = ("L" if linked else " ") + ("M" if missing else " ")
         base_attr = curses.A_REVERSE if is_selected else curses.A_NORMAL
-        if is_selected:
-            marker_attr = base_attr
-        elif missing:
-            marker_attr = base_attr | cp(COLOR_DANGER)
-        elif linked:
-            marker_attr = base_attr | cp(COLOR_LINKED)
-        else:
-            marker_attr = base_attr
+        l_attr = base_attr if (is_selected or not linked) else base_attr | cp(COLOR_LINKED)
+        m_attr = base_attr if (is_selected or not missing) else base_attr | cp(COLOR_DANGER)
 
         col = 0
-        stdscr.addstr(row, col, marker, marker_attr)
-        col += len(marker)
+        l_str = f"{'✓' if linked else '':<3} "
+        stdscr.addstr(row, col, l_str[:max(0, w - 1 - col)], l_attr)
+        col += len(l_str)
+        m_str = f"{'✓' if missing else '':<3} "
+        stdscr.addstr(row, col, m_str[:max(0, w - 1 - col)], m_attr)
+        col += len(m_str)
         age_str = f"{human_age(t['addedDate']):<7} "
         stdscr.addstr(row, col, age_str[:max(0, w - 1 - col)], base_attr)
         col += len(age_str)
@@ -709,12 +828,23 @@ def draw_list(stdscr, torrents, selected, offset, filter_str, linked_ids, missin
         tracker_str = f"{t.get('_tracker_name', '?')[:19]:<20} "
         stdscr.addstr(row, col, tracker_str[:max(0, w - 1 - col)], base_attr)
         col += len(tracker_str)
-        stdscr.addstr(row, col, t["name"][:max(0, w - 1 - col)], base_attr)
+        if tree_row["depth"] == 0 and tree_row["child_count"]:
+            glyph = "▾" if t["id"] in expanded_ids else "▸"
+            n = tree_row["child_count"]
+            name = f"{glyph} {t['name']} ({n} cross-seed{'s' if n > 1 else ''})"
+        elif tree_row["depth"] == 1:
+            name = f"  └ {t['name']}"
+        else:
+            name = t["name"]
+        stdscr.addstr(row, col, name[:max(0, w - 1 - col)], base_attr)
     session_line = f"Session : {session_deletions} suppression(s), {human_size(session_freed_bytes)} libéré(s)"
     stdscr.addstr(h - 2, 0, session_line[:w - 1], curses.A_BOLD | cp(COLOR_LINKED))
 
     sort_label, _ = SORT_FIELDS[sort_idx]
-    footer = f"{len(torrents)} torrents ({len(linked_ids)} avec fichier(s) bibliothèque 'L', {len(missing_ids)} fichier manquant 'M')"
+    footer = f"{total_torrents} torrents ({len(linked_ids)} avec fichier(s) bibliothèque BIB, {len(missing_ids)} fichier manquant ABS"
+    if group_count:
+        footer += f", {group_count} groupe(s) cross-seed"
+    footer += ")"
     footer += f" | tri: {sort_label} {'▼' if sort_reverse else '▲'}"
     if filter_str:
         footer += f" | filtre: {filter_str}"
@@ -732,9 +862,11 @@ HELP_KEYS = [
     ("/", "filtrer par nom"),
     ("s", "champ de tri suivant"),
     ("S", "inverser le sens du tri"),
+    ("→ / l", "déplier les cross-seeds du torrent sélectionné"),
+    ("← / h", "replier"),
     ("Entrée", "supprimer (avec confirmation)"),
     ("D", "supprimer sans confirmation"),
-    ("P", "purger tous les torrents marqués 'M' (avec confirmation)"),
+    ("P", "purger tous les torrents marqués ABS (avec confirmation)"),
     ("?", "cette aide"),
     ("q / Échap", "quitter"),
 ]
@@ -748,7 +880,12 @@ def show_help(stdscr):
     for key, desc in HELP_KEYS:
         lines.append((f"  {key:<{key_width}}  {desc}", curses.A_NORMAL))
     lines.append(("", curses.A_NORMAL))
-    lines.append(("Marqueurs : L = fichier(s) présents dans library/, M = fichier manquant sur disque",
+    lines.append(("Colonnes : BIB = coche verte si fichier(s) présents dans library/, "
+                   "ABS = coche rouge si fichier manquant sur disque",
+                   curses.A_NORMAL))
+    lines.append(("▸/▾ devant un nom : torrent cross-seedé sur plusieurs indexeurs (même fichier",
+                   curses.A_NORMAL))
+    lines.append(("réel qu'un ou plusieurs autres torrents) — replié par défaut, voir →/l.",
                    curses.A_NORMAL))
     lines.append(("", curses.A_NORMAL))
     lines.append(("Appuyez sur une touche pour revenir", curses.A_DIM))
@@ -758,18 +895,31 @@ def show_help(stdscr):
     stdscr.getch()
 
 
-def confirm_delete(stdscr, torrent, library_index):
+def confirm_delete(stdscr, torrent, library_index, cross_seed_groups):
     host_files = torrent_host_files(torrent)
     lib_matches = find_library_matches(host_files, library_index)
     arr_plan = plan_arr_actions(lib_matches)
+    dependents = cross_seed_groups.get(torrent["id"], [])
     stdscr.erase()
     h, w = stdscr.getmaxyx()
     none_attr = curses.A_NORMAL
     lines = [
         (f"Supprimer : {torrent['name']}", curses.A_BOLD | cp(COLOR_HEADER)),
         ("", none_attr),
-        (f"Fichiers Transmission ({len(host_files)}) — {human_size(sum(s for _, s in host_files))} :", none_attr),
     ]
+    if dependents:
+        # Ce torrent est le parent (téléchargement d'origine) d'un groupe
+        # cross-seed — apply_deletion supprime ses enfants avec lui (même
+        # contenu, plus rien à seeder une fois ce torrent parti).
+        lines.append((f"⚠ {len(dependents)} torrent(s) cross-seedé(s) seront supprimés avec lui "
+                       f"(même contenu, ne libère pas d'espace supplémentaire) :",
+                       curses.A_BOLD | cp(COLOR_DANGER)))
+        for c in dependents[:10]:
+            lines.append((f"  - {c['name']} ({c.get('_tracker_name', '?')})", cp(COLOR_DANGER)))
+        if len(dependents) > 10:
+            lines.append((f"  ... et {len(dependents) - 10} de plus", cp(COLOR_DANGER)))
+        lines.append(("", none_attr))
+    lines.append((f"Fichiers Transmission ({len(host_files)}) — {human_size(sum(s for _, s in host_files))} :", none_attr))
     for path, size in host_files[:10]:
         lines.append((f"  - {os.path.basename(path)} ({human_size(size)})", none_attr))
     if len(host_files) > 10:
@@ -808,13 +958,13 @@ def confirm_delete(stdscr, torrent, library_index):
 
 def confirm_bulk_delete(stdscr, torrents):
     """Écran de confirmation pour Maj+P (purge groupée des torrents marqués
-    'M') — mêmes conventions que confirm_delete, mais pas d'espace "libéré"
+    ABS) — mêmes conventions que confirm_delete, mais pas d'espace "libéré"
     à annoncer : par définition ces fichiers ont déjà disparu du disque."""
     stdscr.erase()
     h, w = stdscr.getmaxyx()
     none_attr = curses.A_NORMAL
     lines = [
-        (f"Purger {len(torrents)} torrent(s) au fichier disparu (marqués 'M') :",
+        (f"Purger {len(torrents)} torrent(s) au fichier disparu (marqués ABS) :",
          curses.A_BOLD | cp(COLOR_HEADER)),
         ("", none_attr),
     ]
@@ -838,7 +988,7 @@ def confirm_bulk_delete(stdscr, torrents):
     return key in (ord("o"), ord("O"), ord("y"), ord("Y"))
 
 
-def do_delete(client, torrent, host_files, lib_matches, arr_plan):
+def do_delete(client, torrent, host_files, lib_matches, arr_plan, dependents=()):
     log_deletion(torrent, host_files, lib_matches, arr_plan)
     client.remove_torrent(torrent["id"])
     for path, _size in lib_matches:
@@ -849,18 +999,44 @@ def do_delete(client, torrent, host_files, lib_matches, arr_plan):
         except OSError as e:
             logger.warning("échec de suppression du fichier library %s : %s", path, e)
     execute_arr_plan(arr_plan)
+    # Un torrent cross-seedé (dependents, voir build_cross_seed_groups) partage
+    # l'inode de ce torrent : une fois ce dernier supprimé, ses cross-seeds
+    # n'ont plus rien à seeder (données orphelines) — on les supprime avec
+    # lui plutôt que de laisser des entrées mortes dans Transmission (demandé
+    # par l'utilisateur). remove_torrent(delete-local-data=True) suffit pour
+    # le "lien logique" : le fichier d'un enfant est un symlink
+    # (.cross-seed-links/<tracker>/..., cf. is_cross_seed_entry) — Transmission
+    # appelle unlink() dessus comme sur n'importe quel fichier, ce qui retire
+    # le symlink lui-même sans toucher sa cible (déjà supprimée juste
+    # au-dessus). Pas de find_library_matches/plan_arr_actions rejoués pour
+    # ces enfants : même inode que le parent, donc mêmes correspondances
+    # library/ et même plan Sonarr/Radarr déjà traités ci-dessus — les
+    # rejouer serait redondant (fichier déjà supprimé, action arr déjà faite).
+    for child in dependents:
+        try:
+            client.remove_torrent(child["id"])
+            logger.info("cross-seed: torrent enfant %r (id=%s) supprimé avec son parent %r (id=%s)",
+                        child["name"], child["id"], torrent["name"], torrent["id"])
+        except Exception as e:
+            logger.warning("échec de suppression du cross-seed enfant %r (id=%s) : %s",
+                            child["name"], child["id"], e)
 
 
-def apply_deletion(client, torrent, host_files, lib_matches, arr_plan, all_torrents, linked_ids, missing_ids):
+def apply_deletion(client, torrent, host_files, lib_matches, arr_plan, all_torrents, linked_ids, missing_ids,
+                    cross_seed_groups):
     """Effectue la suppression et renvoie (nouvelle liste all_torrents, octets
     libérés) — factorise ce que les chemins Entrée (confirmée), D (directe)
     et P (purge groupée) ont en commun une fois host_files/lib_matches/
-    arr_plan connus."""
-    do_delete(client, torrent, host_files, lib_matches, arr_plan)
-    deleted_id = torrent["id"]
-    remaining = [t for t in all_torrents if t["id"] != deleted_id]
-    linked_ids.discard(deleted_id)
-    missing_ids.discard(deleted_id)
+    arr_plan connus. Si torrent est le parent d'un groupe cross-seed, ses
+    enfants sont supprimés avec lui (voir do_delete) ; freed ne compte que
+    les octets du parent — les enfants ne libèrent aucun espace disque
+    supplémentaire, ce sont des symlinks vers les mêmes fichiers."""
+    dependents = cross_seed_groups.get(torrent["id"], [])
+    do_delete(client, torrent, host_files, lib_matches, arr_plan, dependents)
+    removed_ids = {torrent["id"]} | {c["id"] for c in dependents}
+    remaining = [t for t in all_torrents if t["id"] not in removed_ids]
+    linked_ids.difference_update(removed_ids)
+    missing_ids.difference_update(removed_ids)
     freed = sum(s for _, s in host_files) + sum(s for _, s in lib_matches)
     return remaining, freed
 
@@ -889,22 +1065,34 @@ def main(stdscr):
     for t in all_torrents:
         t["_tracker_name"] = tracker_display(t, tracker_map)
 
-    sort_idx, sort_reverse = 0, False  # AGE ascendant par défaut (le plus ancien en premier)
-    sort_torrents(all_torrents, sort_idx, sort_reverse)
-
     stdscr.addstr(0, 0, "Indexation de library/...")
     stdscr.clrtoeol()
     stdscr.refresh()
     library_index = build_library_index()
     linked_ids, missing_ids = set(), set()
     for t in all_torrents:
-        linked, missing = classify_torrent_files(torrent_host_files(t), library_index)
+        linked, missing, inodes = analyze_torrent_files(torrent_host_files(t), library_index)
+        # Posés sur le torrent lui-même (pas seulement dans linked_ids/missing_ids)
+        # pour que les lambdas L/M de SORT_FIELDS puissent trier dessus — un
+        # lambda n'a accès qu'au torrent, pas à ces sets — et pour que
+        # build_cross_seed_groups puisse être rappelée sans re-stat après
+        # chaque suppression.
+        t["_linked"] = linked
+        t["_missing"] = missing
+        t["_inodes"] = inodes
         if linked:
             linked_ids.add(t["id"])
         if missing:
             missing_ids.add(t["id"])
+
+    cross_seed_groups, cross_seed_child_ids = build_cross_seed_groups(all_torrents)
+    expanded_ids = set()
+
+    sort_idx, sort_reverse = 2, False  # AGE ascendant par défaut (le plus ancien en premier)
+    sort_torrents(all_torrents, sort_idx, sort_reverse)
     logger.info("torrents avec correspondance library/ : %d/%d", len(linked_ids), len(all_torrents))
     logger.info("torrents avec fichier manquant sur disque : %d/%d", len(missing_ids), len(all_torrents))
+    logger.info("groupes cross-seed détectés : %d", len(cross_seed_groups))
 
     filter_str = ""
     selected = 0
@@ -915,8 +1103,9 @@ def main(stdscr):
     session_deletions = 0
 
     while True:
-        torrents = [t for t in all_torrents if filter_str.lower() in t["name"].lower()]
-        selected = max(0, min(selected, len(torrents) - 1)) if torrents else 0
+        top_level = [t for t in all_torrents if t["id"] not in cross_seed_child_ids]
+        tree_rows = build_tree(top_level, cross_seed_groups, expanded_ids, filter_str)
+        selected = max(0, min(selected, len(tree_rows) - 1)) if tree_rows else 0
         h, _w = stdscr.getmaxyx()
         visible = visible_rows(h)
         if selected < offset:
@@ -924,8 +1113,8 @@ def main(stdscr):
         if selected >= offset + visible:
             offset = selected - visible + 1
 
-        draw_list(stdscr, torrents, selected, offset, filter_str, linked_ids, missing_ids, sort_idx, sort_reverse,
-                  session_freed_bytes, session_deletions)
+        draw_list(stdscr, tree_rows, selected, offset, filter_str, linked_ids, missing_ids, sort_idx, sort_reverse,
+                  session_freed_bytes, session_deletions, expanded_ids, len(all_torrents), len(cross_seed_groups))
         if message:
             stdscr.addstr(0, 0, message[: stdscr.getmaxyx()[1] - 1], curses.A_BOLD | cp(message_color))
             stdscr.refresh()
@@ -937,13 +1126,33 @@ def main(stdscr):
         elif key == ord("?"):
             show_help(stdscr)
         elif key in (curses.KEY_DOWN, ord("j")):
-            selected = min(selected + 1, len(torrents) - 1) if torrents else 0
+            selected = min(selected + 1, len(tree_rows) - 1) if tree_rows else 0
         elif key in (curses.KEY_UP, ord("k")):
             selected = max(selected - 1, 0)
         elif key == curses.KEY_NPAGE:
-            selected = min(selected + visible, len(torrents) - 1) if torrents else 0
+            selected = min(selected + visible, len(tree_rows) - 1) if tree_rows else 0
         elif key == curses.KEY_PPAGE:
             selected = max(selected - visible, 0)
+        elif key in (curses.KEY_RIGHT, ord("l")) and tree_rows:
+            # Déplier : uniquement pertinent sur une ligne racine avec des
+            # cross-seeds (child_count > 0) — no-op sinon.
+            row = tree_rows[selected]
+            if row["child_count"] > 0:
+                expanded_ids.add(row["torrent"]["id"])
+        elif key in (curses.KEY_LEFT, ord("h")) and tree_rows:
+            # Replier : sur une ligne enfant, replie le groupe parent et
+            # ramène le curseur dessus plutôt que de laisser la sélection
+            # retomber arbitrairement sur la ligne suivante après le
+            # rétrécissement de la liste.
+            row = tree_rows[selected]
+            collapse_id = row["torrent"]["id"] if row["depth"] == 0 else row["parent_id"]
+            if collapse_id is not None:
+                expanded_ids.discard(collapse_id)
+                if row["depth"] == 1:
+                    tree_rows = build_tree(top_level, cross_seed_groups, expanded_ids, filter_str)
+                    ids = [r["torrent"]["id"] for r in tree_rows]
+                    if collapse_id in ids:
+                        selected = ids.index(collapse_id)
         elif key == ord("/"):
             curses.echo()
             stdscr.addstr(stdscr.getmaxyx()[0] - 1, 0, "filtre> ")
@@ -953,26 +1162,28 @@ def main(stdscr):
             curses.noecho()
             offset = 0
         elif key in (ord("s"), ord("S")):
-            selected_id = torrents[selected]["id"] if torrents else None
+            selected_id = tree_rows[selected]["torrent"]["id"] if tree_rows else None
             if key == ord("s"):
                 sort_idx = (sort_idx + 1) % len(SORT_FIELDS)
                 sort_reverse = False
             else:
                 sort_reverse = not sort_reverse
             sort_torrents(all_torrents, sort_idx, sort_reverse)
-            torrents = [t for t in all_torrents if filter_str.lower() in t["name"].lower()]
+            top_level = [t for t in all_torrents if t["id"] not in cross_seed_child_ids]
+            tree_rows = build_tree(top_level, cross_seed_groups, expanded_ids, filter_str)
             if selected_id is not None:
-                ids = [t["id"] for t in torrents]
+                ids = [r["torrent"]["id"] for r in tree_rows]
                 selected = ids.index(selected_id) if selected_id in ids else 0
             offset = 0
-        elif key in (curses.KEY_ENTER, 10, 13) and torrents:
-            torrent = torrents[selected]
+        elif key in (curses.KEY_ENTER, 10, 13) and tree_rows:
+            torrent = tree_rows[selected]["torrent"]
             try:
-                result = confirm_delete(stdscr, torrent, library_index)
+                result = confirm_delete(stdscr, torrent, library_index, cross_seed_groups)
                 if result:
                     host_files, lib_matches, arr_plan = result
                     all_torrents, freed = apply_deletion(client, torrent, host_files, lib_matches, arr_plan,
-                                                          all_torrents, linked_ids, missing_ids)
+                                                          all_torrents, linked_ids, missing_ids, cross_seed_groups)
+                    cross_seed_groups, cross_seed_child_ids = build_cross_seed_groups(all_torrents)
                     session_freed_bytes += freed
                     session_deletions += 1
                     message = f"Supprimé : {torrent['name']}"
@@ -981,17 +1192,18 @@ def main(stdscr):
                 logger.error("échec de la suppression de %r : %s", torrent["name"], e)
                 message = f"ÉCHEC (voir {LOG_PATH}) : {e}"
                 message_color = COLOR_DANGER
-        elif key == ord("D") and torrents:
+        elif key == ord("D") and tree_rows:
             # Suppression directe, sans écran de confirmation (demandé
             # explicitement) — contrairement à Entrée. À utiliser en
             # connaissance de cause.
-            torrent = torrents[selected]
+            torrent = tree_rows[selected]["torrent"]
             try:
                 host_files = torrent_host_files(torrent)
                 lib_matches = find_library_matches(host_files, library_index)
                 arr_plan = plan_arr_actions(lib_matches)
                 all_torrents, freed = apply_deletion(client, torrent, host_files, lib_matches, arr_plan,
-                                                      all_torrents, linked_ids, missing_ids)
+                                                      all_torrents, linked_ids, missing_ids, cross_seed_groups)
+                cross_seed_groups, cross_seed_child_ids = build_cross_seed_groups(all_torrents)
                 session_freed_bytes += freed
                 session_deletions += 1
                 message = f"Supprimé (sans confirmation) : {torrent['name']}"
@@ -1001,31 +1213,45 @@ def main(stdscr):
                 message = f"ÉCHEC (voir {LOG_PATH}) : {e}"
                 message_color = COLOR_DANGER
         elif key == ord("P"):
-            # Purge groupée de tous les torrents marqués 'M' (fichier disparu
+            # Purge groupée de tous les torrents marqués ABS (fichier disparu
             # du disque), pas seulement ceux du filtre courant — le but est
             # un rattrapage global, comme demandé après le cas cross-seed du
             # 2026-07-28. Chaque suppression est indépendante (échec isolé
             # n'interrompt pas les suivantes), même logique que execute_arr_plan.
             missing_torrents = [t for t in all_torrents if t["id"] in missing_ids]
             if not missing_torrents:
-                message = "Aucun torrent avec fichier manquant (marqué 'M')"
+                message = "Aucun torrent avec fichier manquant (marqué ABS)"
                 message_color = COLOR_WARN
             elif confirm_bulk_delete(stdscr, missing_torrents):
-                deleted, failed = 0, 0
+                deleted, failed, skipped = 0, 0, 0
                 for torrent in missing_torrents:
+                    # Un torrent de cette liste peut avoir déjà été supprimé
+                    # en cascade par un parent traité plus tôt dans cette même
+                    # purge (cross-seed enfant lui-même marqué ABS, donc
+                    # présent dans missing_torrents en plus d'être visé par
+                    # apply_deletion via cross_seed_groups) — pas une erreur.
+                    current_ids = {t["id"] for t in all_torrents}
+                    if torrent["id"] not in current_ids:
+                        skipped += 1
+                        continue
                     try:
                         host_files = torrent_host_files(torrent)
                         lib_matches = find_library_matches(host_files, library_index)
                         arr_plan = plan_arr_actions(lib_matches)
                         all_torrents, freed = apply_deletion(client, torrent, host_files, lib_matches, arr_plan,
-                                                              all_torrents, linked_ids, missing_ids)
+                                                              all_torrents, linked_ids, missing_ids, cross_seed_groups)
                         session_freed_bytes += freed
                         session_deletions += 1
                         deleted += 1
                     except Exception as e:
                         logger.error("échec de la purge de %r (id=%s) : %s", torrent["name"], torrent["id"], e)
                         failed += 1
-                message = f"Purge : {deleted} supprimé(s)" + (f", {failed} échec(s) (voir {LOG_PATH})" if failed else "")
+                cross_seed_groups, cross_seed_child_ids = build_cross_seed_groups(all_torrents)
+                message = f"Purge : {deleted} supprimé(s)"
+                if skipped:
+                    message += f", {skipped} déjà supprimé(s) en cascade"
+                if failed:
+                    message += f", {failed} échec(s) (voir {LOG_PATH})"
                 message_color = COLOR_DANGER if failed else COLOR_LINKED
 
 
