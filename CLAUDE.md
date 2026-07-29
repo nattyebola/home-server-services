@@ -71,9 +71,11 @@ explicitement :
   jamais committer un secret ou une info identifiante en dur (email,
   domaine, chemin perso...) dans un fichier versionné — toujours via
   `.env`/`.env.shared` (gitignorés) + leur `.example` (placeholders
-  génériques). Le username Unix `ebola` reste en clair dans les
+  génériques). Le vrai username Unix de la machine reste en clair dans les
   `docker-compose.override.yml` gitignorés (pas versionnés, donc pas
-  concernés) — décision explicite de l'utilisateur.
+  concernés) — décision explicite de l'utilisateur. Ne pas l'écrire en
+  clair ici pour autant (ce fichier-ci est versionné) : voir `whoami`/`$USER`
+  sur la machine si besoin de le retrouver.
 - **`scripts/torrent-cleanup.py` (`make cleanup`)** : TUI maison pour
   supprimer un torrent + ses fichiers Transmission + les fichiers
   `library/` correspondants en une seule action. Écrit sur mesure plutôt
@@ -504,7 +506,8 @@ explicitement :
   moment de l'incident — vérifier de temps en temps qu'il se remplit
   réellement.
 - Avant de modifier un des `docker-compose.override.yml` réels (gitignorés,
-  contiennent les vrais chemins `/home/ebola/...`), se rappeler qu'ils ne
+  contiennent les vrais chemins de la machine, sous le home de l'utilisateur),
+  se rappeler qu'ils ne
   sont pas versionnés : toute évolution structurelle doit aussi se refléter
   dans le `.example` correspondant. Ne jamais copier un `.example` tel quel
   sans remplir ses placeholders (`/path/to/...`) — Docker crée sinon
