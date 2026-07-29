@@ -324,8 +324,8 @@ def render_stat_item(value, label, value_class=""):
     return render("stat-multi-item.html", value=value, label=label, value_class=value_class)
 
 
-def render_multi_stat_column(title, items):
-    return render("multi-stat-column.html", title=title, items="\n".join(items))
+def render_multi_stat_column(items):
+    return render("multi-stat-column.html", items="\n".join(items))
 
 
 def render_torrents_files_card(stats):
@@ -334,8 +334,10 @@ def render_torrents_files_card(stats):
     qui prend la largeur de 2 cartes normales (voir .stat-span-2) — demandé
     par l'utilisateur le 2026-07-29 : 2 cartes séparées côte à côte prenaient
     trop de place pour des infos étroitement liées (l'une compte les
-    torrents, l'autre leurs fichiers sur disque)."""
-    torrents_col = render_multi_stat_column("Torrents", [
+    torrents, l'autre leurs fichiers sur disque). Un seul titre "Torrents"
+    pour toute la carte (pas un par colonne, retiré le 2026-07-30 — 2 titres
+    empilés sur la même carte prêtaient à confusion)."""
+    torrents_col = render_multi_stat_column([
         render_stat_item(str(stats["torrents_active"]), "Actifs"),
         render_stat_item(str(stats["torrents_paused"]), "En pause"),
         render_stat_item(
@@ -343,7 +345,7 @@ def render_torrents_files_card(stats):
             value_class="stat-value-critical" if stats["torrents_errored"] else "stat-value-good",
         ),
     ])
-    files_col = render_multi_stat_column("Fichiers", [
+    files_col = render_multi_stat_column([
         render_stat_item(
             str(stats["torrents_missing"]), "Absents",
             value_class="stat-value-critical" if stats["torrents_missing"] else "stat-value-good",
@@ -351,7 +353,7 @@ def render_torrents_files_card(stats):
         render_stat_item(str(stats["torrents_linked"]), "En bibliothèque"),
         render_stat_item(str(stats["torrents_cross_seed"]), "En cross-seed"),
     ])
-    return render("multi-stat-columns-card.html", columns=torrents_col + "\n" + files_col)
+    return render("multi-stat-columns-card.html", title="Torrents", columns=torrents_col + "\n" + files_col)
 
 
 def render_ratio_card(label, value_human, r):

@@ -85,21 +85,25 @@ a.card:hover { transform: translateY(-2px); }
 .indexer-dot-good { background: var(--status-good); }
 .indexer-dot-critical { background: var(--status-critical); }
 
-/* Cartes Torrents (actifs/en pause/en erreur) et Fichiers (absents/en
-   bibliothèque/en cross-seed) fusionnées en une seule carte à 2 colonnes
-   (demandé le 2026-07-29 — 2 cartes séparées prenaient trop de place côte à
-   côte pour des infos étroitement liées) : la carte prend la largeur de 2
-   cartes normales (.stat-span-2, réutilisable pour toute future carte large)
-   plutôt que sa largeur habituelle — voir
+/* Carte Torrents (actifs/en pause/en erreur + absents/en bibliothèque/en
+   cross-seed, 2 colonnes) — un seul titre "Torrents" pour toute la carte
+   (les colonnes n'en ont plus, demandé le 2026-07-29 : 2 titres empilés sur
+   la même carte prêtaient à confusion). La carte prend la largeur de 2
+   cartes normales + l'espace entre elles (.stat-span-2, réutilisable pour
+   toute future carte large) : en box-sizing content-box (par défaut, pas de
+   reset ici), flex-basis ne couvre que le contenu — il faut donc ajouter le
+   padding horizontal d'UNE carte (2rem) en plus du gap (1rem) pour que le
+   bord droit tombe exactement sur celui de la 2e carte de la rangée du
+   dessus, pas 2rem plus tôt (constaté le 2026-07-30 : `+ 1rem` seul
+   décalait la carte d'un padding de carte vers la gauche). Voir
    multi-stat-columns-card.html/multi-stat-column.html. Chaque colonne garde
    la liste empilée label/valeur plutôt que côte à côte (3 valeurs serrées
    dans la largeur d'une carte tronquaient les libellés). */
-.stat-span-2 { flex: 0 0 calc(190px * 2 + 1rem); }
-.stat-multi-columns {
-  flex-direction: row; align-items: flex-start; justify-content: space-between; gap: 1.5rem;
-}
+.stat-span-2 { flex: 0 0 calc(190px * 2 + 3rem); }
+.stat-torrents-files { align-items: stretch; justify-content: center; gap: .6rem; }
+.stat-torrents-files > .stat-label { text-align: left; margin-bottom: -.15rem; }
+.stat-columns-row { display: flex; flex-direction: row; align-items: flex-start; justify-content: space-between; gap: 1.5rem; }
 .stat-multi-col { display: flex; flex-direction: column; align-items: stretch; gap: .5rem; flex: 1; min-width: 0; }
-.stat-multi-col .stat-label { text-align: left; margin-bottom: -.15rem; }
 .stat-multi-row {
   display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; font-size: .85rem;
 }
