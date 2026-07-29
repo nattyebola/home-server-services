@@ -53,6 +53,8 @@ _ARR_ENV = load_env_file(os.path.join(REPO_ROOT, "arr", ".env"))
 PROWLARR_API_KEY = _ARR_ENV.get("PROWLARR_API_KEY")
 DATA_ROOT = load_env_file(os.path.join(REPO_ROOT, ".env.shared")).get("DATA_ROOT")
 HISTORY_PATH = os.path.join(DATA_ROOT, ".transmission-stats-history.jsonl") if DATA_ROOT else None
+LIBRARY_ROOT = os.path.join(DATA_ROOT, "library") if DATA_ROOT else None
+TRANSMISSION_DATA_ROOT = os.path.join(DATA_ROOT, ".transmission", "data") if DATA_ROOT else None
 
 
 def parse_tracker_aliases(raw):
@@ -252,21 +254,118 @@ def record_speed_sample(now, download_speed, upload_speed):
     return historical_max_speed(history, download_speed, upload_speed)
 
 
+def container_path_to_host(container_path):
+    """Même mécanisme que torrent-cleanup.py (dupliqué, pas partagé — ce
+    script est autonome, voir CLAUDE.md) : Transmission expose ses chemins
+    vus par le conteneur (/data/...), à traduire vers TRANSMISSION_DATA_ROOT
+    côté hôte pour pouvoir les stat()."""
+    if not container_path.startswith("/data"):
+        raise ValueError(f"chemin inattendu (hors /data): {container_path}")
+    return container_path.replace("/data", TRANSMISSION_DATA_ROOT, 1)
+
+
+def resolved_stat(path):
+    """os.stat() qui traverse un symlink cross-seed vers un chemin /data/...
+    — même fonction et même rationale que torrent-cleanup.py (piège
+    symlinks cross-seed, voir CLAUDE.md)."""
+    target = path
+    if os.path.islink(path):
+        link_target = os.readlink(path)
+        if link_target.startswith("/data"):
+            link_target = container_path_to_host(link_target)
+        elif not os.path.isabs(link_target):
+            link_target = os.path.join(os.path.dirname(path), link_target)
+        target = link_target
+    try:
+        return os.stat(target)
+    except OSError:
+        return None
+
+
+def torrent_host_files(torrent):
+    download_dir = torrent.get("downloadDir", "")
+    paths = []
+    for f in torrent.get("files", []):
+        container_path = os.path.join(download_dir, f["name"])
+        try:
+            paths.append(container_path_to_host(container_path))
+        except ValueError:
+            continue
+    return paths
+
+
+def build_library_index():
+    """(device, inode) de tout fichier sous library/ — même construction que
+    torrent-cleanup.py (build_library_index), mais en set plutôt qu'en dict
+    puisqu'on n'a besoin ici que de tester l'appartenance, pas de retrouver
+    le chemin."""
+    index = set()
+    if not LIBRARY_ROOT:
+        return index
+    for root, _dirs, files in os.walk(LIBRARY_ROOT):
+        for name in files:
+            path = os.path.join(root, name)
+            try:
+                st = os.stat(path)
+            except OSError:
+                continue
+            index.add((st.st_dev, st.st_ino))
+    return index
+
+
+def is_cross_seed_entry(torrent):
+    """Même test que torrent-cleanup.py (is_cross_seed_entry) : une entrée
+    injectée par arr/cross-seed vit sous .cross-seed-links/<tracker>/...,
+    pas directement sous /data/completed."""
+    return "/.cross-seed-links/" in torrent.get("downloadDir", "")
+
+
+def analyze_torrent_files(torrent, library_index):
+    """linked=True si au moins un fichier du torrent a une correspondance
+    library/ (hardlink) ; missing=True si AUCUN fichier n'existe plus sur
+    disque — même logique que torrent-cleanup.py (analyze_torrent_files),
+    dupliquée plutôt que partagée."""
+    host_files = torrent_host_files(torrent)
+    if not host_files:
+        return False, False
+    any_exists = False
+    linked = False
+    for path in host_files:
+        st = resolved_stat(path)
+        if st is None:
+            continue
+        any_exists = True
+        if (st.st_dev, st.st_ino) in library_index:
+            linked = True
+    return linked, not any_exists
+
+
 def main():
     session = rpc("session-stats")
     torrents = rpc("torrent-get", {"fields": ["trackerStats", "uploadedEver", "downloadedEver",
-                                               "status", "error"]})["torrents"]
+                                               "status", "error", "downloadDir", "files"]})["torrents"]
 
     # status 0 = stopped/paused côté Transmission (spec RPC) — "actifs" =
-    # tout le reste (en train de télécharger, de vérifier, ou en seed) ;
-    # "surveillés" = tous les torrents présents dans le client, actifs ou non.
+    # tout le reste (en train de télécharger, de vérifier, ou en seed).
+    # error != 0 = torrent en erreur (tracker injoignable, fichier introuvable
+    # sur disque, etc. — errorString donne le détail, pas exposé ici, juste
+    # le compte).
     torrents_active = sum(1 for t in torrents if t.get("status", 0) != 0)
-    torrents_total = len(torrents)
-    # status 4 = downloading (spec RPC). error != 0 = torrent en erreur
-    # (tracker injoignable, fichier introuvable sur disque, etc. —
-    # errorString donne le détail, pas exposé ici, juste le compte).
-    torrents_downloading = sum(1 for t in torrents if t.get("status", 0) == 4)
+    torrents_paused = sum(1 for t in torrents if t.get("status", 0) == 0)
     torrents_errored = sum(1 for t in torrents if t.get("error", 0) != 0)
+    torrents_cross_seed = sum(1 for t in torrents if is_cross_seed_entry(t))
+
+    # BIB/ABS (voir torrent-cleanup.py) : mêmes marqueurs, une seule passe
+    # resolved_stat() par torrent via analyze_torrent_files().
+    library_index = build_library_index()
+    torrents_missing = 0
+    torrents_linked = 0
+    for t in torrents:
+        linked, missing = analyze_torrent_files(t, library_index)
+        if linked:
+            torrents_linked += 1
+        if missing:
+            torrents_missing += 1
 
     tracker_map = build_prowlarr_tracker_map()
     per_tracker = {}
@@ -324,9 +423,11 @@ def main():
         "upload_speed_human": human_rate(upload_speed),
         "speed_scale": speed_scale,
         "torrents_active": torrents_active,
-        "torrents_total": torrents_total,
-        "torrents_downloading": torrents_downloading,
+        "torrents_paused": torrents_paused,
         "torrents_errored": torrents_errored,
+        "torrents_missing": torrents_missing,
+        "torrents_linked": torrents_linked,
+        "torrents_cross_seed": torrents_cross_seed,
         "session": {
             "uploaded": cur["uploadedBytes"],
             "uploaded_human": human_size(cur["uploadedBytes"]),

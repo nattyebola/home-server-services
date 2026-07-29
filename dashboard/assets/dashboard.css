@@ -82,18 +82,42 @@ a.card:hover { transform: translateY(-2px); }
 .indexer-dot-good { background: var(--status-good); }
 .indexer-dot-critical { background: var(--status-critical); }
 
-/* Carte à plusieurs valeurs (torrents actifs/surveillés, téléchargement,
-   erreur — fusionnées en une seule carte à la demande de l'utilisateur) :
-   liste empilée label/valeur plutôt que côte à côte (3 colonnes serrées
-   dans la largeur d'une carte tronquaient les libellés) — voir
-   multi-stat-card.html/stat-multi-item.html. */
-.stat-multi { flex-direction: column; align-items: stretch; justify-content: center; gap: .5rem; }
-.stat-multi .stat-label { text-align: left; margin-bottom: -.15rem; }
+/* Cartes Torrents (actifs/en pause/en erreur) et Fichiers (absents/en
+   bibliothèque/en cross-seed) fusionnées en une seule carte à 2 colonnes
+   (demandé le 2026-07-29 — 2 cartes séparées prenaient trop de place côte à
+   côte pour des infos étroitement liées) : la carte prend la largeur de 2
+   cartes normales (.stat-span-2, réutilisable pour toute future carte large)
+   plutôt que sa largeur habituelle — voir
+   multi-stat-columns-card.html/multi-stat-column.html. Chaque colonne garde
+   la liste empilée label/valeur plutôt que côte à côte (3 valeurs serrées
+   dans la largeur d'une carte tronquaient les libellés). */
+.stat-span-2 { flex: 0 0 calc(190px * 2 + 1rem); }
+.stat-multi-columns {
+  flex-direction: row; align-items: flex-start; justify-content: space-between; gap: 1.5rem;
+}
+.stat-multi-col { display: flex; flex-direction: column; align-items: stretch; gap: .5rem; flex: 1; min-width: 0; }
+.stat-multi-col .stat-label { text-align: left; margin-bottom: -.15rem; }
 .stat-multi-row {
   display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; font-size: .85rem;
 }
 .stat-multi-label { opacity: .7; }
 .stat-multi-value { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* Carte disque condensée (téléchargements + sauvegarde — 2 disques
+   distincts sur ce déploiement, voir résilience dans README/ARCHITECTURE) :
+   une ligne label + mini-barre par disque, pas 2 jauges en arc empilées —
+   pour que la carte ne prenne que la place d'une seule carte normale du
+   flux (demandé le 2026-07-29) — voir disk-card.html/disk-row.html/
+   render_disk_card(). Le texte (espace libre + "restant", voir
+   render_disk_row) est centré SOUS la barre plutôt qu'à côté (comme le
+   mini-meter du tableau par tracker) — la valeur seule ("935.9Go") ne
+   disait pas ce qu'elle représentait. */
+.stat-disk { align-items: stretch; justify-content: center; gap: .75rem; }
+.stat-disk .stat-label { text-align: left; margin-bottom: -.15rem; }
+.disk-row { display: flex; flex-direction: column; align-items: center; gap: .35rem; }
+.disk-row-label { font-size: .75rem; opacity: .7; }
+.disk-row .meter-track { width: 100%; }
+.disk-row-value { font-size: .8rem; font-variant-numeric: tabular-nums; }
 
 /* Jauge de débit : arc de fond + arc coloré proportionnel + aiguille. */
 .gauge-track, .gauge-fill { fill: none; stroke-width: 8; stroke-linecap: round; }

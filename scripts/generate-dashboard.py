@@ -20,6 +20,7 @@
 import html
 import json
 import math
+import os
 import re
 import shutil
 import string
@@ -75,6 +76,17 @@ def human_size(nbytes):
     for unit in ("o", "Ko", "Mo", "Go", "To"):
         if abs(nbytes) < 1024 or unit == "To":
             return f"{nbytes:.1f}{unit}" if unit != "o" else f"{int(nbytes)}{unit}"
+        nbytes /= 1024
+
+
+def human_size_rounded(nbytes):
+    """Même échelle que human_size() mais sans décimale — valeur plus courte
+    pour la carte disque condensée (voir render_disk_row), où le texte sous
+    la jauge précise déjà "restant" pour lever l'ambiguïté (libre, pas
+    total/utilisé)."""
+    for unit in ("o", "Ko", "Mo", "Go", "To"):
+        if abs(nbytes) < 1024 or unit == "To":
+            return f"{round(nbytes)}{unit}"
         nbytes /= 1024
 
 
@@ -257,10 +269,9 @@ GAUGE_NEEDLE_R = GAUGE_R - 8
 # du tableau par tracker.
 RATIO_ZONE_PCT = (25, 50)
 RATIO_ZONE_CLASSES = ("gauge-zone-critical", "gauge-zone-warning", "gauge-zone-good")
-# Espace disque : ordre inverse du ratio (haut = mauvais, pas bon) — zones à
-# 80%/90% d'occupation.
+# Espace disque : zones de sévérité à 80%/90% d'occupation (voir
+# disk_fill_zone) — plus proche de 90%+ = mauvais.
 DISK_ZONE_PCT = (80, 90)
-DISK_ZONE_CLASSES = ("gauge-zone-good", "gauge-zone-warning", "gauge-zone-critical")
 
 
 def gauge_point(pct, radius):
@@ -313,8 +324,34 @@ def render_stat_item(value, label, value_class=""):
     return render("stat-multi-item.html", value=value, label=label, value_class=value_class)
 
 
-def render_multi_stat_card(title, items):
-    return render("multi-stat-card.html", title=title, items="\n".join(items))
+def render_multi_stat_column(title, items):
+    return render("multi-stat-column.html", title=title, items="\n".join(items))
+
+
+def render_torrents_files_card(stats):
+    """Torrents (Actifs/En pause/En erreur) et Fichiers (Absents/En
+    bibliothèque/En cross-seed) fusionnés en une seule carte à 2 colonnes,
+    qui prend la largeur de 2 cartes normales (voir .stat-span-2) — demandé
+    par l'utilisateur le 2026-07-29 : 2 cartes séparées côte à côte prenaient
+    trop de place pour des infos étroitement liées (l'une compte les
+    torrents, l'autre leurs fichiers sur disque)."""
+    torrents_col = render_multi_stat_column("Torrents", [
+        render_stat_item(str(stats["torrents_active"]), "Actifs"),
+        render_stat_item(str(stats["torrents_paused"]), "En pause"),
+        render_stat_item(
+            str(stats["torrents_errored"]), "En erreur",
+            value_class="stat-value-critical" if stats["torrents_errored"] else "stat-value-good",
+        ),
+    ])
+    files_col = render_multi_stat_column("Fichiers", [
+        render_stat_item(
+            str(stats["torrents_missing"]), "Absents",
+            value_class="stat-value-critical" if stats["torrents_missing"] else "stat-value-good",
+        ),
+        render_stat_item(str(stats["torrents_linked"]), "En bibliothèque"),
+        render_stat_item(str(stats["torrents_cross_seed"]), "En cross-seed"),
+    ])
+    return render("multi-stat-columns-card.html", columns=torrents_col + "\n" + files_col)
 
 
 def render_ratio_card(label, value_human, r):
@@ -326,20 +363,104 @@ def render_speed_card(label, value, value_human, max_value):
     return render_stat_card(gauge_svg(speed_pct(value, max_value)), value_human, label)
 
 
-def render_disk_card(data_root):
-    """Espace disque restant sur DATA_ROOT — toujours tentée, indépendante de
-    l'état de vpn/transmission-vpn (contrairement au reste de cette section) :
-    best-effort, None si DATA_ROOT absent ou illisible plutôt que planter la
-    génération du dashboard."""
-    if not data_root:
+def disk_fill_zone(used_pct):
+    """Zone de sévérité (mêmes seuils que l'ancienne jauge en arc,
+    DISK_ZONE_PCT) pour la mini-barre de la carte disque condensée — rouge
+    >=90% occupé, jaune >=80%, vert sinon."""
+    if used_pct >= DISK_ZONE_PCT[1]:
+        return "critical"
+    if used_pct >= DISK_ZONE_PCT[0]:
+        return "warning"
+    return "good"
+
+
+def render_disk_row(path, label):
+    """Une ligne label + mini-barre pour la carte disque — le texte (espace
+    libre, arrondi via human_size_rounded, suffixé "restant" pour lever
+    l'ambiguïté sur ce que représente la valeur) est placé sous la barre,
+    pas à côté (voir disk-row.html, demandé le 2026-07-29). Best-effort :
+    None si le chemin est absent/illisible (pour que l'autre ligne
+    s'affiche quand même, voir render_disk_card)."""
+    if not path:
         return None
     try:
-        usage = shutil.disk_usage(data_root)
+        usage = shutil.disk_usage(path)
     except OSError:
         return None
     used_pct = usage.used / usage.total * 100
-    icon = zone_gauge_svg(used_pct, DISK_ZONE_PCT, DISK_ZONE_CLASSES)
-    return render_stat_card(icon, human_size(usage.free), "Disque")
+    return render(
+        "disk-row.html", label=label, fill_class=f"meter-fill-{disk_fill_zone(used_pct)}",
+        pct=round(used_pct, 1), value=f"{human_size_rounded(usage.free)} restant",
+    )
+
+
+def render_disk_card(data_root, backup_dir):
+    """Carte disque condensée en mini-barres (une ligne par disque) plutôt
+    qu'en 2 jauges en arc empilées — demandé le 2026-07-29 pour que la carte
+    ne prenne que la place d'une seule carte normale du flux, pas une carte
+    de hauteur double. DATA_ROOT (téléchargements/bibliothèque) et le disque
+    hébergeant sauvegarde/ (restic) sont 2 disques physiques distincts sur ce
+    déploiement (voir résilience dans README/ARCHITECTURE), d'où 2 lignes
+    plutôt qu'un seul chiffre qui masquerait lequel des deux se remplit.
+    Toujours tentée, indépendante de l'état de vpn/transmission-vpn
+    (contrairement au reste de cette section). Best-effort par ligne (voir
+    render_disk_row) : la carte n'est omise que si aucune des deux n'est
+    disponible."""
+    rows = [r for r in (
+        render_disk_row(data_root, "Téléchargements"),
+        render_disk_row(str(backup_dir), "Sauvegarde"),
+    ) if r]
+    if not rows:
+        return None
+    return render("disk-card.html", title="Disques", rows="\n".join(rows))
+
+
+# scripts/crontab lance `make backup` le dimanche 3h (hebdomadaire) — rouge
+# si le dernier snapshot restic dépasse cet intervalle, signe qu'un passage
+# a été manqué ou a échoué silencieusement plutôt que la fenêtre normale
+# entre deux cron.
+BACKUP_MAX_AGE_DAYS = 7
+RESTIC_REPO_DIR = REPO_ROOT / "sauvegarde" / "restic-repo"
+RESTIC_PASSWORD_FILE = REPO_ROOT / "sauvegarde" / "restic-password"
+
+
+def last_backup_age_days():
+    """Âge (jours, flottant) du snapshot restic le plus récent — appelle le
+    binaire restic en direct sur l'hôte (comme scripts/backup.sh, pas de
+    docker exec ici : restic ne tourne dans aucun conteneur). Best-effort :
+    None si restic/le mot de passe/le dépôt est absent ou injoignable, pour
+    omettre la carte plutôt que planter la génération du dashboard."""
+    if not RESTIC_PASSWORD_FILE.exists():
+        return None
+    env = {**os.environ, "RESTIC_REPOSITORY": str(RESTIC_REPO_DIR),
+           "RESTIC_PASSWORD_FILE": str(RESTIC_PASSWORD_FILE)}
+    try:
+        res = subprocess.run(
+            ["restic", "snapshots", "--latest", "1", "--json"],
+            capture_output=True, text=True, timeout=30, env=env,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+    if res.returncode != 0:
+        return None
+    try:
+        snapshots = json.loads(res.stdout)
+    except json.JSONDecodeError:
+        return None
+    if not snapshots:
+        return None
+    latest_ts = max(datetime.fromisoformat(s["time"]) for s in snapshots)
+    return (datetime.now(latest_ts.tzinfo) - latest_ts).total_seconds() / 86400
+
+
+def render_backup_age_card():
+    age_days = last_backup_age_days()
+    if age_days is None:
+        return None
+    critical = age_days > BACKUP_MAX_AGE_DAYS
+    value = "auj." if age_days < 1 else f"{int(age_days)}j"
+    return render_stat_card("", value, "Dernière sauvegarde",
+                             value_class="stat-value-critical" if critical else "stat-value-good")
 
 
 def render_indexers_card():
@@ -389,18 +510,18 @@ def fetch_transmission_stats(running):
     return stats if stats and "error" not in stats else None
 
 
-def build_stats_section(running, data_root):
+def build_stats_section(running, data_root, backup_dir):
     """Visible WAN et LAN, pas de gating card-lan-blocked (chiffres agrégés
     en snapshot, pas un accès de contrôle au client — voir CLAUDE.md).
-    Toutes les cartes (Débits/Ratio/Torrents/Disque/Indexeurs) sont à plat
-    dans un seul flux (voir stats-flow.html) — pas de sous-section/titre de
-    groupe : chaque carte porte son propre libellé (le titre de l'ancienne
-    sous-section replié dedans, ex. "Débit descendant", voir CLAUDE.md).
-    Débits/Ratio/Torrents viennent tous de transmission-stats.py (best-effort,
-    omis ensemble si indisponible) ; espace disque et indexeurs Prowlarr ont
-    chacun leur propre disponibilité (best-effort indépendant, voir
-    render_disk_card()/render_indexers_card()). Toute la section est omise
-    seulement si aucune carte n'est disponible."""
+    Toutes les cartes sont à plat dans un seul flux (voir stats-flow.html) —
+    pas de sous-section/titre de groupe : chaque carte porte son propre
+    libellé (le titre de l'ancienne sous-section replié dedans, ex. "Débit
+    descendant", voir CLAUDE.md). Débits/Ratio/Torrents viennent tous de
+    transmission-stats.py (best-effort, omis ensemble si indisponible) ;
+    espace disque, dernière sauvegarde et indexeurs Prowlarr ont chacun leur
+    propre disponibilité (best-effort indépendant, voir
+    render_disk_card()/render_backup_age_card()/render_indexers_card()).
+    Toute la section est omise seulement si aucune carte n'est disponible."""
     stats = fetch_transmission_stats(running)
 
     cards = []
@@ -420,23 +541,25 @@ def build_stats_section(running, data_root):
             rows = "\n".join(render_tracker_row(t) for t in stats["trackers"])
             tracker_details = render("tracker-details.html", rows=rows)
 
-        cards.append(render_multi_stat_card("Torrents", [
-            render_stat_item(str(stats["torrents_active"]), "Actifs"),
-            render_stat_item(str(stats["torrents_total"]), "Surveillés"),
-            render_stat_item(str(stats["torrents_downloading"]), "En téléchargement"),
-            render_stat_item(
-                str(stats["torrents_errored"]), "En erreur",
-                value_class="stat-value-critical" if stats["torrents_errored"] else "stat-value-good",
-            ),
-        ]))
+        # Torrents (actifs/en pause/en erreur) et Fichiers (absents/en
+        # bibliothèque/en cross-seed — mêmes marqueurs BIB/ABS que
+        # torrent-cleanup.py, voir CLAUDE.md) fusionnés en une seule carte à
+        # 2 colonnes (voir render_torrents_files_card) — 2 cartes séparées
+        # avaient été essayées d'abord, jugées trop encombrantes côte à côte
+        # par l'utilisateur.
+        cards.append(render_torrents_files_card(stats))
 
     indexers_card = render_indexers_card()
     if indexers_card:
         cards.append(indexers_card)
 
-    disk_card = render_disk_card(data_root)
+    disk_card = render_disk_card(data_root, backup_dir)
     if disk_card:
         cards.append(disk_card)
+
+    backup_age_card = render_backup_age_card()
+    if backup_age_card:
+        cards.append(backup_age_card)
 
     if not cards:
         return ""
@@ -477,7 +600,7 @@ def main():
         sections.append(render("section-grid.html", title="Local (LAN)", cards="\n".join(local_cards)))
     if down_cards:
         sections.append(render("section-grid.html", title="Stack non lancée", cards="\n".join(down_cards)))
-    stats_html = build_stats_section(running, env_shared.get("DATA_ROOT"))
+    stats_html = build_stats_section(running, env_shared.get("DATA_ROOT"), REPO_ROOT / "sauvegarde")
     if stats_html:
         sections.append(stats_html)
 
