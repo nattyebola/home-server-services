@@ -106,6 +106,20 @@ explicitement :
   — piège rencontré en l'écrivant, voir ci-dessous. Footer devenu trop long
   une fois ce raccourci ajouté : liste des touches déplacée dans un écran
   d'aide dédié (touche `?`) plutôt que condensée sur une ou deux lignes.
+  Mode non-interactif `delete-by-inode <dev> <ino> [--dry-run]` (ajouté le
+  2026-07-28) réutilisé par le skill `anime-vf` (voir plus bas) : retrouve
+  et supprime un torrent Transmission par `(dev, ino)` déjà connu — capturé
+  par l'appelant *avant* qu'un import Sonarr/Radarr ne remplace le fichier
+  `library/` correspondant, un stat a posteriori échouerait sinon.
+  Réutilise `resolved_stat()`/`torrent_host_files()`/`TransmissionClient`
+  tels quels plutôt que de redupliquer la logique de matching par inode
+  dans le skill — mêmes pièges (symlinks cross-seed) que le reste du
+  script. Contrairement à une suppression dans la TUI, ne déclenche
+  délibérément PAS `plan_sonarr_unmonitor`/`plan_radarr_deletion` :
+  l'épisode reste monitored, il vient d'être remplacé par une meilleure
+  release, pas retiré. Sortie JSON sur stdout (`{"found", "deleted",
+  "torrent"}`) pour être consommée par un appelant scripté plutôt que lue
+  dans le log.
 - **`dashboard` (`traefik/docker-compose.yml`) accessible en WAN comme en
   LAN** (changé le 2026-07-24, avant restreint par `ipallowlist`) — les
   sous-domaines qu'elle liste sont de toute façon publics via Certificate
@@ -408,6 +422,36 @@ explicitement :
   `seedRatioLimit=2` posé une fois manuellement (pas rétroactif, mais pas
   besoin de le refaire — déjà fait). Trou connu et accepté : un futur
   torrent Nyaa.si injecté par cross-seed n'aura pas cette limite.
+- **Deux profils qualité Sonarr distincts pour préférer l'audio français sur
+  un anime donné, pas un réglage global** (`Anime (Fansub)` inchangé /
+  `Anime (Fansub) VF` nouveau, ajoutés le 2026-07-28 via l'API — comme le
+  point ci-dessus, pas dans un fichier versionné, pas gérés par
+  `arr/recyclarr/recyclarr.yml` qui ne gère que "WEB-2160p (Combined)" côté
+  Sonarr : aucun risque qu'un `recyclarr sync` écrase ces deux profils).
+  Custom Format `FRENCH` créé (regex `\b(TRUEFRENCH|FRENCH|VFF|VFQ)\b`,
+  résoudre son id par nom, ne pas le supposer fixe) : scoré à 0 (neutre) sur
+  `Anime (Fansub)`, à 200 sur `Anime (Fansub) VF` (au-dessus de `MULTi`=100
+  et `VOSTFR`=50 déjà présents par défaut sur ce profil — `VOSTFR` ici veut
+  dire japonais + sous-titres français, pas de l'audio français, à ne pas
+  confondre). Bascule voulue par série (via le skill `anime-vf`, voir
+  ci-dessous), pas un scoring partagé par tous les animes — un premier essai
+  avait modifié `Anime (Fansub)` en place, corrigé le même jour après retour
+  direct de l'utilisateur : il voulait deux profils séparés, la bascule
+  faisant elle-même office de sélection explicite par série plutôt qu'une
+  préférence globale imposée à tous les animes.
+  Skill `.claude/skills/anime-vf/SKILL.md` : bascule la série demandée sur
+  `Anime (Fansub) VF`, relance une recherche (`SeriesSearch`), rapporte ce
+  qui a été grabé — le remplacement du fichier existant reste ensuite
+  automatique côté Sonarr (`upgradeAllowed: true` sur les deux profils),
+  aucune action manuelle nécessaire une fois la bonne release grabée. Le
+  skill capture le `(dev, ino)` de chaque fichier déjà présent avant de
+  lancer la recherche, attend l'import de la nouvelle release, puis
+  supprime l'ancien torrent via `scripts/torrent-cleanup.py
+  delete-by-inode` (ajouté le même jour, voir plus haut) — demandé
+  explicitement par l'utilisateur plutôt que de laisser ce nettoyage
+  manuel. Fonctionne seulement si une release FRENCH/VFF/VFQ/TRUEFRENCH
+  existe réellement chez les indexeurs Prowlarr configurés au moment de la
+  recherche — pas de garantie de disponibilité.
 
 ## Pièges à ne pas répéter
 
@@ -667,6 +711,42 @@ explicitement :
   en dédupliquant par nom résolu avant d'accumuler. Même dédup appliquée à
   `tracker_display()` dans `torrent-cleanup.py` (affichait sinon
   `"Nyaa.si,Nyaa.si,Nyaa.si,Nyaa.si,Nyaa.si"` dans la colonne TRACKER).
+- **Supprimer un episodefile via l'API Sonarr (`DELETE
+  /api/v3/episodefile/{id}`) déclenche quasi instantanément la recherche
+  automatique interne de Sonarr pour l'épisode redevenu "manquant"** —
+  rencontré le 2026-07-29 sur `THE GHOST IN THE SHELL` (id série 21) :
+  l'intention était de supprimer les fichiers `[Reza] ... v2/v3` (bloqués en
+  upgrade par la comparaison de révision, voir plus haut) puis grabber
+  manuellement une release VOSTFR précise (audio japonais + sous-titres FR,
+  sans doublage) via `POST /api/v3/release`. Sonarr a grabé de lui-même une
+  release MULTi (Tsundere-Raws, doublage français inclus, déjà scorée plus
+  haut que VOSTFR sur le profil par défaut — voir plus haut) dans la fenêtre
+  de quelques secondes entre la suppression et la tentative de grab manuel,
+  avant même qu'une recherche puisse être relancée pour cibler spécifiquement
+  la release voulue. Sur ce cas précis, l'issue (doublage FR) a finalement
+  été acceptée par l'utilisateur après coup, mais retenir pour la prochaine
+  fois : supprimer un fichier existant pour forcer un remplacement laisse une
+  fenêtre de course avec la recherche automatique de Sonarr, qui peut
+  grabber autre chose que prévu si le profil de la série préfère déjà un
+  autre format. Pas de parade fiable identifiée encore (voir aussi le piège
+  ci-dessus sur le cache de release qui expire trop vite pour enchaîner
+  recherche fraîche + grab manuel de façon fiable).
+- **Le cache de résultats de `GET /api/v3/release?episodeId=...` expire vite
+  côté Sonarr** — rencontré le 2026-07-29, même incident que ci-dessus : un
+  `guid` récupéré par un appel `GET /api/v3/release` précédent peut déjà être
+  invalide au moment du `POST /api/v3/release` (grab), avec l'erreur
+  `"Couldn't find requested release in cache, try searching again"` — a
+  fortiori si une recherche automatique de Sonarr (voir piège ci-dessus)
+  s'est intercalée entre les deux et a invalidé/remplacé le cache. Le grab
+  manuel doit suivre la recherche GET dans la foulée, sans appel
+  intermédiaire qui laisse le temps à autre chose de rafraîchir le cache.
+- **Le paramètre `seriesId` de `GET /api/v3/history` n'est pas fiable** —
+  vérifié le 2026-07-29 en testant le skill `anime-vf` sur One Punch Man :
+  la réponse contenait des entrées d'autres séries (Jujutsu Kaisen) malgré
+  le filtre. Toujours filtrer côté client sur `record["seriesId"]`, jamais
+  faire confiance au filtrage serveur de cet endpoint. Voir aussi
+  `eventType=1` (entier) plutôt que la chaîne `"grabbed"`, qui renvoie une
+  réponse vide dans nos tests.
 
 ## Repo
 
