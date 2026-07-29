@@ -452,6 +452,22 @@ explicitement :
   manuel. Fonctionne seulement si une release FRENCH/VFF/VFQ/TRUEFRENCH
   existe réellement chez les indexeurs Prowlarr configurés au moment de la
   recherche — pas de garantie de disponibilité.
+- **`scripts/vpn-bench.py` (skill `vpn-bench`)** compare latence/débit entre
+  le serveur AirVPN actuellement configuré (`vpn/custom/default.ovpn`) et
+  d'autres pays, ajouté le 2026-07-29 suite à un bench manuel
+  Belgique/Pays-Bas/Allemagne/Suisse (Belgique gagnante sur les trois
+  métriques à la fois — pas de changement de serveur suite à ce test).
+  Fonctionne parce que le certificat client AirVPN (`<cert>`/`<key>` dans le
+  `.ovpn`) est lié au compte, pas au serveur : seule la ligne `remote
+  [pays].vpn.airdns.org <port>` change entre pays, donc pas besoin de
+  regénérer quoi que ce soit depuis le site AirVPN pour tester un autre
+  pays. Restaure systématiquement la config d'origine à la fin (backup sur
+  disque en plus de la copie en mémoire, pour survivre à un kill dur du
+  script) — jamais de changement permanent sans le redemander
+  explicitement. Latence mesurée vers un tracker tiré au hasard parmi les
+  torrents actifs à chaque run (pas de tracker fixe en config) — accepté
+  explicitement par l'utilisateur, moins reproductible d'un run à l'autre
+  mais plus simple.
 
 ## Pièges à ne pas répéter
 
