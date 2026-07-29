@@ -6,7 +6,7 @@ STACKS := traefik jellyfin nextcloud vpn arr seerr
 
 UPDATE_STACKS := nextcloud vpn jellyfin arr seerr
 
-.PHONY: network up down config logs update update-all backup restore cron-install dashboard-refresh cleanup
+.PHONY: network up down config logs update update-all backup restore cron-install dashboard-refresh cleanup arr-overrides
 
 network:
 	@docker network inspect $(NETWORK) >/dev/null 2>&1 || docker network create $(NETWORK)
@@ -74,6 +74,14 @@ dashboard-refresh:
 # dans library/ — voir scripts/torrent-cleanup.py.
 cleanup:
 	@python3 scripts/torrent-cleanup.py
+
+# réapplique les tailles de quality definition + le champ language Radarr
+# que recyclarr ne gère pas et resynchronise à leurs défauts à chaque
+# `recyclarr sync` — voir arr/recyclarr/recyclarr.yml et
+# scripts/apply-arr-overrides.py. Aussi rejoué par cron juste après le sync
+# interne @daily du conteneur recyclarr, voir scripts/crontab.
+arr-overrides:
+	@python3 scripts/apply-arr-overrides.py
 
 # weekly restic backup (nextcloud DB dump + data + .env secrets + image
 # digest manifest) — see scripts/backup.sh. Also run by cron, see CLAUDE.md.

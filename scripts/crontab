@@ -18,3 +18,9 @@ MAILTO=""
 # Refresh the dashboard every 5 minutes — mainly to reflect healthcheck
 # status (see CLAUDE.md) without waiting on a manual `make dashboard-refresh`.
 */5 * * * * python3 __REPO_ROOT__/scripts/generate-dashboard.py >> __REPO_ROOT__/dashboard/refresh.log 2>&1
+
+# Reapply Sonarr/Radarr quality-definition size overrides + Radarr language
+# field, both reset to guide defaults by the recyclarr container's internal
+# @daily sync — run shortly after (see arr/recyclarr/recyclarr.yml and
+# scripts/apply-arr-overrides.py).
+15 0 * * * python3 __REPO_ROOT__/scripts/apply-arr-overrides.py >> __REPO_ROOT__/arr/apply-overrides.log 2>&1

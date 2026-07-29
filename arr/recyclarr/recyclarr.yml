@@ -26,18 +26,14 @@ sonarr:
     # yaml pour surcharger un palier précis de la table de tailles (testé
     # le 2026-07-22 : ni `preferred_ratio` seul — recalcule juste le
     # "preferred" entre min et un plafond interne de 1000 Mo/min, pas ce
-    # qu'on veut — ni un hypothétique `sizes:` — n'existe pas). Corrigé à la
-    # main sur Sonarr (id 19 = WEBRip-2160p, id 20 = WEBDL-2160p) :
-    #   maxSize=100, preferredSize=85 (Mo/min) → ~6,5-7 Go pour un épisode
-    #   de ~65 min au lieu de 8-10+ Go sans limite.
-    # Comme "Quality Sizes" est resynchronisé en entier à chaque
-    # `recyclarr sync`, repasser ces deux valeurs après coup :
-    #   for id in 19 20; do
-    #     curl -s -H "X-Api-Key: $SONARR_API_KEY" http://localhost:8989/api/v3/qualitydefinition/$id \
-    #       | jq '.maxSize=100 | .preferredSize=85' \
-    #       | curl -s -X PUT -H "X-Api-Key: $SONARR_API_KEY" -H "Content-Type: application/json" \
-    #           --data @- http://localhost:8989/api/v3/qualitydefinition/$id
-    #   done
+    # qu'on veut — ni un hypothétique `sizes:` — n'existe pas). Corrigé via
+    # scripts/apply-arr-overrides.py (maxSize=100, preferredSize=85 sur ces
+    # deux paliers → ~6,5-7 Go pour un épisode de ~65 min au lieu de 8-10+ Go
+    # sans limite) — voir ce script pour les valeurs exactes et CLAUDE.md
+    # pour le pourquoi ; resynchronisé par recyclarr à chaque `recyclarr
+    # sync` (cron interne @daily), donc rejoué juste après par le cron hôte
+    # (scripts/crontab) plutôt que documenté ici en commandes à relancer à
+    # la main.
     # WEB-2160p (Combined) : équivalent série du profil Radarr [SQP] SQP-1
     # WEB (2160p) — WEB 1080p/2160p uniquement (pas de Bluray/Remux/BR-DISK/
     # 720p). Contrairement au profil Radarr, celui-ci n'a pas de
@@ -201,37 +197,23 @@ radarr:
     # smaller than minimum allowed 16.8 GB"). minSize abaissé en
     # conséquence sur les 6 paliers, et preferred/max recalés sur cette
     # release réelle (~62 Mo/min) plutôt que sur une estimation à l'aveugle.
-    # Valeurs finales (Mo/min) sur les paliers utilisés par ce profil
-    # (1080p/2160p × WEBDL/WEBRip/Bluray) :
-    #   id 20/21 WEBDL/WEBRip-1080p : min=10, preferred=30, max=45
-    #   id 22    Bluray-1080p       : min=18, preferred=40, max=60
-    #   id 25/26 WEBDL/WEBRip-2160p : min=25, preferred=65, max=100
-    #   id 27    Bluray-2160p       : min=40, preferred=75, max=120
-    # Comme "Quality Sizes" est resynchronisé en entier à chaque
-    # `recyclarr sync`, repasser ces valeurs après coup :
-    #   for id_min_pref_max in "20 10 30 45" "21 10 30 45" "22 18 40 60" "25 25 65 100" "26 25 65 100" "27 40 75 120"; do
-    #     set -- $id_min_pref_max
-    #     curl -s -H "X-Api-Key: $RADARR_API_KEY" http://localhost:7878/api/v3/qualitydefinition/$1 \
-    #       | jq ".minSize=$2 | .preferredSize=$3 | .maxSize=$4" \
-    #       | curl -s -X PUT -H "X-Api-Key: $RADARR_API_KEY" -H "Content-Type: application/json" \
-    #           --data @- http://localhost:7878/api/v3/qualitydefinition/$1
-    #   done
+    # Automatisé depuis le 2026-07-29 via scripts/apply-arr-overrides.py
+    # (valeurs exactes par palier dans ce script, plus ici en commentaire —
+    # une seule source de vérité) rejoué par le cron hôte juste après le
+    # `recyclarr sync` (@daily interne au conteneur recyclarr) qui les
+    # écrase sinon à chaque fois.
     # Vérifié aussi le 2026-07-23 : à score custom format égal, Radarr
     # départage d'abord sur le nombre de seeders avant la taille — la
     # préférence de taille ne joue qu'entre releases par ailleurs
     # comparables (santé du torrent, qualité, langue...).
-    # IMPORTANT : le champ "language" du profil Radarr (id 7) est forcé à
+    # IMPORTANT : le champ "language" du profil Radarr est forcé à
     # "Original" par le JSON du guide à CHAQUE `recyclarr sync` — recyclarr
     # n'expose aucune propriété yaml pour le surcharger (`language:` renvoie
     # "Property not found", testé le 2026-07-22). Comme le profil ne veut que
     # de l'anglais, ça rejette la quasi-totalité des releases MULTi/VFF/VFI
-    # des trackers FR. Après CHAQUE `recyclarr sync`, repasser le profil en
-    # "Any" à la main :
-    #   curl -s -H "X-Api-Key: $RADARR_API_KEY" http://localhost:7878/api/v3/qualityprofile/7 \
-    #     | jq '.language = {"id":-1,"name":"Any"}' \
-    #     | curl -s -X PUT -H "X-Api-Key: $RADARR_API_KEY" -H "Content-Type: application/json" \
-    #         --data @- http://localhost:7878/api/v3/qualityprofile/7
-    # (id 7 à adapter si le profil est recréé un jour avec un autre id)
+    # des trackers FR. Repassé en "Any" par le même
+    # scripts/apply-arr-overrides.py (résolu par nom de profil, pas par id —
+    # l'id peut différer sur un autre déploiement).
     # Le profil SQP-1 WEB (2160p) a son propre barème de scores figé par le
     # guide (`trash_score_set`), appliqué via `reset_unmatched_scores` —
     # sélectionner un Custom Format via `custom_format_groups` le fait

@@ -470,6 +470,32 @@ explicitement :
   torrents actifs à chaque run (pas de tracker fixe en config) — accepté
   explicitement par l'utilisateur, moins reproductible d'un run à l'autre
   mais plus simple.
+- **`scripts/apply-arr-overrides.py` (`make arr-overrides`, aussi en cron
+  quotidien 00h15, voir `scripts/crontab`)** réapplique les réglages des
+  deux profils qualité principaux (Sonarr `WEB-2160p (Combined)`, Radarr
+  `[SQP] SQP-1 WEB (2160p)`) qu'aucune propriété recyclarr n'expose : tailles
+  de palier "Quality Definition" (voir commentaires dans
+  `arr/recyclarr/recyclarr.yml`) et champ `language` du profil Radarr forcé
+  à "Original" par le guide. Ajouté le 2026-07-29 en creusant la question de
+  la reproductibilité de ces réglages sur un autre déploiement — vérifié en
+  direct ce même jour que ces valeurs avaient déjà dérivé sur cette instance
+  (retombées aux défauts du guide TRaSH), le pense-bête en commentaire
+  ("repasser ces valeurs après coup") n'ayant jamais été relancé depuis le
+  dernier `recyclarr sync` @daily qui les écrase. Résout le profil Radarr
+  par nom (pas par id, contrairement à l'ancien commentaire qui supposait
+  l'id 7 figé) pour rester valide si le profil est un jour recréé avec un
+  autre id, ou répliqué sur un autre déploiement où l'id serait différent.
+  Idempotent (compare avant d'écrire, `déjà à jour, rien à faire` si rien à
+  changer) et best-effort par arr (une erreur sur Sonarr n'empêche pas
+  d'essayer Radarr). Ne couvre QUE ces deux profils : les profils
+  `Anime (Fansub)*` (et le custom format `FRENCH` qui n'y est scoré que sur
+  `Anime (Fansub) VF`) restent volontairement hors périmètre — usage
+  personnel de l'utilisateur, pas géré pour la reproductibilité multi-PC,
+  décidé explicitement en écartant l'option d'un script plus large. Ce trou
+  connu (custom formats/profils Anime encore API-only, non reproductibles
+  sans repasser à la main par l'API) reste documenté par les entrées
+  existantes plus haut (profils Anime, `cutoffFormatScore`) mais n'a pas de
+  script de provisioning dédié.
 
 ## Pièges à ne pas répéter
 
@@ -834,7 +860,7 @@ explicitement :
 ```
 server/
 ├── .env.shared(.example)     # PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT — réel gitignoré, .example versionné
-├── Makefile                  # network/up/down/config/logs/update/update-all/backup/restore/cron-install STACK=<nom> ; dashboard-refresh/cleanup (sans STACK)
+├── Makefile                  # network/up/down/config/logs/update/update-all/backup/restore/cron-install STACK=<nom> ; dashboard-refresh/cleanup/arr-overrides (sans STACK)
 ├── README.md                  # doc humaine : services, install
 ├── ARCHITECTURE.md            # doc humaine : architecture, choix structurants
 ├── ISSUES.md                  # doc humaine : problèmes rencontrés
@@ -844,7 +870,8 @@ server/
 │   ├── restore.sh                  # restauration guidée d'un snapshot restic
 │   ├── generate-dashboard.py       # régénère dashboard/html/ — `make dashboard-refresh`
 │   ├── transmission-stats.py       # JSON ratios/débits pour generate-dashboard.py
-│   └── torrent-cleanup.py          # TUI de nettoyage manuel torrents+library/ — `make cleanup`
+│   ├── torrent-cleanup.py          # TUI de nettoyage manuel torrents+library/ — `make cleanup`
+│   └── apply-arr-overrides.py      # réapplique tailles/language des 2 profils qualité principaux — `make arr-overrides`
 ├── sauvegarde/                # non versionné — dépôt restic + mot de passe + staging
 ├── traefik/                  # socket-proxy + traefik + dashboard (page statique de liens) ; .env(ACME_EMAIL)/.example
 ├── jellyfin/                 # docker-compose.yml + override.yml(.example) pour les bibliothèques
