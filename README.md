@@ -171,6 +171,11 @@ Détail de chaque service, schémas et rationale des choix : voir
        - mettre `useClientTorrents: true` dans `arr/cross-seed/config.js`
          (faux par défaut), sinon les webhooks échouent systématiquement,
          voir [`ISSUES.md`](ISSUES.md#arr--sonarr--radarr--cross-seed) ;
+       - renseigner `CROSS_SEED_INDEXER_IDS` dans `arr/.env` (voir
+         `.env.example`) avec les IDs des indexeurs Prowlarr que cross-seed
+         doit chercher (page Indexers, l'ID apparaît dans l'URL de chaque
+         indexeur) — propre à votre instance, pas dans `config.js` ; `make
+         up STACK=arr` pour que cross-seed reparte avec ces IDs ;
        - (optionnel) ajouter une connexion **Emby/Jellyfin**
          (`implementation: MediaBrowser`) dans Sonarr/Radarr ciblant
          `jellyfin:8096`, avec `mapFrom=/data_root/library` /

@@ -12,10 +12,14 @@ module.exports = {
   // le seul "1" d'origine ("Torr9", supprimé depuis) : bug repéré le
   // 2026-07-28, cross-seed cherchait sur un indexeur mort depuis le
   // déploiement (410 Gone), donc 0 résultat/0 injection à chaque webhook.
-  // IDs à vérifier dans Prowlarr (Indexers) si un indexeur est
-  // ajouté/supprimé/recréé — ils ne sont pas stables dans le temps.
-  torznab: [2, 3, 4, 5].map(
-    (id) => `http://prowlarr:9696/${id}/api?apikey=${process.env.PROWLARR_API_KEY}`
+  // IDs propres à CE déploiement (quels indexeurs existent dans Prowlarr,
+  // dans quel ordre ils ont été ajoutés) — jamais stables dans le temps et
+  // jamais les mêmes d'un déploiement à l'autre : viennent de
+  // CROSS_SEED_INDEXER_IDS (arr/.env, voir .env.example pour comment les
+  // retrouver), pas en dur ici. Si un indexeur est ajouté/supprimé/recréé
+  // dans Prowlarr, mettre à jour cette variable, pas ce fichier.
+  torznab: process.env.CROSS_SEED_INDEXER_IDS.split(",").map(
+    (id) => `http://prowlarr:9696/${id.trim()}/api?apikey=${process.env.PROWLARR_API_KEY}`
   ),
   sonarr: [`http://sonarr:8989/?apikey=${process.env.SONARR_API_KEY}`],
   radarr: [`http://radarr:7878/?apikey=${process.env.RADARR_API_KEY}`],

@@ -566,10 +566,25 @@ explicitement :
   (`GET /api/v3/indexer`, champ `baseUrl` de chaque indexeur `(Prowlarr)`).
   Si un indexeur est ajouté/supprimé/recréé dans Prowlarr, penser à
   vérifier ses ID(s) actuel(s) (page Indexers, ou l'URL de chaque
-  indexeur `(Prowlarr)` côté Sonarr/Radarr) et à les refléter dans le
-  tableau `torznab` de `config.js` — ces IDs ne sont pas stables dans le
-  temps et rien ne prévient d'un ID devenu obsolète autrement qu'en
-  lisant les logs cross-seed.
+  indexeur `(Prowlarr)` côté Sonarr/Radarr) et à les refléter dans
+  `CROSS_SEED_INDEXER_IDS` (`arr/.env`, voir ci-dessous) — ces IDs ne sont
+  pas stables dans le temps et rien ne prévient d'un ID devenu obsolète
+  autrement qu'en lisant les logs cross-seed.
+  Ces IDs vivaient à l'origine en dur dans le tableau `torznab` de
+  `config.js` — déplacés dans `CROSS_SEED_INDEXER_IDS` (`arr/.env`) le
+  2026-07-29, repéré par l'utilisateur comme une valeur propre à ce
+  déploiement (quels indexeurs Prowlarr existent, dans quel ordre) qui
+  n'avait pas sa place dans un fichier versionné sur un repo public — même
+  principe que `TRACKER_ALIASES` (voir plus haut). `config.js` lit
+  désormais `process.env.CROSS_SEED_INDEXER_IDS.split(",")` au lieu d'un
+  tableau littéral. Nyaa.si (id 4, public, pas de ratio) exclu de cette
+  liste le même jour : cross-seeder un torrent déjà obtenu d'un tracker à
+  ratio vers un tracker public n'apporte aucun bénéfice de ratio (seul
+  l'inverse — un torrent Nyaa cross-seedé vers un tracker à ratio — a un
+  intérêt), et le retrait ne coupe que cette direction : un fichier
+  d'origine Nyaa.si continue d'être cross-seedé normalement vers les
+  indexeurs à ratio restants (`torznab` ne filtre que les cibles
+  cherchées, pas la source du fichier).
 - **`searchCadence` dans `arr/cross-seed/config.js` impose deux contraintes
   de validation non documentées ailleurs que dans l'erreur elle-même**
   (repéré le 2026-07-28 en l'ajoutant, boucle de crash immédiate sinon —
