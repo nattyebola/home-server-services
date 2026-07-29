@@ -781,6 +781,53 @@ explicitement :
   faire confiance au filtrage serveur de cet endpoint. Voir aussi
   `eventType=1` (entier) plutôt que la chaîne `"grabbed"`, qui renvoie une
   réponse vide dans nos tests.
+- **`cutoffFormatScore: 10000` (valeur par défaut des guides TRaSH, "upgrade
+  jusqu'à la meilleure release possible") peut provoquer des re-téléchargements
+  en boucle d'une release déjà possédée** — diagnostiqué le 2026-07-29 sur
+  `THE GHOST IN THE SHELL` S01E04 (profil Sonarr `Anime (Fansub)`, id 9) :
+  grabbé 3 fois en une journée, confirmé via `GET /api/v3/history` que c'était
+  littéralement le même magnet/infoHash (`nyaa.si/view/2138643`) à chaque
+  fois, pas 3 releases concurrentes. Mécanisme : les custom formats
+  `VOSTFR`/`SUBFRENCH` (`ReleaseTitleSpecification`) matchent sur le suffixe
+  entre parenthèses que certains groupes (ex. Tsundere-Raws) ajoutent au titre
+  du post Nyaa.si (`(VF, FRENCH, SUBFRENCH, VOSTFR, ...)`) — un suffixe absent
+  du nom réel du fichier `.mkv` dans le torrent. Au grab, la release score 150
+  (VOSTFR détecté dans le titre complet) ; après import, le fichier
+  ré-évalué ne score plus que 100 (pas de "VOSTFR" dans le nom de fichier) →
+  la même release déjà possédée a l'air d'être un upgrade de +50 à la
+  prochaine recherche → regrab → réimport → score à nouveau tronqué → boucle.
+  Avec `cutoffFormatScore=10000` (max réellement atteignable sur ce profil :
+  155) l'épisode ne sort jamais de la liste "cutoff unmet" et reste
+  éligible à chaque RSS sync (~15 min) / recherche périodique — cause
+  probable aussi du quota C411 tapé le 2026-07-28 ([[project_c411_quota_2026-07-28]]),
+  la plupart des profils étant dans le même état (recherches perpétuelles qui
+  ne trouvent en général rien de mieux, mais consomment du quota indexeur).
+  Fix appliqué le 2026-07-29 : `cutoffFormatScore` abaissé à un plafond
+  réaliste (somme des custom formats à score positif réellement cumulables
+  sur une même release, pas la somme brute de `formatItems` qui compte aussi
+  des alternatives mutuellement exclusives comme les plateformes de
+  streaming) sur les 5 profils qui l'avaient à 10000 : `WEB-1080p`→1782,
+  `WEB-2160p (Combined)`→4000, `Anime (Fansub)`→155, `Anime (Fansub) VF`→335,
+  `Anime (Fansub) VOSTFR`→105. Fait via API directe pour les 4 profils non
+  gérés par recyclarr (mêmes conventions que les profils Anime, voir plus
+  haut) ; pour `WEB-2160p (Combined)` (géré par `arr/recyclarr/recyclarr.yml`,
+  resynchronisé par le cron interne `@daily` du conteneur recyclarr, cf.
+  commentaire dans son `docker-compose.yml`), un simple appel API aurait été
+  écrasé au sync suivant — passé plutôt par la clé `upgrade.until_score` du
+  schéma de config recyclarr (`quality_profiles:`, confirmé via
+  `https://schemas.recyclarr.dev/latest/config/quality-profiles.json`),
+  validé avec `recyclarr sync --preview` avant application réelle.
+- **Un bind-mount Docker d'un fichier unique (pas un dossier) peut rester
+  figé sur l'ancien inode si le fichier hôte est remplacé plutôt que modifié
+  en place** — repéré le 2026-07-29 en éditant `arr/recyclarr/recyclarr.yml`
+  (monté `:ro` dans `recyclarr`) : le conteneur continuait de lire l'ancien
+  contenu après l'édition (`docker exec ... cat` ne montrait pas le
+  changement), alors que `docker inspect` confirmait le bon chemin hôte monté.
+  Cause : l'inode du fichier avait changé sur l'hôte (`stat -c '%i'` différent
+  côté hôte et côté conteneur) — un bind-mount de fichier suit l'inode capturé
+  au démarrage du conteneur, pas le chemin. Un simple `docker restart` du
+  conteneur suffit à faire relire le fichier à jour ; ne pas conclure trop
+  vite qu'un changement de config n'a "pas pris" sans vérifier ça d'abord.
 
 ## Repo
 

@@ -52,6 +52,27 @@ sonarr:
       - trash_id: c4cadd6b35b95f62c3d47a408e53e2f7  # WEB-2160p (Combined)
         reset_unmatched_scores:
           enabled: true
+        # cutoffFormatScore par défaut du guide TRaSH = 10000, volontairement
+        # inatteignable ("upgrade jusqu'à la meilleure release possible") —
+        # repéré le 2026-07-29 : combiné à une incohérence de score entre le
+        # titre de release (utilisé au moment du grab) et le nom de fichier
+        # réel (utilisé à l'import, cf. Ghost in the Shell S01E04 sur le
+        # profil Anime (Fansub)), un épisode jamais "cutoff met" reste
+        # éligible à re-recherche à chaque RSS sync/tâche périodique et peut
+        # regrabber indéfiniment la même release déjà possédée. until_score
+        # plafonné à 4000 ici : Tier (max 1700, les 4 tiers sont mutuellement
+        # exclusifs) + DV Boost (1000) + HDR (500, une release Dolby Vision
+        # matche souvent les deux) + MULTi (300) + VOSTFR (100) + plateforme
+        # (75, un seul applicable) + x265 (50) + Repack (7) ≈ 3732 de score
+        # réellement atteignable sur une seule release — 4000 laisse une
+        # marge sans retomber dans l'inatteignable comme 10000. Resynchronisé
+        # par recyclarr (cron interne @daily, voir docker-compose.yml) donc
+        # doit rester ici plutôt qu'un simple PUT API qui serait écrasé au
+        # prochain sync — contrairement aux profils Anime (Fansub)*, gérés à
+        # la main via l'API (voir CLAUDE.md).
+        upgrade:
+          allowed: true
+          until_score: 4000
     # Même remarque que côté Radarr : sélectionner un CF via
     # custom_format_groups le fait exister/matcher mais ne lui donne un
     # score que s'il fait partie du trash_score_set du profil — ici il n'y
