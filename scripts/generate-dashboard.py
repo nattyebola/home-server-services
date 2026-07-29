@@ -606,10 +606,12 @@ def main():
 
     copy_assets()
 
+    now = datetime.now()
     page = render(
         "page.html",
         domain=domain,
-        updated=datetime.now().strftime("%Y-%m-%d %H:%M"),
+        updated=now.strftime("%Y-%m-%d %H:%M"),
+        generated_ms=str(int(now.timestamp() * 1000)),
         sections="\n".join(sections),
     )
     out_file = OUT_DIR / "index.html"
