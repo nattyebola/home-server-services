@@ -23,6 +23,10 @@ traefik/letsencrypt/
 dashboard/html/
 dashboard/refresh.log
 
+# cron job output logs (host-specific, not infra-as-code)
+arr/apply-overrides.log
+arr/recyclarr-sync.log
+
 # VPN client credentials (private key + certs, not infra-as-code)
 vpn/custom/
 

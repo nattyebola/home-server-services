@@ -470,8 +470,9 @@ explicitement :
   torrents actifs à chaque run (pas de tracker fixe en config) — accepté
   explicitement par l'utilisateur, moins reproductible d'un run à l'autre
   mais plus simple.
-- **`scripts/apply-arr-overrides.py` (`make arr-overrides`, aussi en cron
-  quotidien 00h15, voir `scripts/crontab`)** réapplique les réglages des
+- **`scripts/apply-arr-overrides.py` (`make arr-overrides`, aussi enchaîné
+  par cron quotidien juste après `make recyclarr-sync`, voir
+  `scripts/crontab`)** réapplique les réglages des
   deux profils qualité principaux (Sonarr `WEB-2160p (Combined)`, Radarr
   `[SQP] SQP-1 WEB (2160p)`) qu'aucune propriété recyclarr n'expose : tailles
   de palier "Quality Definition" (voir commentaires dans
@@ -496,6 +497,25 @@ explicitement :
   sans repasser à la main par l'API) reste documenté par les entrées
   existantes plus haut (profils Anime, `cutoffFormatScore`) mais n'a pas de
   script de provisioning dédié.
+  Cron initialement réglé à 00h15, un délai de sécurité estimé après le
+  sync interne `@daily` (00h00) du conteneur recyclarr — repéré le
+  2026-07-30 (utilisateur) comme une fenêtre de 15 min pendant laquelle ces
+  réglages sont dans l'état par défaut du guide TRaSH, pas les valeurs
+  voulues. Fix : le scheduler interne de recyclarr (`CRON_SCHEDULE`, cron
+  `@daily` par défaut de l'image) est désactivé — aucune valeur ne le
+  désactive proprement (seule une expression cron qui ne matche jamais,
+  ex. `31 février`, fonctionne comme contournement, écarté comme pas assez
+  propre) ; le service `recyclarr` passe donc en mode manuel pur
+  (`arr/docker-compose.yml` : plus de `restart:`/healthcheck, `profiles:
+  [manual]` pour rester absent de `make up STACK=arr`), déclenché
+  uniquement par `make recyclarr-sync` (nouveau target Makefile,
+  `docker compose run --rm recyclarr sync` — passer un argument à
+  l'entrypoint de l'image bascule du mode cron au mode CLI one-shot).
+  `scripts/crontab` enchaîne désormais `recyclarr-sync` puis
+  `apply-arr-overrides.py` sur une seule ligne cron (`&&`, plus deux
+  horaires séparés) : la fenêtre où ces réglages sont faux se limite à la
+  durée réelle du sync (quelques secondes, mesuré), pas à un délai de
+  sécurité estimé.
 
 ## Pièges à ne pas répéter
 

@@ -219,11 +219,23 @@ services:
 
   recyclarr:
     image: ghcr.io/recyclarr/recyclarr:latest
-    restart: unless-stopped
-    # Confirmé au premier démarrage : le conteneur tourne en continu avec sa
-    # propre planification interne (cron @daily par défaut), pas besoin de
-    # cron côté hôte.
+    # Mode manuel uniquement (pas de `restart:`, pas de healthcheck) — plus
+    # de scheduler interne (cron @daily par défaut de l'image, désactivé le
+    # 2026-07-30 : aucune valeur de CRON_SCHEDULE ne le désactive proprement,
+    # seule une expression cron qui ne matche jamais existe comme
+    # contournement, jugé pas assez propre). `profiles: [manual]` exclut ce
+    # service de `make up STACK=arr` (docker compose up sans cible explicite
+    # ignore les services profilés) — déclenché uniquement via
+    # `make recyclarr-sync` (`docker compose run --rm recyclarr sync`,
+    # passe des arguments à l'entrypoint donc bascule l'image en mode CLI
+    # one-shot plutôt que cron). Cron host (`scripts/crontab`) enchaîne ce
+    # target avec `arr-overrides` juste après pour réappliquer ce que le
+    # sync vient d'écraser (voir plus bas et CLAUDE.md) : la fenêtre où ces
+    # réglages sont faux se limite désormais à la durée réelle du sync
+    # (quelques secondes), plus à un délai de sécurité estimé.
     user: "${PUID}:${PGID}"
+    profiles:
+      - manual
     depends_on:
       - sonarr
       - radarr
@@ -235,17 +247,6 @@ services:
       - .env
     networks:
       - default
-    # Pas de serveur HTTP (juste supercronic + planification interne, voir
-    # commentaire plus haut) — le seul signal disponible est que le process
-    # planificateur tourne toujours. Détecte un crash du scheduler qui
-    # laisserait le conteneur "Up" sans plus jamais rien exécuter ; ne
-    # détecte pas un job recyclarr individuel bloqué.
-    healthcheck:
-      test: ["CMD-SHELL", "pgrep supercronic > /dev/null || exit 1"]
-      interval: 60s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
     security_opt:
       - no-new-privileges:true
     cap_drop:

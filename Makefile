@@ -6,7 +6,7 @@ STACKS := traefik jellyfin nextcloud vpn arr seerr
 
 UPDATE_STACKS := nextcloud vpn jellyfin arr seerr
 
-.PHONY: network up down config logs update update-all backup restore cron-install dashboard-refresh cleanup arr-overrides
+.PHONY: network up down config logs update update-all backup restore cron-install dashboard-refresh cleanup arr-overrides recyclarr-sync
 
 network:
 	@docker network inspect $(NETWORK) >/dev/null 2>&1 || docker network create $(NETWORK)
@@ -78,10 +78,18 @@ cleanup:
 # réapplique les tailles de quality definition + le champ language Radarr
 # que recyclarr ne gère pas et resynchronise à leurs défauts à chaque
 # `recyclarr sync` — voir arr/recyclarr/recyclarr.yml et
-# scripts/apply-arr-overrides.py. Aussi rejoué par cron juste après le sync
-# interne @daily du conteneur recyclarr, voir scripts/crontab.
+# scripts/apply-arr-overrides.py. Aussi enchaîné par cron juste après
+# `recyclarr-sync`, voir scripts/crontab.
 arr-overrides:
 	@python3 scripts/apply-arr-overrides.py
+
+# lance `recyclarr sync` en one-shot — le service recyclarr (arr/docker-compose.yml)
+# n'a plus de scheduler interne et est sous `profiles: [manual]`, donc
+# absent de `make up STACK=arr` ; seul ce target le démarre. Enchaîné par
+# cron avec `arr-overrides` juste après, voir scripts/crontab.
+recyclarr-sync: STACK := arr
+recyclarr-sync: network
+	@$(compose) run --rm recyclarr sync
 
 # weekly restic backup (nextcloud DB dump + data + .env secrets + image
 # digest manifest) — see scripts/backup.sh. Also run by cron, see CLAUDE.md.
