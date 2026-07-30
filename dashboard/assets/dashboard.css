@@ -13,11 +13,31 @@ body {
 @media (prefers-color-scheme: dark) {
   body { background: #18181b; color: #f4f4f5; }
 }
-h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
-.updated { font-size: .85rem; opacity: .6; margin: 0 0 2rem; }
-/* Passe en rouge côté client (dashboard.js) si le cron de régénération (5
-   min, scripts/crontab) semble s'être arrêté — voir data-generated ci-dessus. */
-.updated-stale { color: var(--status-critical); opacity: 1; font-weight: 600; }
+h1 { font-size: 1.4rem; margin: 0 0 1.5rem; }
+
+/* Contenu de la section Monitoring (jauges/tableaux, pas l'essentiel du
+   dashboard) masqué par défaut — titre + switch restent toujours visibles,
+   sur une même ligne alignée à gauche (voir section-transmission.html), seul
+   le switch montre/masque le contenu en dessous (dashboard.js, état retenu
+   en localStorage). */
+.monitoring-hidden { display: none; }
+.section-header-row { display: flex; align-items: center; gap: 1rem; margin: 0 0 .75rem; }
+.section-header-row h2 { margin: 0; }
+.switch-row {
+  display: flex; align-items: center; gap: .5rem; font-size: .85rem; opacity: .8;
+  margin: 0; cursor: pointer; user-select: none;
+}
+.switch { position: relative; display: inline-block; width: 34px; height: 20px; flex: none; }
+.switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.switch-slider { position: absolute; inset: 0; background: #d4d4d8; border-radius: 999px; transition: background .15s; }
+.switch-slider::before {
+  content: ""; position: absolute; width: 14px; height: 14px; left: 3px; top: 3px;
+  background: #fff; border-radius: 50%; transition: transform .15s;
+}
+@media (prefers-color-scheme: dark) { .switch-slider { background: #3f3f46; } }
+.switch input:checked + .switch-slider { background: var(--status-good); }
+.switch input:checked + .switch-slider::before { transform: translateX(14px); }
+.updated { font-size: .85rem; opacity: .6; margin: 2.5rem auto 0; max-width: 960px; text-align: center; }
 section { max-width: 960px; margin: 0 auto 2.5rem; }
 section h2 {
   font-size: .8rem; text-transform: uppercase; letter-spacing: .08em;
@@ -53,11 +73,14 @@ a.card:hover { transform: translateY(-2px); }
    sous-section : chaque carte porte son propre libellé (voir
    render_speed_card()/render_ratio_card()/etc. dans generate-dashboard.py).
    Flexbox plutôt que grid : largeur de carte fixe via flex-basis (pas de
-   dépendance à la largeur du conteneur comme avec grid+1fr), et chaque carte
-   garde sa propre hauteur (align-items: flex-start — pas d'étirement des
-   cartes courtes à la hauteur de la plus haute de leur "rangée" comme le
-   ferait une grille). */
-.stats-flow { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 1rem; margin-bottom: 1.5rem; }
+   dépendance à la largeur du conteneur comme avec grid+1fr). align-items:
+   stretch (revenu le 2026-07-30, demandé explicitement — la ligne
+   précédente était flex-start, chaque carte gardait sa propre hauteur) :
+   les cartes d'une même ligne (même "flex line" créée par flex-wrap)
+   s'étirent à la hauteur de la plus haute d'entre elles ; le contenu de
+   chaque carte reste centré (`.stat`) ou ancré en haut (`.stat-list`) dans
+   cet espace, voir plus bas. */
+.stats-flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 1rem; margin-bottom: 1.5rem; }
 .stat {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .4rem;
   flex: 0 0 190px; padding: 1.25rem 1rem; border-radius: 12px; background: #fff;
@@ -69,21 +92,31 @@ a.card:hover { transform: translateY(-2px); }
 .stat svg { width: 68px; height: 40px; }
 .stat-value { font-weight: 700; font-size: 1rem; font-variant-numeric: tabular-nums; }
 .stat-value-good { color: var(--status-good); }
+/* Placeholder d'une carte dont les données dépendent d'une stack arrêtée
+   (voir render_stat_placeholder(), même esprit que .card-down pour les
+   cartes de service Public/Local) — reste dans le flux, dans le même
+   gabarit de span que la carte réelle, plutôt que de disparaître. */
+.stat-placeholder { opacity: .45; }
+.stat-down { font-size: .85rem; }
 .stat-value-critical { color: var(--status-critical); }
 .stat-label { font-size: .75rem; opacity: .6; text-align: center; }
 
-/* Carte liste (indexeurs Prowlarr) : contenu variable en hauteur, mieux
-   ancré en haut qu'au centre du .stat générique — voir indexers-card.html. */
+/* Carte liste (indexeurs Prowlarr, tâches planifiées) : contenu variable en
+   hauteur, mieux ancré en haut qu'au centre du .stat générique — voir
+   indexers-card.html/scheduled-tasks-card.html. Classes génériques
+   (renommées depuis .indexer-list/.indexer-dot le 2026-07-30 en ajoutant la
+   carte tâches planifiées) : tout point de statut coloré dans une liste,
+   pas seulement les indexeurs. */
 .stat-list { align-items: stretch; justify-content: flex-start; }
 .stat-list .stat-label { text-align: left; }
-.indexer-list {
+.status-list {
   list-style: none; margin: 0; padding: 0; font-size: .8rem;
   display: flex; flex-direction: column; gap: .3rem;
 }
-.indexer-list li { display: flex; align-items: center; gap: .5rem; }
-.indexer-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.indexer-dot-good { background: var(--status-good); }
-.indexer-dot-critical { background: var(--status-critical); }
+.status-list li { display: flex; align-items: center; gap: .5rem; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.status-dot-good { background: var(--status-good); }
+.status-dot-critical { background: var(--status-critical); }
 
 /* Carte Torrents (actifs/en pause/en erreur + absents/en bibliothèque/en
    cross-seed, 2 colonnes) — un seul titre "Torrents" pour toute la carte
@@ -100,9 +133,24 @@ a.card:hover { transform: translateY(-2px); }
    la liste empilée label/valeur plutôt que côte à côte (3 valeurs serrées
    dans la largeur d'une carte tronquaient les libellés). */
 .stat-span-2 { flex: 0 0 calc(190px * 2 + 3rem); }
-.stat-torrents-files { align-items: stretch; justify-content: center; gap: .6rem; }
+.stat-span-3 { flex: 0 0 calc(190px * 3 + 6rem); }
+.stat-torrents-files { align-items: stretch; justify-content: flex-start; gap: .6rem; }
 .stat-torrents-files > .stat-label { text-align: left; margin-bottom: -.15rem; }
 .stat-columns-row { display: flex; flex-direction: row; align-items: flex-start; justify-content: space-between; gap: 1.5rem; }
+
+/* Carte à 2 jauges (débits descendant/montant, ratios total/session) — même
+   .stat-span-2/.stat-columns-row que la carte Torrents, mais chaque colonne
+   est une jauge complète (icône + valeur + libellé) plutôt qu'une liste
+   label/valeur : voir render_dual_gauge_card()/gauge-column.html.
+   align-items: stretch (comme .stat-torrents-files) pour que .stat-columns-row
+   occupe toute la largeur de la carte — sans ça le .stat de base (align-items:
+   center) laisse la ligne se resserrer à la largeur de son contenu, et
+   justify-content dessus n'a alors plus aucun espace à répartir : les 2
+   colonnes restaient collées au centre plutôt qu'étalées jusqu'aux bords. */
+.stat-dual-gauge { align-items: stretch; justify-content: flex-start; }
+.stat-dual-gauge > .stat-label { text-align: left; margin-bottom: -.15rem; }
+.stat-dual-gauge .stat-columns-row { align-items: center; justify-content: space-evenly; }
+.stat-gauge-col { display: flex; flex-direction: column; align-items: center; gap: .4rem; }
 .stat-multi-col { display: flex; flex-direction: column; align-items: stretch; gap: .5rem; flex: 1; min-width: 0; }
 .stat-multi-row {
   display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; font-size: .85rem;
@@ -152,8 +200,11 @@ a.card:hover { transform: translateY(-2px); }
 .gauge-zone-warning { stroke: var(--status-warning); }
 .gauge-zone-good { stroke: var(--status-good); }
 
-/* Table détaillée par tracker (voir tracker-details.html) : mini-barre,
+/* Carte "Ratio par tracker" (span 3, voir tracker-card.html) — simple carte
+   à plat dans le flux, plus un accordéon replié : mini-barre par ligne,
    plus adaptée qu'une jauge à la taille d'une cellule de tableau. */
+.stat-tracker { align-items: stretch; justify-content: flex-start; }
+.stat-tracker > .stat-label { text-align: left; margin-bottom: .25rem; }
 .mini-meter { display: flex; align-items: center; gap: .5rem; }
 .mini-meter span { font-variant-numeric: tabular-nums; }
 .meter-track {
@@ -167,17 +218,8 @@ a.card:hover { transform: translateY(-2px); }
 .meter-fill-critical { background: var(--status-critical); }
 .meter-fill-warning { background: var(--status-warning); }
 .meter-fill-good { background: var(--status-good); }
-.tracker-details summary {
-  cursor: pointer; font-size: .8rem; font-weight: 600; opacity: .8;
-  margin-bottom: .5rem; user-select: none;
-}
-.tracker-details summary::marker { color: inherit; }
 .tracker-table {
-  width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px;
-  overflow: hidden; font-size: .85rem;
-}
-@media (prefers-color-scheme: dark) {
-  .tracker-table { background: #27272a; }
+  width: 100%; border-collapse: collapse; font-size: .85rem;
 }
 .tracker-table th, .tracker-table td { padding: .5rem .75rem; text-align: left; }
 .tracker-table th { font-size: .7rem; text-transform: uppercase; opacity: .6; }

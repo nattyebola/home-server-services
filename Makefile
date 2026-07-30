@@ -104,13 +104,22 @@ restore:
 # installs scripts/crontab as this host's crontab (nextcloud cron.php +
 # weekly backup) — versioned here instead of only living in the live
 # crontab, where it would otherwise vanish silently (migration, reinstall...).
-# __REPO_ROOT__ and __PUID__ in scripts/crontab are substituted with this
-# checkout's absolute path and .env.shared's PUID (cron never loads
-# .env.shared itself) so the file stays portable across machines/users.
+# __REPO_ROOT__, __PUID__ and __DATA_ROOT__ in scripts/crontab are substituted
+# with this checkout's absolute path and .env.shared's PUID/DATA_ROOT (cron
+# never loads .env.shared itself) so the file stays portable across
+# machines/users. .cron-status/ (added 2026-07-30) holds one heartbeat file
+# per scheduled task, written by scripts/crontab on success — read by
+# scripts/generate-dashboard.py's "Tâches planifiées" card (see
+# cron_marker_age_seconds()) ; created here rather than left to the first
+# cron tick so the dashboard doesn't have to guess between "never ran" and
+# "directory missing".
 cron-install:
 	@test -f .env.shared || (echo ".env.shared missing — see .env.shared.example" >&2 && exit 1)
 	$(eval PUID := $(shell grep '^PUID=' .env.shared | cut -d= -f2))
+	$(eval DATA_ROOT := $(shell grep '^DATA_ROOT=' .env.shared | cut -d= -f2))
 	@test -n "$(PUID)" || (echo "PUID not set in .env.shared" >&2 && exit 1)
-	sed -e "s|__REPO_ROOT__|$(CURDIR)|g" -e "s|__PUID__|$(PUID)|g" scripts/crontab | crontab -
+	@test -n "$(DATA_ROOT)" || (echo "DATA_ROOT not set in .env.shared" >&2 && exit 1)
+	@mkdir -p "$(DATA_ROOT)/.cron-status"
+	sed -e "s|__REPO_ROOT__|$(CURDIR)|g" -e "s|__PUID__|$(PUID)|g" -e "s|__DATA_ROOT__|$(DATA_ROOT)|g" scripts/crontab | crontab -
 	@echo "installed crontab:"
 	@crontab -l

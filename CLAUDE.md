@@ -310,11 +310,17 @@ explicitement :
   flux, également demandé). `.stats-flow` utilise flexbox
   (`flex-wrap`) plutôt qu'une grille CSS — demandé explicitement — avec une
   largeur de carte fixe par `flex: 0 0 190px` sur `.stat` (pas
-  `grid-template-columns`) : chaque carte garde sa propre hauteur
-  (`align-items: flex-start` sur le conteneur, pas d'étirement à la hauteur
-  de la plus grande carte de sa "rangée" comme le ferait une grille) — plus
-  besoin du hack `justify-content: center` sur `.stat` pour compenser un
-  étirement qui n'existe plus.
+  `grid-template-columns`).
+  `align-items` du conteneur est revenu sur `stretch` (2026-07-30, demandé
+  explicitement) après un premier temps sur `flex-start` (chaque carte
+  gardait sa propre hauteur, pas d'étirement à celle de la plus grande
+  carte de sa "rangée") : les cartes d'une même ligne (flex-wrap crée des
+  "flex lines" indépendantes, l'étirement ne dépasse jamais la ligne)
+  s'étirent maintenant à la hauteur de la plus haute d'entre elles. Le
+  contenu interne de chaque carte absorbe cet espace en plus sans qu'il
+  ait fallu toucher aux templates : `.stat` centre son contenu
+  verticalement (`justify-content: center`), `.stat-list` (indexeurs,
+  tâches planifiées) l'ancre en haut (`justify-content: flex-start`).
   Itérations précédentes (pour référence, pas l'état actuel) : Débits/Ratio
   d'abord groupés côte à côte avec un titre `h3` par groupe, puis une
   deuxième ligne "Système" (un seul titre) éclatée en trois sous-sections
@@ -516,9 +522,175 @@ explicitement :
   horaires séparés) : la fenêtre où ces réglages sont faux se limite à la
   durée réelle du sync (quelques secondes, mesuré), pas à un délai de
   sécurité estimé.
+- **Carte dashboard "Tâches planifiées"** (ajoutée le 2026-07-30, remplace
+  l'ancienne carte solo "Dernière sauvegarde") : liste chaque tâche de
+  `scripts/crontab` avec un point coloré — vert si elle a tourné avec
+  succès il y a moins de temps que l'écart normal entre deux occurrences de
+  son cron, rouge sinon (demandé explicitement ainsi par l'utilisateur).
+  Même gabarit carte-liste que les indexeurs Prowlarr (`indexers-card.html`)
+  — classes CSS renommées `.indexer-list`/`.indexer-dot-*` →
+  `.status-list`/`.status-dot-*` (génériques, réutilisées par les deux
+  cartes) à cette occasion. Deux mécanismes de détection selon la tâche
+  (voir `render_scheduled_tasks_card()`/`cron_marker_age_seconds()` dans
+  `scripts/generate-dashboard.py`) :
+  - **Sauvegarde restic** : garde son check existant (âge réel du dernier
+    snapshot via `restic snapshots --latest 1`, voir `BACKUP_MAX_AGE_DAYS`
+    ci-dessus) — plus fiable qu'un marqueur de fin de script, qui ne prouve
+    que "le script est allé jusqu'au bout", pas que le snapshot produit est
+    valide.
+  - **Nextcloud (cron.php), rafraîchissement dashboard, recyclarr +
+    overrides arr** : chaque ligne de `scripts/crontab` écrit désormais
+    `date +\%s > __DATA_ROOT__/.cron-status/<nom>` à la fin de sa chaîne de
+    commandes (`&&`, donc jamais atteint si une étape précédente échoue) ;
+    `cron_marker_age_seconds()` compare l'âge du marqueur à l'intervalle
+    attendu (`SCHEDULED_TASKS`, codé en dur par tâche plutôt qu'un
+    parseur générique d'expression cron — seulement 3 tâches concernées,
+    une abstraction générique n'aurait rien simplifié). `__DATA_ROOT__` est
+    un 3e placeholder substitué par `make cron-install` (comme
+    `__REPO_ROOT__`/`__PUID__`), qui crée aussi `.cron-status/` s'il
+    n'existe pas encore.
+  La composition de la liste ne dépend JAMAIS de la disponibilité d'un
+  marqueur/snapshot (demandé explicitement le 2026-07-30 après un premier
+  essai qui omettait une tâche tant que son marqueur n'existait pas
+  encore) : une tâche sans marqueur/snapshot est affichée en rouge, pas
+  absente. Liste volontairement minimale (nom + point coloré, pas d'âge
+  affiché) pour rester cohérente avec le gabarit indexeurs déjà en place.
+
+  En revanche, une tâche liée à une stack arrêtée EST absente de la liste
+  (raffiné le 2026-07-30, même jour, suite à une remarque de l'utilisateur :
+  "si la stack n'est pas lancée, le cron lui-même ne devrait pas être
+  lancé" — pas seulement caché côté dashboard). `SCHEDULED_TASKS` porte
+  donc un 4e élément, la liste des services `<project>/<service>` requis
+  (mêmes clés que le `running` de `docker_ps_set()`) : `["nextcloud/app"]`
+  pour Nextcloud (cron.php), `["arr/sonarr", "arr/radarr"]` pour Recyclarr
+  + overrides arr, liste vide pour Sauvegarde restic et Rafraîchissement
+  dashboard (pas de stack associée — ce dernier est justement ce qui doit
+  tourner pour refléter qu'une autre stack est arrêtée). `render_scheduled_tasks_card()`
+  saute entièrement la ligne si un des services requis n'est pas dans
+  `running` — rouge serait un faux signal d'échec pour un arrêt volontaire.
+  Ce filtrage dashboard est un affichage, pas une garantie : le vrai fix
+  est côté cron (voir `scripts/require-running.sh` ci-dessous), sans quoi
+  le job continuerait de tourner (et d'échouer, ou de réussir inutilement)
+  toutes les 5 min/tous les jours contre une stack arrêtée, pour rien.
+
+- **`scripts/require-running.sh <project>/<service> [...]`** (ajouté le
+  2026-07-30) : exit 0 seulement si chaque service listé a un conteneur
+  `running` au moment de l'appel (`docker ps --filter label=com.docker.compose.project=...
+  --filter label=com.docker.compose.service=...`, mêmes labels que
+  `docker_ps_set()` dans `scripts/generate-dashboard.py`). Deux usages :
+  - En tête de chaîne `&&` dans `scripts/crontab` pour les 2 tâches liées à
+    une stack précise (Nextcloud cron.php → `nextcloud/app` ; Recyclarr +
+    overrides arr → `arr/sonarr` ET `arr/radarr`) : si le guard échoue,
+    toute la chaîne s'arrête avant le premier `docker exec`/
+    `docker compose run` — silencieux plutôt qu'un échec répété.
+  - Dans `scripts/backup.sh`, pour rendre le dump de la base Nextcloud
+    best-effort plutôt que fatal : `pg_dump` sur `nextcloud/db-next`
+    tournait auparavant sans vérifier qu'il était démarré, sous `set -e` —
+    si `nextcloud` était arrêté au moment du cron hebdo, TOUT le script
+    échouait (aucun manifeste d'images, aucun `restic backup`), pas
+    seulement le dump DB. Le fichier `nextcloud-db.sql` d'un run précédent
+    est supprimé du staging plutôt que laissé tel quel si le dump est
+    sauté ce run-là — un vieux dump silencieusement re-sauvegardé comme
+    s'il était frais serait pire qu'une sauvegarde manquante.
+  Pas de gating équivalent sur la sauvegarde restic elle-même côté
+  dashboard/cron : c'est une sauvegarde globale (manifeste de toutes les
+  stacks), pas le cron d'un seul service — seule sa dépendance interne au
+  dump Nextcloud est rendue best-effort, pas la tâche entière.
+- **Marge de 20 % (`CRON_MARKER_SLACK = 1.2` dans `scripts/generate-dashboard.py`)
+  sur l'intervalle attendu de chaque tâche planifiée** (ajouté le 2026-07-30,
+  suite à un faux rouge constaté sur "Rafraîchissement dashboard" lui-même) —
+  sans marge, un marqueur comparé pile à l'intervalle du cron (300s pour un
+  `*/5`) passe rouge dès que la génération du dashboard tombe dans les
+  dernières secondes avant le tick suivant (jitter du scheduler, ou un `make
+  dashboard-refresh` manuel qui ne tombe pas pile sur le cycle) alors que la
+  tâche tourne normalement (confirmé via `refresh.log` : succès à chaque
+  tick). S'applique aussi à `BACKUP_MAX_AGE_DAYS` (7j → 8.4j effectifs) pour
+  la même raison, la sauvegarde restic étant elle aussi hebdomadaire pile.
+- **Pied de page `Généré le … — make dashboard-refresh` déplacé en `<footer>`
+  en bas de page (ajouté le 2026-07-30)**, et surlignage rouge côté client du
+  timestamp si le cron de régénération semblait arrêté (`data-generated`/
+  `.updated-stale` dans `dashboard.js`/`dashboard.css`) retiré le même jour —
+  devenu redondant avec la carte "Tâches planifiées" (ci-dessus), qui
+  surveille déjà ce cron précis via son propre marqueur.
+- **Section "Transmission &amp; système" renommée "Monitoring"** (2026-07-30)
+  et **masquée par défaut, dépliable via un switch** (même jour, demandé par
+  l'utilisateur) : le titre et le switch (`.section-header-row` dans
+  `section-transmission.html`) restent toujours visibles et alignés sur une
+  même ligne à gauche — seul le contenu (`#monitoring-content`,
+  `.monitoring-hidden`) est masqué, jamais le titre lui-même (corrigé après
+  un premier essai qui masquait toute la `<section>`, titre inclus). État du
+  switch retenu en `localStorage` (`dashboard.js`) pour survivre à la
+  régénération cron toutes les 5 min — sans ça l'utilisateur aurait dû
+  redéplier la section à chaque rechargement de page.
+- **Débits (descendant/montant) et Ratios (total/session) fusionnés chacun en
+  une seule carte à 2 jauges** (`render_dual_gauge_card()`/
+  `dual-gauge-card.html`/`gauge-column.html`, 2026-07-30) — la première ligne
+  de la section comptait 4 cartes séparées, réduites à 2 cartes `.stat-span-2`
+  de 2 colonnes chacune, même principe que la carte Torrents
+  (`render_torrents_files_card()`). Chaque carte porte un titre ("Débits"/
+  "Ratios") ; les libellés de colonne ont perdu leur préfixe redondant avec ce
+  titre ("Débit descendant" → "Descendant", "Ratio total" → "Total").
+  `.stat-dual-gauge` doit explicitement passer `align-items: stretch` (comme
+  `.stat-torrents-files`) pour que `.stat-columns-row` occupe toute la largeur
+  de la carte — sans ça le `.stat` de base (`align-items: center`) laisse la
+  ligne se resserrer à la largeur de son contenu et `justify-content` n'a plus
+  d'espace à répartir, un piège rencontré en l'écrivant. `justify-content:
+  space-evenly` (pas `space-between`) sur `.stat-columns-row` de cette carte
+  spécifiquement : demandé explicitement, l'espace entre les 2 jauges doit
+  être identique à l'espace entre chaque jauge et le bord de la carte, pas
+  concentré au milieu avec les jauges collées aux bords.
+- **Carte Torrents (`stat-torrents-files`) : contenu ancré en haut, pas centré
+  verticalement** (`justify-content: flex-start`, 2026-07-30, demandé
+  explicitement) — cohérent avec `.stat-list` (indexeurs, tâches planifiées),
+  qui suit le même principe pour un contenu de hauteur variable.
+- **Accordéon "Ratio par tracker" remplacé par une simple carte `.stat-span-3`
+  à plat dans le flux** (`tracker-card.html`, 2026-07-30, remplace
+  `tracker-details.html`/`<details>`) — placée juste avant "Tâches
+  planifiées" dans `build_stats_section()` : comme les rangées précédentes
+  remplissent exactement 4 slots chacune, les deux tombent naturellement sur
+  la même rangée (tracker en 1re position, tâches planifiées en 2e) sans
+  logique de positionnement CSS dédiée.
+- **Cartes dépendant d'une stack arrêtée : placeholder "Arrêté" plutôt que
+  disparition silencieuse** (`render_stat_placeholder()`/
+  `stat-placeholder.html`, 2026-07-30, demandé explicitement) — Débits/
+  Ratios/Torrents/Ratio par tracker (dépendent de `vpn/transmission-vpn` via
+  `fetch_transmission_stats()`) et Indexeurs (dépend de `arr/prowlarr`, via
+  `render_indexers_card(running)`) affichent désormais un `.stat`/`.stat-span-N`
+  grisé (`opacity: .45`, même esprit que `.card-down` pour les cartes de
+  service Public/Local) avec le titre de la carte + "Arrêté", dans le même
+  gabarit de span que la carte réelle (pour ne pas décaler la mise en page
+  des cartes suivantes) — au lieu d'être simplement omises comme avant.
+  Cible précisément le cas "stack arrêtée" : si la stack tourne mais que la
+  donnée reste indisponible pour une autre raison (transmission-stats.py en
+  échec, clé API Prowlarr absente), comportement best-effort inchangé (carte
+  omise, pas de placeholder) — `render_indexers_card()` a donc changé de
+  signature (prend `running`) pour court-circuiter avant tout `docker exec`
+  si `arr/prowlarr` n'est pas dans `running`, plutôt que de tenter l'appel
+  pour rien. Disques et Tâches planifiées n'ont pas de dépendance "carte
+  entière" à une stack unique (Disques lit directement le filesystem hôte ;
+  Tâches planifiées gère déjà chaque ligne individuellement, voir
+  `require-running.sh` ci-dessus) — pas concernées par ce placeholder.
 
 ## Pièges à ne pas répéter
 
+- **Un `%` non échappé dans la partie commande d'une ligne crontab est
+  interprété par cron comme un saut de ligne** — tout ce qui suit devient
+  l'entrée standard fournie à la commande, pas la suite de la ligne de
+  commande. Rencontré le 2026-07-30 en ajoutant `date +%s > marqueur` dans
+  `scripts/crontab` (voir carte "Tâches planifiées" ci-dessus) : la
+  commande fonctionnait parfaitement testée à la main (`sh -c '...'`, ou
+  même `env -i ... /bin/sh -c '...'` pour reproduire l'environnement
+  minimal de cron), mais silencieusement `date +` sans argument sous le
+  vrai daemon cron — `%s > __DATA_ROOT__/.cron-status/<nom>` était avalé
+  comme stdin, jamais exécuté comme redirection. Aucune erreur visible
+  nulle part (`MAILTO=""` supprime le mail que cron aurait envoyé sur un
+  échec, et cron ne logue dans syslog que le lancement de la commande, pas
+  sa sortie) — repéré uniquement en comparant l'âge du marqueur après
+  plusieurs vrais ticks à ce qu'un test manuel produisait. Fix : échapper
+  en `date +\%s`. Tout futur ajout dans `scripts/crontab` utilisant `%`
+  (format `date`, ou toute autre commande) doit faire pareil — et se
+  méfier qu'un test manuel réussi ne prouve rien sur le comportement réel
+  sous cron pour cette classe de bug précise.
 - **`vpn/transmission-vpn` ne doit jamais rejoindre un second réseau
   Docker** (ex. `traefik-public`) et sa variable `LOCAL_NETWORK` ne doit
   jamais contenir son propre sous-réseau — les deux cassent le routing
@@ -891,7 +1063,8 @@ server/
 │   ├── generate-dashboard.py       # régénère dashboard/html/ — `make dashboard-refresh`
 │   ├── transmission-stats.py       # JSON ratios/débits pour generate-dashboard.py
 │   ├── torrent-cleanup.py          # TUI de nettoyage manuel torrents+library/ — `make cleanup`
-│   └── apply-arr-overrides.py      # réapplique tailles/language des 2 profils qualité principaux — `make arr-overrides`
+│   ├── apply-arr-overrides.py      # réapplique tailles/language des 2 profils qualité principaux — `make arr-overrides`
+│   └── require-running.sh          # exit 0 si les services <project>/<service> donnés tournent — guard cron + backup.sh
 ├── sauvegarde/                # non versionné — dépôt restic + mot de passe + staging
 ├── traefik/                  # socket-proxy + traefik + dashboard (page statique de liens) ; .env(ACME_EMAIL)/.example
 ├── jellyfin/                 # docker-compose.yml + override.yml(.example) pour les bibliothèques

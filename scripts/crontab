@@ -1,13 +1,22 @@
 # Installed via `make cron-install` (see Makefile) — this file is the
 # source of truth for this host's crontab. Editing the live crontab
 # directly (crontab -e) will silently be overwritten on the next install;
-# edit this file and re-run the target instead.
+# edit this file and re-run the target instead. The repo path / PUID /
+# DATA_ROOT placeholders used below (see individual job comments) are
+# substituted by `make cron-install` from this checkout's path and
+# .env.shared (cron never loads .env.shared itself) — never spell them out
+# literally in a comment here, `sed` rewrites the whole file, comments
+# included (bug hit while adding this sentence on 2026-07-30).
 MAILTO=""
 
 # Nextcloud background jobs, every 5 minutes (occ background:cron via cron.php)
 # the placeholder below is substituted by `make cron-install` with PUID from
-# .env.shared — never hardcode a literal uid here.
-*/5 * * * * docker exec -u __PUID__ nextcloud-app-1 php -f /var/www/html/cron.php
+# .env.shared — never hardcode a literal uid here. Guarded by
+# require-running.sh so this is a silent no-op (no failed docker exec, no
+# marker write) rather than an error every 5 min when the nextcloud stack
+# is stopped. Success marker consumed by scripts/generate-dashboard.py's
+# "Tâches planifiées" card (see cron_marker_age_seconds()).
+*/5 * * * * __REPO_ROOT__/scripts/require-running.sh nextcloud/app && docker exec -u __PUID__ nextcloud-app-1 php -f /var/www/html/cron.php && date +\%s > __DATA_ROOT__/.cron-status/nextcloud-cron
 
 # Weekly restic backup (Nextcloud DB dump + data + .env secrets + image
 # digest manifest) — see scripts/backup.sh
@@ -17,7 +26,10 @@ MAILTO=""
 
 # Refresh the dashboard every 5 minutes — mainly to reflect healthcheck
 # status (see CLAUDE.md) without waiting on a manual `make dashboard-refresh`.
-*/5 * * * * python3 __REPO_ROOT__/scripts/generate-dashboard.py >> __REPO_ROOT__/dashboard/refresh.log 2>&1
+# Success marker consumed by the "Tâches planifiées" card itself (see
+# cron_marker_age_seconds()) — if this cron stops firing, the marker goes
+# stale and the very next successful regeneration will show it in red.
+*/5 * * * * python3 __REPO_ROOT__/scripts/generate-dashboard.py >> __REPO_ROOT__/dashboard/refresh.log 2>&1 && date +\%s > __DATA_ROOT__/.cron-status/dashboard-refresh
 
 # Trigger recyclarr sync (manual mode, no internal scheduler — see
 # arr/docker-compose.yml) then immediately reapply the Sonarr/Radarr
@@ -26,4 +38,9 @@ MAILTO=""
 # scripts/apply-arr-overrides.py). Chained in one crontab line rather than
 # two separate schedules so the window where these settings are wrong is
 # bounded by the sync's actual duration, not an estimated safety delay.
-0 0 * * * make -C __REPO_ROOT__ recyclarr-sync >> __REPO_ROOT__/arr/recyclarr-sync.log 2>&1 && python3 __REPO_ROOT__/scripts/apply-arr-overrides.py >> __REPO_ROOT__/arr/apply-overrides.log 2>&1
+# Guarded by require-running.sh (needs both sonarr and radarr up) so this
+# is a silent no-op rather than a failed docker compose run/docker exec
+# every night when the arr stack is stopped. Success marker (only reached
+# if all prior steps exit 0) consumed by the "Tâches planifiées" card (see
+# cron_marker_age_seconds()).
+0 0 * * * __REPO_ROOT__/scripts/require-running.sh arr/sonarr arr/radarr && make -C __REPO_ROOT__ recyclarr-sync >> __REPO_ROOT__/arr/recyclarr-sync.log 2>&1 && python3 __REPO_ROOT__/scripts/apply-arr-overrides.py >> __REPO_ROOT__/arr/apply-overrides.log 2>&1 && date +\%s > __DATA_ROOT__/.cron-status/arr-overrides

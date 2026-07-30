@@ -316,6 +316,16 @@ def zone_gauge_svg(pct, zone_pct, zone_classes):
     )
 
 
+def render_stat_placeholder(title, span_class=""):
+    """Remplace une carte dont les données dépendent d'une stack arrêtée
+    (voir CLAUDE.md) — la carte reste dans le flux (même gabarit de span
+    que la carte réelle, pour ne pas décaler la mise en page des cartes
+    suivantes) plutôt que de disparaître silencieusement, comme
+    card-down.html pour les cartes de service Public/Local."""
+    classes = " ".join(c for c in ("stat", span_class, "stat-placeholder") if c)
+    return render("stat-placeholder.html", classes=classes, title=title)
+
+
 def render_stat_card(icon, value, label, value_class=""):
     return render("stat-card.html", icon=icon, value=value, label=label, value_class=value_class)
 
@@ -356,13 +366,29 @@ def render_torrents_files_card(stats):
     return render("multi-stat-columns-card.html", title="Torrents", columns=torrents_col + "\n" + files_col)
 
 
-def render_ratio_card(label, value_human, r):
+def render_gauge_column(icon, value, label, value_class=""):
+    return render("gauge-column.html", icon=icon, value=value, label=label, value_class=value_class)
+
+
+def render_dual_gauge_card(title, columns):
+    """Débits (descendant/montant) et Ratios (total/session) fusionnés
+    chacun en une seule carte à 2 colonnes de jauges (voir .stat-span-2,
+    même principe que render_torrents_files_card) — 4 cartes séparées sur
+    une même ligne prenaient trop de place pour des paires d'infos
+    étroitement liées, demandé par l'utilisateur le 2026-07-30. Un titre de
+    carte ("Débits"/"Ratios", pas seulement le libellé de chaque jauge) et
+    les 2 colonnes étalées sur toute la largeur de la carte (pas resserrées
+    au centre) — même traitement que render_torrents_files_card."""
+    return render("dual-gauge-card.html", title=title, columns="\n".join(columns))
+
+
+def render_ratio_gauge_column(label, value_human, r):
     icon = zone_gauge_svg(ratio_pct(r), RATIO_ZONE_PCT, RATIO_ZONE_CLASSES)
-    return render_stat_card(icon, value_human, label)
+    return render_gauge_column(icon, value_human, label)
 
 
-def render_speed_card(label, value, value_human, max_value):
-    return render_stat_card(gauge_svg(speed_pct(value, max_value)), value_human, label)
+def render_speed_gauge_column(label, value, value_human, max_value):
+    return render_gauge_column(gauge_svg(speed_pct(value, max_value)), value_human, label)
 
 
 def disk_fill_zone(used_pct):
@@ -425,6 +451,50 @@ BACKUP_MAX_AGE_DAYS = 7
 RESTIC_REPO_DIR = REPO_ROOT / "sauvegarde" / "restic-repo"
 RESTIC_PASSWORD_FILE = REPO_ROOT / "sauvegarde" / "restic-password"
 
+# Tâches de scripts/crontab qui écrivent un marqueur `date +\%s > ...` à la
+# fin d'une exécution réussie (le `&&` du cron ne l'atteint pas si une étape
+# précédente échoue) — voir cron_marker_age_seconds() et scripts/crontab.
+# La sauvegarde restic n'en fait pas partie : son propre check (âge réel du
+# dernier snapshot, ci-dessus) est plus fiable qu'un marqueur de fin de
+# script, qui ne prouve que "le script est allé jusqu'au bout", pas que le
+# snapshot produit est valide.
+# 4e élément : service(s) "<project>/<service>" (mêmes clés que le `running`
+# de docker_ps_set()) qui doivent tourner pour que la tâche ait un sens —
+# scripts/crontab garde chaque ligne correspondante derrière le même check
+# via scripts/require-running.sh, donc le cron lui-même ne tourne pas non
+# plus dans ce cas (voir CLAUDE.md). Liste vide = pas de stack associée,
+# toujours affichée (rafraîchissement dashboard : c'est justement lui qui
+# doit tourner pour refléter qu'une stack est arrêtée).
+CRON_STATUS_DIR_NAME = ".cron-status"
+# Marge appliquée à l'intervalle attendu de chaque tâche (voir
+# render_scheduled_tasks_card()) — sans marge, un marqueur comparé pile à
+# l'intervalle du cron (ex. 300s pour un cron */5) passe rouge à tort dès que
+# la régénération du dashboard tombe dans les toutes dernières secondes avant
+# le tick suivant (jitter du scheduler cron, ou simplement un `make
+# dashboard-refresh` manuel qui ne tombe pas pile sur le cycle) alors que la
+# tâche tourne normalement — constaté le 2026-07-30 sur "Rafraîchissement
+# dashboard" lui-même.
+CRON_MARKER_SLACK = 1.2
+SCHEDULED_TASKS = [
+    ("Nextcloud (cron.php)", "nextcloud-cron", 5 * 60, ["nextcloud/app"]),
+    ("Rafraîchissement dashboard", "dashboard-refresh", 5 * 60, []),
+    ("Recyclarr + overrides arr", "arr-overrides", 24 * 3600, ["arr/sonarr", "arr/radarr"]),
+]
+
+
+def cron_marker_age_seconds(data_root, marker_name):
+    """Âge (secondes) du marqueur écrit par un job de scripts/crontab à la
+    fin d'une exécution réussie. None si DATA_ROOT est absent ou si le
+    marqueur n'existe pas encore (jamais tourné depuis l'installation de ce
+    marqueur, ou tâche jamais terminée avec succès)."""
+    if not data_root:
+        return None
+    marker = Path(data_root) / CRON_STATUS_DIR_NAME / marker_name
+    try:
+        return datetime.now().timestamp() - int(marker.read_text().strip())
+    except (OSError, ValueError):
+        return None
+
 
 def last_backup_age_days():
     """Âge (jours, flottant) du snapshot restic le plus récent — appelle le
@@ -455,26 +525,57 @@ def last_backup_age_days():
     return (datetime.now(latest_ts.tzinfo) - latest_ts).total_seconds() / 86400
 
 
-def render_backup_age_card():
-    age_days = last_backup_age_days()
-    if age_days is None:
-        return None
-    critical = age_days > BACKUP_MAX_AGE_DAYS
-    value = "auj." if age_days < 1 else f"{int(age_days)}j"
-    return render_stat_card("", value, "Dernière sauvegarde",
-                             value_class="stat-value-critical" if critical else "stat-value-good")
+def render_scheduled_tasks_card(data_root, running):
+    """Remplace l'ancienne carte solo "Dernière sauvegarde" (ajouté le
+    2026-07-30) : une carte-liste (même gabarit que render_indexers_card)
+    listant chaque tâche planifiée connue avec un point coloré — vert si
+    elle a tourné avec succès il y a moins de temps que l'écart normal
+    entre deux occurrences de son cron, rouge sinon (jamais tournée avec
+    succès, ou plus tournée depuis plus longtemps que prévu). Une tâche
+    dont la/les stack(s) associée(s) ne tourne(nt) pas (voir
+    SCHEDULED_TASKS) est entièrement absente de la liste plutôt que rouge —
+    le cron lui-même ne tourne pas non plus dans ce cas (voir
+    scripts/require-running.sh, scripts/crontab), donc rouge serait un faux
+    signal d'échec pour un arrêt volontaire. Sauvegarde restic et
+    rafraîchissement dashboard n'ont pas de stack associée : toujours
+    affichées."""
+    items = []
+
+    backup_age_days = last_backup_age_days()
+    items.append((
+        "Sauvegarde restic",
+        backup_age_days is not None and backup_age_days <= BACKUP_MAX_AGE_DAYS * CRON_MARKER_SLACK,
+    ))
+
+    for label, marker_name, interval_seconds, required in SCHEDULED_TASKS:
+        if any(svc not in running for svc in required):
+            continue
+        age_seconds = cron_marker_age_seconds(data_root, marker_name)
+        items.append((label, age_seconds is not None and age_seconds <= interval_seconds * CRON_MARKER_SLACK))
+
+    lis = "\n".join(
+        '<li><span class="status-dot status-dot-{}"></span>{}</li>'.format(
+            "good" if ok else "critical", html.escape(label),
+        )
+        for label, ok in items
+    )
+    return render("scheduled-tasks-card.html", items=lis)
 
 
-def render_indexers_card():
+def render_indexers_card(running):
     """Liste chaque indexeur Prowlarr avec un point coloré par état (voir
     prowlarr_indexer_health()), plutôt qu'un simple compte agrégé — permet
-    de voir directement LEQUEL est en échec sans changer d'écran. None si
-    Prowlarr est injoignable/clé API absente."""
+    de voir directement LEQUEL est en échec sans changer d'écran. Placeholder
+    si arr/prowlarr est arrêté (pas de docker exec tenté pour rien) ; None
+    (carte omise, comportement best-effort inchangé) si Prowlarr tourne mais
+    reste injoignable/clé API absente pour une autre raison."""
+    if "arr/prowlarr" not in running:
+        return render_stat_placeholder("Indexeurs")
     indexers = prowlarr_indexer_health()
     if indexers is None:
         return None
     items = "\n".join(
-        '<li><span class="indexer-dot indexer-dot-{}"></span>{}</li>'.format(
+        '<li><span class="status-dot status-dot-{}"></span>{}</li>'.format(
             "good" if i["ok"] else "critical", html.escape(i["name"]),
         )
         for i in indexers
@@ -520,28 +621,49 @@ def build_stats_section(running, data_root, backup_dir):
     libellé (le titre de l'ancienne sous-section replié dedans, ex. "Débit
     descendant", voir CLAUDE.md). Débits/Ratio/Torrents viennent tous de
     transmission-stats.py (best-effort, omis ensemble si indisponible) ;
-    espace disque, dernière sauvegarde et indexeurs Prowlarr ont chacun leur
+    espace disque, tâches planifiées et indexeurs Prowlarr ont chacun leur
     propre disponibilité (best-effort indépendant, voir
-    render_disk_card()/render_backup_age_card()/render_indexers_card()).
-    Toute la section est omise seulement si aucune carte n'est disponible."""
+    render_disk_card()/render_scheduled_tasks_card()/render_indexers_card()).
+    Toute la section est omise seulement si aucune carte n'est disponible.
+    Débits/Ratios/Torrents/Ratio par tracker et Indexeurs affichent un
+    placeholder (render_stat_placeholder) plutôt que de disparaître quand
+    leur stack (vpn/transmission-vpn, arr/prowlarr) est arrêtée — demandé le
+    2026-07-30 : une carte absente ne se distinguait pas d'un problème
+    silencieux, contrairement à un arrêt volontaire explicite. Ce placeholder
+    ne couvre que le cas "stack arrêtée" : si la stack tourne mais que la
+    donnée reste indisponible pour une autre raison (transmission-stats.py en
+    échec, clé API Prowlarr absente), comportement best-effort inchangé
+    (carte omise, pas de placeholder)."""
+    vpn_running = "vpn/transmission-vpn" in running
     stats = fetch_transmission_stats(running)
 
     cards = []
-    tracker_details = ""
+    tracker_card = ""
 
-    if stats:
+    if not vpn_running:
         cards += [
-            render_speed_card("Débit descendant", stats["download_speed"], stats["download_speed_human"],
-                              stats["speed_scale"]["download_max"]),
-            render_speed_card("Débit montant", stats["upload_speed"], stats["upload_speed_human"],
-                              stats["speed_scale"]["upload_max"]),
-            render_ratio_card("Ratio total", stats["total"]["ratio_display"], stats["total"]["ratio"]),
-            render_ratio_card(f"Ratio session ({stats['session']['uptime_human']})",
-                              stats["session"]["ratio_display"], stats["session"]["ratio"]),
+            render_stat_placeholder("Débits", "stat-span-2"),
+            render_stat_placeholder("Ratios", "stat-span-2"),
+            render_stat_placeholder("Torrents", "stat-span-2"),
+        ]
+        tracker_card = render_stat_placeholder("Ratio par tracker", "stat-span-3")
+    elif stats:
+        cards += [
+            render_dual_gauge_card("Débits", [
+                render_speed_gauge_column("Descendant", stats["download_speed"],
+                                          stats["download_speed_human"], stats["speed_scale"]["download_max"]),
+                render_speed_gauge_column("Montant", stats["upload_speed"],
+                                          stats["upload_speed_human"], stats["speed_scale"]["upload_max"]),
+            ]),
+            render_dual_gauge_card("Ratios", [
+                render_ratio_gauge_column("Total", stats["total"]["ratio_display"], stats["total"]["ratio"]),
+                render_ratio_gauge_column(f"Session ({stats['session']['uptime_human']})",
+                                          stats["session"]["ratio_display"], stats["session"]["ratio"]),
+            ]),
         ]
         if stats.get("trackers"):
             rows = "\n".join(render_tracker_row(t) for t in stats["trackers"])
-            tracker_details = render("tracker-details.html", rows=rows)
+            tracker_card = render("tracker-card.html", rows=rows)
 
         # Torrents (actifs/en pause/en erreur) et Fichiers (absents/en
         # bibliothèque/en cross-seed — mêmes marqueurs BIB/ABS que
@@ -551,7 +673,7 @@ def build_stats_section(running, data_root, backup_dir):
         # par l'utilisateur.
         cards.append(render_torrents_files_card(stats))
 
-    indexers_card = render_indexers_card()
+    indexers_card = render_indexers_card(running)
     if indexers_card:
         cards.append(indexers_card)
 
@@ -559,9 +681,17 @@ def build_stats_section(running, data_root, backup_dir):
     if disk_card:
         cards.append(disk_card)
 
-    backup_age_card = render_backup_age_card()
-    if backup_age_card:
-        cards.append(backup_age_card)
+    # Carte tracker (span 3) placée juste avant "Tâches planifiées" (span 1) :
+    # les cartes précédentes remplissent exactement les rangées précédentes
+    # (4 slots chacune), donc ces deux-là tombent naturellement sur la même
+    # rangée, tracker en 1re position et tâches planifiées en 2e — demandé
+    # par l'utilisateur le 2026-07-30, voir CLAUDE.md.
+    if tracker_card:
+        cards.append(tracker_card)
+
+    scheduled_tasks_card = render_scheduled_tasks_card(data_root, running)
+    if scheduled_tasks_card:
+        cards.append(scheduled_tasks_card)
 
     if not cards:
         return ""
@@ -569,7 +699,6 @@ def build_stats_section(running, data_root, backup_dir):
     return render(
         "section-transmission.html",
         stats_flow=render("stats-flow.html", cards="\n".join(cards)),
-        tracker_details=tracker_details,
     )
 
 
@@ -608,12 +737,10 @@ def main():
 
     copy_assets()
 
-    now = datetime.now()
     page = render(
         "page.html",
         domain=domain,
-        updated=now.strftime("%Y-%m-%d %H:%M"),
-        generated_ms=str(int(now.timestamp() * 1000)),
+        updated=datetime.now().strftime("%Y-%m-%d %H:%M"),
         sections="\n".join(sections),
     )
     out_file = OUT_DIR / "index.html"

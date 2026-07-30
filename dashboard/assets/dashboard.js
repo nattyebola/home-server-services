@@ -12,19 +12,24 @@ document.querySelectorAll('.card[data-probe]').forEach(function (card) {
   probe.src = card.dataset.probe + '?t=' + Date.now();
 });
 
-// Le dashboard n'est régénéré que par cron (5 min, scripts/crontab) — passé
-// 10 min (2 cycles manqués) sans nouvelle génération, un problème silencieux
-// est plus probable qu'un simple délai normal (cron désactivé, script en
-// échec) : on repasse le timestamp en rouge. Recalculé en continu (pas
-// seulement au chargement) pour virer au rouge même si la page reste
-// ouverte sans être rechargée.
+// Contenu de la section Monitoring masqué par défaut (voir
+// .monitoring-hidden) — le titre + switch restent toujours visibles (voir
+// section-transmission.html), seul le switch montre/masque le contenu en
+// dessous. État retenu en localStorage pour survivre à un rechargement (la
+// page est régénérée par cron toutes les 5 min, perdre le choix à chaque
+// refresh serait pénible).
 (function () {
-  var updated = document.querySelector('.updated[data-generated]');
-  if (!updated) { return; }
-  var STALE_MS = 10 * 60 * 1000;
-  var check = function () {
-    updated.classList.toggle('updated-stale', Date.now() - Number(updated.dataset.generated) > STALE_MS);
+  var content = document.getElementById('monitoring-content');
+  var toggle = document.getElementById('monitoring-toggle');
+  if (!content || !toggle) { return; }
+  var STORAGE_KEY = 'dashboard-monitoring-visible';
+  var apply = function (visible) {
+    content.classList.toggle('monitoring-hidden', !visible);
+    toggle.checked = visible;
   };
-  check();
-  setInterval(check, 30000);
+  apply(localStorage.getItem(STORAGE_KEY) === '1');
+  toggle.addEventListener('change', function () {
+    localStorage.setItem(STORAGE_KEY, toggle.checked ? '1' : '0');
+    apply(toggle.checked);
+  });
 })();

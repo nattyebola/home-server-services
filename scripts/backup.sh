@@ -44,9 +44,20 @@ echo "==> dumping nextcloud DB (consistent, not a raw copy of db-next's data dir
 # dumpait silencieusement la base "postgres" (quasi vide) au lieu de "nextcloud"
 # — repéré le 2026-07-24 en testant `make restore` pour de vrai : toutes les
 # sauvegardes précédentes avaient un dump DB vide (26 lignes, 0 `COPY`).
-compose_for nextcloud exec -T db-next \
-	sh -c 'pg_dump -U "$POSTGRES_USER" "${POSTGRES_DB:-nextcloud}"' \
-	>"$STAGING_DIR/nextcloud-db.sql"
+# Best-effort (ajouté le 2026-07-30) : sans ce check, `set -e` faisait
+# échouer TOUT le script (aucun manifeste d'images, aucun restic backup) si
+# `nextcloud` était arrêté au moment du cron hebdo — pas juste sauter le
+# dump DB. Le fichier d'un run précédent est supprimé plutôt que laissé tel
+# quel : un vieux dump silencieusement re-sauvegardé comme s'il était frais
+# serait pire qu'une sauvegarde manquante.
+if "$REPO_ROOT/scripts/require-running.sh" nextcloud/db-next; then
+	compose_for nextcloud exec -T db-next \
+		sh -c 'pg_dump -U "$POSTGRES_USER" "${POSTGRES_DB:-nextcloud}"' \
+		>"$STAGING_DIR/nextcloud-db.sql"
+else
+	echo "nextcloud/db-next n'est pas démarré — dump DB ignoré pour cette sauvegarde" >&2
+	rm -f "$STAGING_DIR/nextcloud-db.sql"
+fi
 
 echo "==> recording exact image digests currently running"
 : >"$STAGING_DIR/image-manifest.txt"
