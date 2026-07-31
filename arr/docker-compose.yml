@@ -161,6 +161,58 @@ services:
         max-size: 1m
         max-file: "3"
 
+  clearr:
+    # 1er service du repo avec un build custom hors nextcloud/ (voir
+    # arr/clearr/Dockerfile — python:3-slim + dépendances FastAPI/uvicorn/
+    # Jinja2, pas d'image tierce). Web + TUI + CLI delete-by-inode partagent
+    # tous arr/clearr/app/core.py, voir ce fichier pour le détail du transport
+    # HTTP direct (plus de docker exec — l'ancien scripts/torrent-cleanup.py
+    # tournait sur l'hôte et shellait dans les conteneurs, incompatible avec
+    # rootless/cap_drop:ALL une fois lui-même conteneurisé).
+    build: ./clearr
+    restart: unless-stopped
+    user: "${PUID}:${PGID}"
+    volumes:
+      # Même mount unique que sonarr/radarr (voir leur commentaire plus haut) :
+      # clearr partage donc leur référentiel de chemins (/data_root/...) sans
+      # aucune traduction host<->conteneur à faire.
+      - ${DATA_ROOT}:/data_root
+      - /etc/localtime:/etc/localtime:ro
+    env_file:
+      - .env
+    networks:
+      - default
+      - traefik-public
+      # Atteint transmission-vpn directement par nom de conteneur, comme
+      # sonarr/radarr/prowlarr ci-dessus — plus de docker exec.
+      - vpn-internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.clearr.rule=Host(`clearr.${DOMAIN}`)"
+      - "traefik.http.routers.clearr.entrypoints=websecure"
+      - "traefik.http.routers.clearr.tls.certresolver=letsencrypt"
+      # hsts/security-headers définis une seule fois dans
+      # traefik/docker-compose.yml, voir CLAUDE.md
+      - "traefik.http.routers.clearr.middlewares=arr-lan-only,security-headers@docker,hsts@docker"
+      - "traefik.http.middlewares.arr-lan-only.ipallowlist.sourcerange=${LAN_CIDR}"
+      - "traefik.http.services.clearr.loadbalancer.server.port=8000"
+      - "traefik.docker.network=traefik-public"
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+        max-file: "3"
+
   cross-seed:
     image: ghcr.io/cross-seed/cross-seed:latest
     restart: unless-stopped

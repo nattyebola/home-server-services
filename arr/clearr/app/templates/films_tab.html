@@ -1,0 +1,45 @@
+{% include "_tabs.html" %}
+{% if message %}<div class="alert alert-{{ message_kind }} py-2">{{ message }}</div>{% endif %}
+
+<form class="d-flex mb-2" style="max-width:340px" data-live-get="/tab/films" data-live-target="#tab-content" onsubmit="return false">
+  <input type="hidden" name="sort" value="{{ sort }}">
+  <input type="hidden" name="reverse" value="{{ '1' if reverse else '0' }}">
+  <input type="search" class="form-control form-control-sm" name="filter" value="{{ filter_str }}"
+         placeholder="Filtrer par titre…" data-live autocomplete="off">
+</form>
+
+<p class="text-body-secondary small mb-2">{{ rows|length }}/{{ total }} film(s)</p>
+
+<div class="table-responsive">
+<table class="table table-sm table-hover align-middle small mb-0">
+  <thead>
+    <tr class="text-body-secondary text-uppercase" style="font-size:.72rem;">
+      {% for col in columns %}
+      <th>
+        <a href="#" class="link-body-emphasis text-decoration-none {{ 'link-warning fw-semibold' if col.active else '' }}"
+           data-get="{{ col.url }}" data-target="#tab-content">
+          {{ col.label }}{% if col.active %}{{ ' ▼' if reverse else ' ▲' }}{% endif %}
+        </a>
+      </th>
+      {% endfor %}
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for m in rows %}
+    <tr>
+      <td class="{{ 'text-success' if m.monitored else '' }}">{{ '✓' if m.monitored else '' }}</td>
+      <td class="{{ 'text-success' if m.has_file else '' }}">{{ '✓' if m.has_file else '' }}</td>
+      <td>{{ m.year }}</td>
+      <td>{{ m.size }}</td>
+      <td>{{ m.title }}</td>
+      <td class="text-end">
+        <a href="#" class="btn btn-sm btn-outline-danger" data-get="/films/{{ m.id }}/confirm?{{ qs }}" data-target="#modal-body">Supprimer</a>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="text-body-secondary py-3">Aucun film{% if filter_str %} pour ce filtre{% endif %}.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>

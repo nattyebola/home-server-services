@@ -69,8 +69,10 @@ docker exec -i arr-sonarr-1 curl -s -X PUT -H "X-Api-Key: $SONARR_KEY" \
    `episodeId`/`episodeFileId` et son `path` (vu par le conteneur Sonarr,
    ex. `/data_root/library/anime/.../S01E01...`). Traduire vers le chemin
    hôte en remplaçant le préfixe `/data_root` par `$DATA_ROOT` (lu depuis
-   `.env.shared` à la racine du repo — même logique inverse que
-   `host_to_arr_path()` dans `scripts/torrent-cleanup.py`), puis `os.stat()`
+   `.env.shared` à la racine du repo — ce skill tourne sur l'hôte, pas dans
+   un conteneur, donc a besoin du vrai chemin hôte pour `os.stat()`,
+   contrairement à `arr/clearr/app/core.py` qui partage directement le
+   mount `/data_root` de Sonarr), puis `os.stat()`
    ce chemin hôte pour capturer `(st_dev, st_ino)`. Garder cette table
    episodeId → (path host, dev, ino) en mémoire pour les étapes 6-7 —
    **indispensable de le faire avant l'import** : une fois la nouvelle
@@ -123,15 +125,17 @@ docker exec -i arr-sonarr-1 curl -s -X PUT -H "X-Api-Key: $SONARR_KEY" \
    on a le `(dev, ino)` capturé à l'étape 2) :
 
    ```bash
-   python3 scripts/torrent-cleanup.py delete-by-inode <dev> <ino>
+   docker compose --env-file .env.shared --env-file arr/.env \
+     -f arr/docker-compose.yml run --rm clearr \
+     python -m app delete-by-inode <dev> <ino>
    ```
 
-   Cette commande (voir `delete_by_inode_cli()`/`find_torrent_by_inode()`
-   dans `scripts/torrent-cleanup.py`) retrouve le torrent Transmission dont
+   Cette commande (voir `delete_by_inode()`/`find_torrent_by_inode()` dans
+   `arr/clearr/app/cli.py`/`core.py`) retrouve le torrent Transmission dont
    un fichier correspond à cet inode et le supprime avec ses données —
-   exactement l'action de suppression de `make cleanup`, mais sans passer
-   par la TUI. Contrairement à une suppression manuelle dans `make cleanup`,
-   elle **ne touche pas au monitoring Sonarr/Radarr** : l'épisode reste
+   exactement l'action de suppression du service `clearr`, mais sans passer
+   par son UI (web ou TUI). Contrairement à une suppression manuelle dans
+   `clearr`, elle **ne touche pas au monitoring Sonarr/Radarr** : l'épisode reste
    surveillé, on vient de le remplacer par une meilleure release, pas de le
    retirer. Elle affiche un JSON (`{"found": bool, "deleted": bool,
    "torrent": str|None}`) — `found: false` signifie que le torrent n'a pas
@@ -147,7 +151,7 @@ docker exec -i arr-sonarr-1 curl -s -X PUT -H "X-Api-Key: $SONARR_KEY" \
      retrouvable).
    - si des releases FR ont été grabées mais pas encore importées au moment
      du rapport : le dire, et que l'ancien torrent sera à nettoyer une fois
-     l'import fait (redemander plus tard, ou via `make cleanup` à la main).
+     l'import fait (redemander plus tard, ou via `make clearr` à la main).
    - si rien n'a été trouvé : le dire clairement plutôt que rapporter un faux
      succès — aucune release FR n'était disponible chez les indexeurs
      configurés au moment de la recherche. La série reste sur le profil VF,
@@ -164,5 +168,5 @@ docker exec -i arr-sonarr-1 curl -s -X PUT -H "X-Api-Key: $SONARR_KEY" \
 - `delete-by-inode` ne peut retrouver l'ancien torrent que si le `(dev, ino)`
   a bien été capturé à l'étape 2 avant le remplacement — un épisode ajouté
   en cours de route après cette capture (recherche relancée entre-temps,
-  etc.) ne sera pas nettoyé automatiquement, `make cleanup` reste le
+  etc.) ne sera pas nettoyé automatiquement, `make clearr` reste le
   filet de sécurité manuel dans ce cas.

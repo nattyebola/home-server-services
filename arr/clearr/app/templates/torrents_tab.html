@@ -1,0 +1,76 @@
+{% include "_tabs.html" %}
+{% if message %}<div class="alert alert-{{ message_kind }} py-2">{{ message }}</div>{% endif %}
+
+<div class="d-flex flex-wrap gap-3 align-items-center justify-content-between mb-2">
+  <form class="d-flex" style="max-width:340px" data-live-get="/tab/torrents" data-live-target="#tab-content" onsubmit="return false">
+    <input type="hidden" name="sort" value="{{ sort }}">
+    <input type="hidden" name="reverse" value="{{ '1' if reverse else '0' }}">
+    <input type="search" class="form-control form-control-sm" name="filter" value="{{ filter_str }}"
+           placeholder="Filtrer par nom…" data-live autocomplete="off">
+  </form>
+  {% if missing_count %}
+  <a href="#" class="btn btn-outline-danger btn-sm" data-get="/torrents/purge-abs/confirm?{{ qs }}" data-target="#modal-body">
+    Purger les {{ missing_count }} ABS
+  </a>
+  {% endif %}
+</div>
+
+<p class="text-body-secondary small mb-2">
+  {{ total }} torrents ({{ linked_count }} avec fichier(s) bibliothèque, {{ missing_count }} fichier manquant{% if group_count %}, {{ group_count }} groupe(s) cross-seed{% endif %})
+</p>
+
+<div class="table-responsive">
+<table class="table table-sm table-hover align-middle small mb-0">
+  <thead>
+    <tr class="text-body-secondary text-uppercase" style="font-size:.72rem;">
+      {% for col in columns %}
+      <th class="{{ 'text-nowrap' }}">
+        <a href="#" class="link-body-emphasis text-decoration-none {{ 'link-warning fw-semibold' if col.active else '' }}"
+           data-get="{{ col.url }}" data-target="#tab-content">
+          {{ col.label }}{% if col.active %}{{ ' ▼' if reverse else ' ▲' }}{% endif %}
+        </a>
+      </th>
+      {% endfor %}
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for g in groups %}
+    <tr>
+      <td class="text-success">{{ g.parent.bib }}</td>
+      <td class="{{ 'text-danger fw-semibold' if g.parent.abs_danger else '' }}">{{ g.parent.abs }}</td>
+      <td>{{ g.parent.age }}</td>
+      <td>{{ g.parent.size }}</td>
+      <td class="ratio-{{ g.parent.ratio_class }}">{{ g.parent.ratio }}</td>
+      <td class="text-body-secondary">{{ g.parent.tracker }}</td>
+      <td class="{{ 'text-danger' if g.parent.abs_danger else '' }}">
+        {{ g.parent.name }}
+        {% if g.children %}
+        <button type="button" class="btn btn-sm btn-link p-0 ms-1 align-baseline"
+                data-bs-toggle="collapse" data-bs-target=".xseed-{{ g.parent.id }}"
+                aria-expanded="{{ 'true' if g.force_open else 'false' }}">
+          <span class="badge text-bg-secondary fw-normal">{{ g.children|length }} cross-seed{{ 's' if g.children|length > 1 else '' }}</span>
+        </button>
+        {% endif %}
+      </td>
+      <td class="text-end">
+        <a href="#" class="btn btn-sm btn-outline-danger" data-get="/torrents/{{ g.parent.id }}/confirm?{{ qs }}" data-target="#modal-body">Supprimer</a>
+      </td>
+    </tr>
+    {% for c in g.children %}
+    <tr class="collapse xseed-{{ g.parent.id }} {{ 'show' if g.force_open else '' }}">
+      <td></td><td></td>
+      <td>{{ c.age }}</td>
+      <td>{{ c.size }}</td>
+      <td class="ratio-{{ c.ratio_class }}">{{ c.ratio }}</td>
+      <td class="text-body-secondary">{{ c.tracker }}</td>
+      <td class="text-body-secondary ps-4">└ {{ c.name }}</td>
+      <td></td>
+    </tr>
+    {% endfor %}
+    {% else %}
+    <tr><td colspan="8" class="text-body-secondary py-3">Aucun torrent{% if filter_str %} pour ce filtre{% endif %}.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>

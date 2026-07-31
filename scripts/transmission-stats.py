@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Interroge l'API RPC Transmission (même mécanisme docker-exec-curl que
-# torrent-cleanup.py — RPC_URL n'est joignable que depuis l'intérieur du
+# arr/clearr/app/core.py — RPC_URL n'est joignable que depuis l'intérieur du
 # conteneur, réseau vpn-internal isolé) pour produire un JSON de stats
 # consommé par generate-dashboard.py : ratio de session (depuis le dernier
 # démarrage du daemon) et ratio total (cumulatif) via session-stats, débits
@@ -8,7 +8,7 @@
 # observé sur l'historique récent — voir historical_max_speed()), nombre de
 # torrents actifs/surveillés, et ratio par tracker en sommant
 # uploadedEver/downloadedEver de chaque torrent groupé par host d'annonce
-# (noms résolus via Prowlarr — même logique que torrent-cleanup.py).
+# (noms résolus via Prowlarr — même logique que arr/clearr/app/core.py).
 #
 # Sortie best-effort : {"error": "..."} sur stdout si Transmission ou le
 # docker exec est injoignable, jamais de sortie vide ni de code de retour
@@ -59,7 +59,7 @@ TRANSMISSION_DATA_ROOT = os.path.join(DATA_ROOT, ".transmission", "data") if DAT
 
 def parse_tracker_aliases(raw):
     """TRACKER_ALIASES=domaine1=Nom1,domaine2=Nom1,... (arr/.env, voir
-    .env.example) — même mécanisme que torrent-cleanup.py, pour le
+    .env.example) — même mécanisme que arr/clearr/app/core.py, pour le
     rationale complet voir son parse_tracker_aliases()."""
     aliases = {}
     for pair in raw.split(","):
@@ -100,7 +100,7 @@ def _rpc_once(method, arguments, session_id):
 def rpc(method, arguments=None):
     """CSRF Transmission : premier appel sans session-id -> 409 avec le vrai
     id dans l'en-tête, on rejoue une fois avec (même mécanisme que
-    TransmissionClient.call dans torrent-cleanup.py)."""
+    TransmissionClient.call dans arr/clearr/app/core.py)."""
     status_line, head, body = _rpc_once(method, arguments, None)
     if " 409 " in status_line:
         session_id = None
@@ -118,7 +118,7 @@ def rpc(method, arguments=None):
 
 def base_domain(hostname):
     """Domaine de base (2 derniers labels) — voir la même fonction dans
-    torrent-cleanup.py pour le rationale complet (sous-domaines frères type
+    arr/clearr/app/core.py pour le rationale complet (sous-domaines frères type
     tracker.yggreborn.org vs www.yggreborn.org, un suffix match nu échoue)."""
     parts = hostname.split(".")
     return ".".join(parts[-2:]) if len(parts) >= 2 else hostname
@@ -255,7 +255,7 @@ def record_speed_sample(now, download_speed, upload_speed):
 
 
 def container_path_to_host(container_path):
-    """Même mécanisme que torrent-cleanup.py (dupliqué, pas partagé — ce
+    """Même mécanisme que arr/clearr/app/core.py (dupliqué, pas partagé — ce
     script est autonome, voir CLAUDE.md) : Transmission expose ses chemins
     vus par le conteneur (/data/...), à traduire vers TRANSMISSION_DATA_ROOT
     côté hôte pour pouvoir les stat()."""
@@ -266,7 +266,7 @@ def container_path_to_host(container_path):
 
 def resolved_stat(path):
     """os.stat() qui traverse un symlink cross-seed vers un chemin /data/...
-    — même fonction et même rationale que torrent-cleanup.py (piège
+    — même fonction et même rationale que arr/clearr/app/core.py (piège
     symlinks cross-seed, voir CLAUDE.md)."""
     target = path
     if os.path.islink(path):
@@ -296,7 +296,7 @@ def torrent_host_files(torrent):
 
 def build_library_index():
     """(device, inode) de tout fichier sous library/ — même construction que
-    torrent-cleanup.py (build_library_index), mais en set plutôt qu'en dict
+    arr/clearr/app/core.py (build_library_index), mais en set plutôt qu'en dict
     puisqu'on n'a besoin ici que de tester l'appartenance, pas de retrouver
     le chemin."""
     index = set()
@@ -314,7 +314,7 @@ def build_library_index():
 
 
 def is_cross_seed_entry(torrent):
-    """Même test que torrent-cleanup.py (is_cross_seed_entry) : une entrée
+    """Même test que arr/clearr/app/core.py (is_cross_seed_entry) : une entrée
     injectée par arr/cross-seed vit sous .cross-seed-links/<tracker>/...,
     pas directement sous /data/completed."""
     return "/.cross-seed-links/" in torrent.get("downloadDir", "")
@@ -323,7 +323,7 @@ def is_cross_seed_entry(torrent):
 def analyze_torrent_files(torrent, library_index):
     """linked=True si au moins un fichier du torrent a une correspondance
     library/ (hardlink) ; missing=True si AUCUN fichier n'existe plus sur
-    disque — même logique que torrent-cleanup.py (analyze_torrent_files),
+    disque — même logique que arr/clearr/app/core.py (analyze_torrent_files),
     dupliquée plutôt que partagée."""
     host_files = torrent_host_files(torrent)
     if not host_files:
@@ -355,7 +355,7 @@ def main():
     torrents_errored = sum(1 for t in torrents if t.get("error", 0) != 0)
     torrents_cross_seed = sum(1 for t in torrents if is_cross_seed_entry(t))
 
-    # BIB/ABS (voir torrent-cleanup.py) : mêmes marqueurs, une seule passe
+    # BIB/ABS (voir arr/clearr/app/core.py) : mêmes marqueurs, une seule passe
     # resolved_stat() par torrent via analyze_torrent_files().
     library_index = build_library_index()
     torrents_missing = 0

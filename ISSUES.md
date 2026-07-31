@@ -110,8 +110,8 @@ au cœur de l'architecture, pas de simples détails :
   idle, ce qui casse la sauvegarde cron du dimanche (`make cron-install`)
   et la disponibilité continue des services, sauf configuration
   supplémentaire pour empêcher l'arrêt/forcer le démarrage au boot.
-- Les hardlinks dont dépendent l'import Sonarr/Radarr et
-  `torrent-cleanup.py` (voir `CLAUDE.md`, section hardlinks) ne
+- Les hardlinks dont dépendent l'import Sonarr/Radarr et le service `clearr`
+  (voir `CLAUDE.md`, section hardlinks) ne
   fonctionnent que si `DATA_ROOT` est sur le filesystem natif WSL2 (ext4
   virtuel) — sur un disque Windows monté en `/mnt/c/...` (drvfs), ils
   cassent et on retombe sur des copies complètes.

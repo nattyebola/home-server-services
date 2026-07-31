@@ -1,0 +1,37 @@
+/* Complète Bootstrap (bootstrap.min.css), ne le remplace pas — tout ce qui
+   est un simple choix de composant (couleurs, badges, boutons, dark mode)
+   reste géré par lui. */
+
+.ratio-good { color: var(--bs-success-text-emphasis, var(--bs-success)); }
+.ratio-warn { color: var(--bs-warning-text-emphasis, var(--bs-warning)); }
+.ratio-danger { color: var(--bs-danger-text-emphasis, var(--bs-danger)); }
+
+/* Bootstrap anime .collapse via une transition de hauteur pensée pour des
+   blocs, pas des lignes de tableau (display: table-row) — sans ce fix
+   l'ouverture/fermeture d'un groupe cross-seed clignote au lieu d'un
+   show/hide net. Comportement documenté de Bootstrap sur les tr.collapse,
+   pas un bug de leur côté. */
+tr.collapsing {
+  transition: none !important;
+}
+
+/* table-sm resserre déjà le padding vertical ; on garde des cellules
+   compactes sans lettres qui se touchent, demandé explicitement. */
+.table-sm > :not(caption) > * > * {
+  padding-left: .5rem;
+  padding-right: .5rem;
+}
+
+/* Noms de torrent/release ("Some.Show.S01E01.1080p.WEB-DL.x265-GROUP.mkv")
+   sont un seul "mot" sans espace pour le navigateur — un retour à la ligne
+   forcé (overflow-wrap) coupait le mot n'importe où, moche (essayé et
+   rejeté le 2026-08-01). À la place : une seule ligne tronquée avec "…"
+   (classe Bootstrap .text-truncate posée dans les templates) + le nom
+   complet en tooltip natif (attribut title, même élément). .modal-header
+   est un flex container Bootstrap : un flex-item garde par défaut
+   min-width:auto, qui l'empêche de rétrécir sous la largeur de son contenu
+   — sans min-width:0 ici, .text-truncate n'aurait aucun effet sur
+   .modal-title (rien à tronquer tant qu'il ne rétrécit pas). */
+#modal .modal-title {
+  min-width: 0;
+}

@@ -2,7 +2,7 @@
 .claude/settings.local.json
 server.geany
 
-# Python bytecode cache (scripts/torrent-cleanup.py)
+# Python bytecode cache (scripts/*.py, arr/clearr/app/)
 __pycache__/
 *.pyc
 

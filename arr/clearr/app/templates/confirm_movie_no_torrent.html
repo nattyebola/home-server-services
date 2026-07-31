@@ -1,0 +1,23 @@
+<div class="modal-header">
+  <h5 class="modal-title text-truncate" title="Supprimer : {{ movie_title }}">Supprimer : {{ movie_title }}</h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+</div>
+<div class="modal-body">
+
+{% if has_file %}
+<div class="alert alert-warning py-2 small">
+  Aucun torrent Transmission trouvé pour ce film — Radarr supprimera lui-même son fichier ({{ size }}).
+</div>
+{% else %}
+<p class="small">Ce film n'a jamais été téléchargé — rien à supprimer sur le disque.</p>
+{% endif %}
+
+<div class="alert alert-danger py-2 small mb-0">Radarr : « {{ movie_title }} » sera retiré complètement (+ exclusion de liste).</div>
+</div>
+<form class="modal-footer">
+  <input type="hidden" name="sort" value="{{ sort }}">
+  <input type="hidden" name="reverse" value="{{ '1' if reverse else '0' }}">
+  <input type="hidden" name="filter" value="{{ filter_str }}">
+  <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
+  <button type="button" class="btn btn-danger btn-sm" data-post="/films/{{ movie_id }}/delete" data-target="#tab-content">Confirmer la suppression</button>
+</form>

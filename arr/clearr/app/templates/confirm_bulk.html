@@ -1,0 +1,21 @@
+<div class="modal-header">
+  <h5 class="modal-title">Purger {{ torrents|length }} torrent(s) au fichier disparu (marqués ABS)</h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+</div>
+<div class="modal-body">
+<ul class="small text-body-secondary" style="max-height:220px; overflow-y:auto;">
+  {% for t in torrents[:15] %}<li class="text-truncate" title="{{ t }}">{{ t }}</li>{% endfor %}
+  {% if torrents|length > 15 %}<li>... et {{ torrents|length - 15 }} de plus</li>{% endif %}
+</ul>
+<div class="alert alert-warning py-2 small mb-0">
+  Retirés de Transmission uniquement (rien à supprimer localement, les fichiers sont déjà absents
+  du disque) — vérifiez qu'aucun n'a simplement changé d'emplacement avant de confirmer.
+</div>
+</div>
+<form class="modal-footer">
+  <input type="hidden" name="sort" value="{{ sort }}">
+  <input type="hidden" name="reverse" value="{{ '1' if reverse else '0' }}">
+  <input type="hidden" name="filter" value="{{ filter_str }}">
+  <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
+  <button type="button" class="btn btn-danger btn-sm" data-post="/torrents/purge-abs" data-target="#tab-content">Confirmer la purge de {{ torrents|length }} torrent(s)</button>
+</form>

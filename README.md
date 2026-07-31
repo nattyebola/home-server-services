@@ -233,29 +233,33 @@ Détail de chaque service, schémas et rationale des choix : voir
 | `make backup` | sauvegarde restic (aussi via cron) |
 | `make restore SNAPSHOT=<id\|latest>` | restauration guidée d'un snapshot |
 | `make cron-install` | (ré)installe `scripts/crontab` comme crontab de l'hôte |
-| `make cleanup` | TUI de nettoyage torrents/bibliothèque, voir ci-dessous |
+| `make clearr` | TUI de nettoyage torrents/bibliothèque (service `clearr`), voir ci-dessous |
 | `make dashboard-refresh` | régénère le dashboard immédiatement (aussi via cron 5 min) |
 
-#### Supprimer un torrent + sa place dans la bibliothèque (`make cleanup`)
+#### Supprimer un torrent + sa place dans la bibliothèque (`clearr`)
 
 Sonarr/Radarr et Transmission ne se parlent pas à la suppression : effacer
 un film/une série dans Sonarr/Radarr ne touche pas le torrent dans le
 client, et inversement. C'est un manque connu et non résolu de
 l'écosystème *arr (aucun outil communautaire — Decluttarr, Removarr... —
-ne couvre ce cas précis). `scripts/torrent-cleanup.py` comble ce trou pour
-ce déploiement précis : un TUI qui liste les torrents Transmission (âge,
-taille, ratio, tracker — résolu via Prowlarr quand possible) et, à la
-suppression d'un torrent, retrouve et supprime aussi les fichiers
-`library/` correspondants (matching par inode — ne fonctionne que parce
-que Sonarr/Radarr importent en hardlink, voir
-[`ARCHITECTURE.md`](ARCHITECTURE.md)).
+ne couvre ce cas précis). `clearr` (`arr/clearr/`, service de la stack
+`arr`) comble ce trou pour ce déploiement précis, sous deux formes qui
+partagent la même logique :
+- **web**, à `https://clearr.${DOMAIN}` (LAN uniquement, démarré en continu
+  par `make up STACK=arr`) ;
+- **TUI**, via `make clearr` (ponctuel, même conteneur/image).
 
-Contrôles : `↑`/`↓`/`j`/`k` naviguer, `/` filtrer par nom, `s`/`S` changer
-le critère de tri ou son sens, `Entrée` supprimer avec confirmation
-(détail des fichiers touchés), `D` (majuscule) supprimer directement sans
-confirmation, `q` quitter. Le marqueur `L` (vert) signale les torrents
-ayant une correspondance dans `library/`. Un compteur en bas d'écran
-totalise l'espace libéré pendant la session.
+Liste les torrents Transmission (âge, taille, ratio, tracker — résolu via
+Prowlarr quand possible), avec un onglet Séries et un onglet Films en plus
+de l'onglet Torrents. Les torrents cross-seedés (même fichier injecté sur
+plusieurs indexeurs par `cross-seed`) sont regroupés sous un seul
+téléchargement d'origine, repliable. À la suppression d'un torrent, retrouve
+et supprime aussi les fichiers `library/` correspondants (matching par
+inode — ne fonctionne que parce que Sonarr/Radarr importent en hardlink,
+voir [`ARCHITECTURE.md`](ARCHITECTURE.md)). Depuis les onglets Séries/Films,
+un titre entier se supprime d'un coup (tous ses torrents + fichiers
+résiduels). Une purge groupée retire en une fois tous les torrents dont le
+fichier a disparu du disque (marqués ABS).
 
 **Évite le re-téléchargement automatique** : en plus des fichiers, l'outil
 retrouve (par correspondance de chemin) si le fichier supprimé correspond
@@ -268,14 +272,15 @@ prochaine recherche RSS/manuelle :
   et que tous ses fichiers connus sont supprimés, son monitoring est
   désactivé — sinon, seuls les épisodes concernés le sont, saison et
   série restant suivies pour que les prochains épisodes d'une saison en
-  cours continuent d'être recherchés.
+  cours continuent d'être recherchés. Depuis les onglets Séries/Films, une
+  série ou un film entier est retiré complètement, quel que soit l'état de
+  diffusion.
 
 Best-effort : si Sonarr/Radarr est injoignable ou que le fichier ne leur
 est pas connu (téléchargement jamais importé), ce volet est simplement
 sauté — la suppression des fichiers n'est jamais bloquée pour autant.
-Le plan d'action est affiché dans l'écran de confirmation (`Entrée`) avant
-exécution.
+Le plan d'action est affiché dans l'écran de confirmation avant exécution.
 
 Journal détaillé de chaque suppression (fichiers touchés côté Transmission,
 bibliothèque et actions Sonarr/Radarr, erreurs éventuelles) dans
-`${DATA_ROOT}/.torrent-cleanup.log`.
+`${DATA_ROOT}/.clearr.log`.

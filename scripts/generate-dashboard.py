@@ -12,7 +12,7 @@
 # templates n'ont aucune logique) et dashboard/assets/dashboard.{css,js}, ce
 # script ne fait plus que rassembler des données et les passer aux templates.
 # Zéro nouvelle dépendance (python3 déjà utilisé par transmission-stats.py et
-# torrent-cleanup.py) — et ça fait sortir jq du chemin de génération.
+# apply-arr-overrides.py) — et ça fait sortir jq du chemin de génération.
 #
 # Seule metadata non dérivable des compose files : le nom affiché et le logo
 # (dashboard/assets/logos/) associés à chaque "stack/service" — ajoutés à la
@@ -45,6 +45,7 @@ DISPLAY_NAME = {
     "arr/prowlarr": "Prowlarr",
     "arr/sonarr": "Sonarr",
     "arr/radarr": "Radarr",
+    "arr/clearr": "clearr",
     "seerr/seerr": "Seerr",
 }
 LOGO_FILE = {
@@ -54,15 +55,21 @@ LOGO_FILE = {
     "arr/prowlarr": "prowlarr.svg",
     "arr/sonarr": "sonarr.svg",
     "arr/radarr": "radarr.svg",
+    "arr/clearr": "clearr.png",
     "seerr/seerr": "seerr.svg",
 }
 # chemin d'une image réelle (200, Content-Type image/*) servie par chaque
 # service LAN-only, utilisée par dashboard.js pour détecter un blocage
 # ipallowlist (403) côté WAN — voir render_card(). /favicon.ico par défaut ;
 # transmission-proxy redirige /favicon.ico vers /transmission/web/ (du HTML,
-# pas une image), d'où l'override ci-dessous (vérifié le 2026-07-24).
+# pas une image), d'où l'override ci-dessous (vérifié le 2026-07-24). Même
+# piège sur clearr (repéré le 2026-08-01) : son appli FastAPI n'a jamais eu
+# de route /favicon.ico du tout (404) — la sonde échouait donc aussi bien en
+# LAN qu'en WAN, grisant la carte pour tout le monde. Pointé vers l'asset
+# statique servi par clearr lui-même plutôt que d'ajouter une route dédiée.
 PROBE_PATH = {
     "vpn/transmission-proxy": "/transmission/web/images/favicon.ico",
+    "arr/clearr": "/static/favicon.png",
 }
 
 RULE_KEY_RE = re.compile(r"^traefik\.http\.routers\.([^.]+)\.rule$")
@@ -666,8 +673,8 @@ def build_stats_section(running, data_root, backup_dir):
             tracker_card = render("tracker-card.html", rows=rows)
 
         # Torrents (actifs/en pause/en erreur) et Fichiers (absents/en
-        # bibliothèque/en cross-seed — mêmes marqueurs BIB/ABS que
-        # torrent-cleanup.py, voir CLAUDE.md) fusionnés en une seule carte à
+        # bibliothèque/en cross-seed — mêmes marqueurs BIB/ABS que le service
+        # clearr, arr/clearr/app/core.py, voir CLAUDE.md) fusionnés en une seule carte à
         # 2 colonnes (voir render_torrents_files_card) — 2 cartes séparées
         # avaient été essayées d'abord, jugées trop encombrantes côte à côte
         # par l'utilisateur.
@@ -705,8 +712,16 @@ def build_stats_section(running, data_root, backup_dir):
 def copy_assets():
     logos_out = OUT_DIR / "assets" / "logos"
     logos_out.mkdir(parents=True, exist_ok=True)
-    for svg in (ASSETS_SRC / "logos").glob("*.svg"):
-        shutil.copy(svg, logos_out / svg.name)
+    # *.svg et *.png (clearr.png, ajouté le 2026-08-01 — avant ça, seul le
+    # glob *.svg existait, donc un logo PNG n'était jamais copié dans le
+    # dossier servi : carré d'image cassée sur le dashboard malgré un
+    # <img src> correct dans le HTML généré). On vide d'abord logos_out : un
+    # ancien fichier resté d'un format précédent (ex. clearr.svg après son
+    # remplacement par clearr.png) ne doit pas traîner indéfiniment.
+    for stale in logos_out.iterdir():
+        stale.unlink()
+    for logo in list((ASSETS_SRC / "logos").glob("*.svg")) + list((ASSETS_SRC / "logos").glob("*.png")):
+        shutil.copy(logo, logos_out / logo.name)
     shutil.copy(ASSETS_SRC / "dashboard.css", OUT_DIR / "assets" / "dashboard.css")
     shutil.copy(ASSETS_SRC / "dashboard.js", OUT_DIR / "assets" / "dashboard.js")
     shutil.copy(ASSETS_SRC / "robots.txt", OUT_DIR / "robots.txt")

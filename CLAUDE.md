@@ -13,6 +13,102 @@ rencontrés.
 Ne pas proposer de revenir dessus sans que l'utilisateur le redemande
 explicitement :
 
+- **`scripts/torrent-cleanup.py` (ancien `make cleanup`) remplacé par le
+  service `clearr`** (`arr/clearr/`, ajouté le 2026-07-31) : nettoyage
+  manuel torrents/bibliothèque accessible en web LAN-only
+  (`clearr.${DOMAIN}`, middleware `arr-lan-only`) en plus de la TUI
+  d'origine (`make clearr`), toutes deux appuyées sur le même
+  `arr/clearr/app/core.py` — plus aucune duplication de la logique de
+  `webapp.py` (FastAPI + Jinja2 + Bootstrap 5, voir plus bas) et
+  `tui.py`/`cli.py` (curses/`delete-by-inode`, comportement inchangé)
+  importent tous `core.py`, jamais l'inverse.
+  Toute référence plus bas à `scripts/torrent-cleanup.py`/`make cleanup`
+  (nombreuses, décisions/pièges documentés avant ce refactor) reste valable
+  sur le fond — juste relire "torrent-cleanup.py" comme
+  "`arr/clearr/app/core.py`" et "`make cleanup`" comme "`clearr`" (web ou
+  TUI selon le contexte). Pas de réécriture de ces entrées une par une :
+  elles documentent des pièges/décisions déjà pris, le déplacement de
+  fichier ne les invalide pas.
+  Changement de transport, pas seulement d'emplacement : la TUI tournait
+  sur l'hôte et atteignait Transmission/Sonarr/Radarr/Prowlarr via `docker
+  exec <container> curl ...` (seule option depuis l'hôte, `vpn-internal`
+  étant un réseau Docker isolé) — `clearr` tourne maintenant lui-même en
+  conteneur, rejoint directement `vpn-internal` (externe,
+  `vpn_vpn-internal`) et le réseau `default` d'arr, et parle en HTTP direct
+  aux noms de service (`transmission-vpn:9091`, `sonarr:8989`,
+  `radarr:7878`, `prowlarr:9696`) — jamais de socket Docker monté dans le
+  conteneur (aurait cassé le modèle rootless/`cap_drop: ALL`, un accès au
+  socket Docker est root-équivalent sur l'hôte, pire que n'importe quel
+  `cap_add` déjà accepté dans ce repo). `host_to_arr_path()`/
+  `arr_path_to_host()` de l'ancien script ont disparu : `clearr` monte
+  `${DATA_ROOT}:/data_root` en lecture-écriture, exactement comme
+  sonarr/radarr (même mount unique, même raison hardlink — voir plus bas),
+  donc core.py et arr partagent déjà le même référentiel de chemins, plus
+  besoin de traduire.
+  1er service du repo avec des dépendances Python tierces (`fastapi`,
+  `uvicorn`, `jinja2`, `python-multipart` — `arr/clearr/requirements.txt`)
+  et 2e avec un build custom après `nextcloud/app`/`nextcloud/web` (`build:
+  ./clearr`, pas d'`image:` fixée, `python:3-slim` — tag flottant, cohérent
+  avec la philosophie "toujours la dernière version"). `make update
+  STACK=arr` doit donc aussi rebuilder (conditionnel étendu à `arr` en plus
+  de `nextcloud` dans le target `update`).
+  Frontend FastAPI + Jinja2, pas de HTMX vendoré malgré la discussion
+  initiale avec l'utilisateur (qui avait validé "FastAPI + HTMX") :
+  `static/clearr.js` reste un petit JS maison (data-get/data-post/
+  data-live pour la navigation par fragments) plutôt qu'une lib tierce
+  récupérée telle quelle. Même modèle de fond que prévu : chaque
+  action recharge et rerend un fragment HTML calculé from scratch côté
+  serveur (`core.load_full_state()` à chaque requête, jamais de cache ni
+  d'état en mémoire entre deux requêtes — contrairement à la TUI qui ne
+  recharge qu'au démarrage) ; mesuré acceptable (repris du diagnostic fait
+  avant implémentation) à l'échelle de cette bibliothèque, à revoir si ça
+  dérive. Erreur réseau (ex. `vpn/transmission-vpn` arrêté) rendue comme un
+  bandeau lisible (`@app.exception_handler(RuntimeError)`) plutôt qu'un 500
+  brut — la TUI avait déjà ce filet au niveau de `run()`, le web ne l'avait
+  pas nativement (chaque route peut lever indépendamment), piège rencontré
+  en testant l'image sans réseau réel derrière.
+  **Bootstrap 5.3.3 choisi comme framework CSS** (2026-07-31, après un
+  comparatif Bootstrap/Bulma/Pico.css présenté en artifact à l'utilisateur —
+  Bootstrap retenu car l'écran le plus dense de clearr, une table avec
+  badges/actions par ligne + modal, est justement le terrain où ses
+  composants prêts à l'emploi rapportent le plus). `bootstrap.min.css`/
+  `bootstrap.min.js` (pas le bundle — Popper n'est utile qu'aux dropdowns/
+  tooltips/popovers, aucun utilisé ici) vendorés dans `static/`, récupérés
+  via `curl` sur `cdn.jsdelivr.net` (pas `WebFetch`, qui peut reformater du
+  contenu non-HTML — `curl` donne les octets exacts, intégrité vérifiée par
+  un second téléchargement + comparaison sha256 avant de committer). Table
+  resserrée (`table-sm` + padding réduit dans `clearr.css`) — compacité
+  demandée explicitement. Tri (`core.sort_items`, appelé sur les torrents
+  bruts avant mise en forme dans `torrent_view()`) vérifié explicitement
+  par un test sur des données qui feraient échouer un tri fait sur la
+  chaîne affichée plutôt que la valeur brute (tailles 900Mo/1.5Go/4.0Go,
+  âges 30j/3mois/5j — un tri alphabétique sur ces chaînes donne un ordre
+  différent de l'ordre numérique réel).
+  Web : suppression toujours confirmée par une modale — le composant Modal
+  natif de Bootstrap (`bootstrap.Modal.getOrCreateInstance()`/`.show()`/
+  `.hide()` dans `clearr.js`, bouton Annuler en `data-bs-dismiss="modal"`)
+  plutôt que le `<dialog>` natif fait main de la première version : focus
+  trap/Échap/clic-sur-le-fond déjà corrects dans son JS, les réimplémenter
+  aurait été strictement moins bien. Pas d'équivalent au raccourci `D` de
+  la TUI, jugé pas nécessaire pour une UI à la souris.
+  Clic sur un en-tête de colonne trie dessus (ascendant), reclique inverse
+  le sens — remplace les raccourcis séparés `s`/`S` de la TUI, plus direct
+  au clic. Groupes cross-seed : plus de `<details>`/`<summary>` (incompatible
+  avec de vraies lignes de `<table>` Bootstrap, un `<details>` ne peut pas
+  entourer des `<tr>`) — remplacés par le composant Collapse de Bootstrap
+  sur des `<tr class="collapse">`, un bouton `data-bs-toggle="collapse"
+  data-bs-target=".xseed-<id>"` ciblant une classe (partagée par toutes les
+  lignes enfants du groupe) plutôt qu'un id unique. Piège : l'animation de
+  hauteur de Bootstrap est pensée pour des blocs, pas des `tr`
+  (`display:table-row`) — sans `tr.collapsing { transition: none }`
+  (`clearr.css`) l'ouverture/fermeture d'un groupe clignote au lieu d'un
+  show/hide net ; comportement documenté de Bootstrap sur les tableaux, pas
+  un bug de leur côté.
+  Bootstrap 5.3 ne suit pas `prefers-color-scheme` tout seul — un script en
+  tête de `page.html` pose `data-bs-theme` selon `matchMedia("(prefers-
+  color-scheme: dark)")` avant le rendu du `<body>` pour éviter un flash
+  clair→sombre.
+
 - **Rootless par container**, pas de daemon Docker rootless. `cap_drop:
   ALL` + `security_opt: no-new-privileges:true` partout ; `cap_add` ciblé
   seulement sur `db-next` et `vpn/transmission-vpn` (démarrent root puis
@@ -1080,7 +1176,7 @@ explicitement :
 ```
 server/
 ├── .env.shared(.example)     # PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT — réel gitignoré, .example versionné
-├── Makefile                  # network/up/down/config/logs/update/update-all/backup/restore/cron-install STACK=<nom> ; dashboard-refresh/cleanup/arr-overrides (sans STACK)
+├── Makefile                  # network/up/down/config/logs/update/update-all/backup/restore/cron-install STACK=<nom> ; dashboard-refresh/clearr/arr-overrides (sans STACK)
 ├── README.md                  # doc humaine : services, install
 ├── ARCHITECTURE.md            # doc humaine : architecture, choix structurants
 ├── ISSUES.md                  # doc humaine : problèmes rencontrés
@@ -1090,7 +1186,6 @@ server/
 │   ├── restore.sh                  # restauration guidée d'un snapshot restic
 │   ├── generate-dashboard.py       # régénère dashboard/html/ — `make dashboard-refresh`
 │   ├── transmission-stats.py       # JSON ratios/débits pour generate-dashboard.py
-│   ├── torrent-cleanup.py          # TUI de nettoyage manuel torrents+library/ — `make cleanup`
 │   ├── apply-arr-overrides.py      # réapplique tailles/language des 2 profils qualité principaux — `make arr-overrides`
 │   └── require-running.sh          # exit 0 si les services <project>/<service> donnés tournent — guard cron + backup.sh
 ├── sauvegarde/                # non versionné — dépôt restic + mot de passe + staging
@@ -1098,7 +1193,8 @@ server/
 ├── jellyfin/                 # docker-compose.yml + override.yml(.example) pour les bibliothèques
 ├── nextcloud/                 # db-next/app/web/news-updater ; .env/.example ; override.yml(.example)
 ├── vpn/                       # transmission-vpn (réseau isolé) + sidecar transmission-proxy ; .env/.example
-├── arr/                       # prowlarr/sonarr/radarr/cross-seed/recyclarr ; .env/.example ; override.yml.example (optionnel)
+├── arr/                       # prowlarr/sonarr/radarr/cross-seed/recyclarr/clearr ; .env/.example ; override.yml.example (optionnel)
+│   └── clearr/                 # web (FastAPI/Jinja2/Bootstrap) + TUI + CLI delete-by-inode, un seul core.py partagé — voir plus haut
 ├── seerr/                     # recherche/requête unifiée (successeur Jellyseerr/Overseerr) ; pas de .env (config via son assistant web)
 └── dashboard/                 # templates/ (vues, string.Template) + assets (logos, css, js) + html/ généré — pas de compose file, servi par traefik/ (voir ci-dessus)
 ```

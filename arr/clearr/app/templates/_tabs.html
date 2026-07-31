@@ -1,0 +1,14 @@
+<ul class="nav nav-tabs mb-3">
+  <li class="nav-item">
+    <a href="#" class="nav-link {{ 'active' if active == 'torrents' else '' }}"
+       data-get="/tab/torrents" data-target="#tab-content">Torrents</a>
+  </li>
+  <li class="nav-item">
+    <a href="#" class="nav-link {{ 'active' if active == 'series' else '' }}"
+       data-get="/tab/series" data-target="#tab-content">Séries</a>
+  </li>
+  <li class="nav-item">
+    <a href="#" class="nav-link {{ 'active' if active == 'films' else '' }}"
+       data-get="/tab/films" data-target="#tab-content">Films</a>
+  </li>
+</ul>

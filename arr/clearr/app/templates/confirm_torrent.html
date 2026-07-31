@@ -1,0 +1,48 @@
+<div class="modal-header">
+  <h5 class="modal-title text-truncate" title="Supprimer : {{ torrent_name }}">Supprimer : {{ torrent_name }}</h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+</div>
+<div class="modal-body">
+
+{% if dependents %}
+<div class="alert alert-warning py-2 small">
+  ⚠ {{ dependents|length }} torrent(s) cross-seedé(s) seront supprimés avec lui
+  (même contenu, ne libère pas d'espace supplémentaire) :
+  <ul class="mb-0 mt-1">
+    {% for d in dependents %}<li class="text-truncate" title="{{ d.name }} ({{ d.tracker }})">{{ d.name }} ({{ d.tracker }})</li>{% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<p class="mb-1 small">Fichiers Transmission ({{ host_files|length }}) — {{ host_files_size }} :</p>
+<ul class="small text-body-secondary" style="max-height:160px; overflow-y:auto;">
+  {% for f in host_files[:10] %}<li class="text-truncate" title="{{ f.name }} ({{ f.size }})">{{ f.name }} ({{ f.size }})</li>{% endfor %}
+  {% if host_files|length > 10 %}<li>... et {{ host_files|length - 10 }} de plus</li>{% endif %}
+</ul>
+
+{% if lib_matches %}
+<p class="mb-1 small">Fichiers bibliothèque correspondants ({{ lib_matches|length }}) — {{ lib_matches_size }} :</p>
+<ul class="small text-success" style="max-height:160px; overflow-y:auto;">
+  {% for f in lib_matches[:10] %}<li class="text-truncate" title="{{ f.name }} ({{ f.size }})">{{ f.name }} ({{ f.size }})</li>{% endfor %}
+  {% if lib_matches|length > 10 %}<li>... et {{ lib_matches|length - 10 }} de plus</li>{% endif %}
+</ul>
+{% else %}
+<div class="alert alert-warning py-2 small mb-2">Aucun fichier bibliothèque correspondant trouvé (jamais importé, ou déjà supprimé).</div>
+{% endif %}
+
+{% if arr_plan %}
+<p class="mb-1 small">Actions Sonarr/Radarr ({{ arr_plan|length }}) :</p>
+<ul class="small">
+  {% for a in arr_plan %}<li>{{ a }}</li>{% endfor %}
+</ul>
+{% endif %}
+
+<p class="mb-0 fw-semibold">Espace total libéré : {{ total_size }}</p>
+</div>
+<form class="modal-footer">
+  <input type="hidden" name="sort" value="{{ sort }}">
+  <input type="hidden" name="reverse" value="{{ '1' if reverse else '0' }}">
+  <input type="hidden" name="filter" value="{{ filter_str }}">
+  <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
+  <button type="button" class="btn btn-danger btn-sm" data-post="{{ post_url }}" data-target="{{ target }}">Confirmer la suppression</button>
+</form>

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<title>clearr</title>
+<link rel="icon" type="image/png" href="/static/favicon.png?v={{ v }}">
+<link rel="stylesheet" href="/static/bootstrap.min.css?v={{ v }}">
+<link rel="stylesheet" href="/static/clearr.css?v={{ v }}">
+<script>
+  // Bootstrap 5.3 ne suit pas prefers-color-scheme tout seul (il faut
+  // poser data-bs-theme soi-même) — posé avant le rendu du <body> pour
+  // éviter un flash clair->sombre.
+  (function () {
+    var mq = window.matchMedia("(prefers-color-scheme: dark)");
+    function apply() { document.documentElement.setAttribute("data-bs-theme", mq.matches ? "dark" : "light"); }
+    apply();
+    mq.addEventListener("change", apply);
+  })();
+</script>
+</head>
+<body>
+<nav class="navbar navbar-expand bg-body-tertiary border-bottom mb-3">
+  <div class="container-fluid px-3">
+    <span class="navbar-brand mb-0 fw-semibold">clearr</span>
+    <span class="text-body-secondary small d-none d-sm-inline">nettoyage Transmission / Sonarr / Radarr</span>
+  </div>
+</nav>
+<main class="container-fluid px-3" id="tab-content">
+{{ initial_content|safe }}
+</main>
+
+<div class="modal fade" id="modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content" id="modal-body"></div>
+  </div>
+</div>
+
+<script src="/static/bootstrap.min.js?v={{ v }}"></script>
+<script src="/static/clearr.js?v={{ v }}"></script>
+</body>
+</html>

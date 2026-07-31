@@ -6,7 +6,7 @@ STACKS := traefik jellyfin nextcloud vpn arr seerr
 
 UPDATE_STACKS := nextcloud vpn jellyfin arr seerr
 
-.PHONY: network up down config logs update update-all backup restore cron-install dashboard-refresh cleanup arr-overrides recyclarr-sync
+.PHONY: network up down config logs update update-all backup restore cron-install dashboard-refresh clearr arr-overrides recyclarr-sync
 
 network:
 	@docker network inspect $(NETWORK) >/dev/null 2>&1 || docker network create $(NETWORK)
@@ -36,12 +36,13 @@ logs:
 	$(compose) logs -f
 
 # pull the latest image for each service, rebuild the ones with a local
-# Dockerfile (nextcloud app/web), then recreate. nextcloud additionally needs
-# its post-upgrade occ maintenance run every time app: gets a new image.
+# Dockerfile (nextcloud app/web ; arr/clearr), then recreate. nextcloud
+# additionally needs its post-upgrade occ maintenance run every time app:
+# gets a new image.
 update: network
 	@test -n "$(STACK)" || (echo "usage: make update STACK=<$(STACKS)>" >&2 && exit 1)
 	$(compose) pull
-	@if [ "$(STACK)" = "nextcloud" ]; then $(compose) build -q; fi
+	@if [ "$(STACK)" = "nextcloud" ] || [ "$(STACK)" = "arr" ]; then $(compose) build -q; fi
 	$(compose) up -d --remove-orphans
 	@if [ "$(STACK)" = "nextcloud" ]; then \
 		$(compose) exec app ./occ app:update --all -n && \
@@ -84,11 +85,16 @@ update-all:
 dashboard-refresh:
 	@python3 scripts/generate-dashboard.py
 
-# TUI de nettoyage manuel : liste les torrents Transmission, supprime à la
+# TUI de nettoyage manuel (même nom que le sous-domaine LAN-only clearr.${DOMAIN},
+# arr/docker-compose.yml) : liste les torrents Transmission, supprime à la
 # demande le torrent (+ fichiers) et les fichiers hardlinkés correspondants
-# dans library/ — voir scripts/torrent-cleanup.py.
-cleanup:
-	@python3 scripts/torrent-cleanup.py
+# dans library/ — voir arr/clearr/app/. Web (service `clearr`, démarré en
+# continu par `make up STACK=arr`) et TUI (ce target, ponctuel) partagent la
+# même image/le même core.py ; ancien script hôte scripts/torrent-cleanup.py
+# retiré (tournait via docker exec, incompatible avec la conteneurisation).
+clearr: STACK := arr
+clearr: network
+	@$(compose) run --rm -it clearr python -m app tui
 
 # réapplique les tailles de quality definition + le champ language Radarr
 # que recyclarr ne gère pas et resynchronise à leurs défauts à chaque
