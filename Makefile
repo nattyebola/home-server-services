@@ -54,12 +54,27 @@ update: network
 
 # runs `update` for every stack that had update logic in the old ~/docker
 # script (nextcloud, vpn, jellyfin — traefik was never part of it, but can
-# still be updated on its own with `make update STACK=traefik`).
+# still be updated on its own with `make update STACK=traefik`). Keeps going
+# on a failed stack instead of aborting the rest (a stuck vpn pull shouldn't
+# block jellyfin/arr/seerr from updating), reports a pass/fail summary at
+# the end, then prunes now-dangling :latest images (every update leaves the
+# previous digest orphaned, see CLAUDE.md image-tag decision) and refreshes
+# the dashboard so it reflects the new containers without waiting for the
+# next 5-min cron tick.
 update-all:
-	@for s in $(UPDATE_STACKS); do \
+	@failed=""; \
+	for s in $(UPDATE_STACKS); do \
 		echo "\n======================== update $$s ========================\n"; \
-		$(MAKE) update STACK=$$s || exit 1; \
-	done
+		$(MAKE) update STACK=$$s || failed="$$failed $$s"; \
+	done; \
+	docker image prune -f; \
+	$(MAKE) dashboard-refresh; \
+	echo ""; \
+	if [ -n "$$failed" ]; then \
+		echo "échec(s) :$$failed" >&2; \
+		exit 1; \
+	fi; \
+	echo "tous les stacks mis à jour avec succès"
 
 # régénère dashboard/html/index.html à partir des labels Traefik réels
 # (docker compose config) et de l'état d'exécution courant (docker ps) —

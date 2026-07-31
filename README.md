@@ -229,7 +229,7 @@ Détail de chaque service, schémas et rationale des choix : voir
 | `make config STACK=<nom>` | affiche la config résolue (debug des `${VAR}`) |
 | `make logs STACK=<nom>` | logs en direct |
 | `make update STACK=<nom>` | pull + rebuild + recrée (+ maintenance `occ` si `nextcloud`) |
-| `make update-all` | `update` sur nextcloud, vpn, jellyfin, arr |
+| `make update-all` | `update` sur nextcloud, vpn, jellyfin, arr, seerr (continue même si un stack échoue, résumé + prune images + refresh dashboard à la fin) |
 | `make backup` | sauvegarde restic (aussi via cron) |
 | `make restore SNAPSHOT=<id\|latest>` | restauration guidée d'un snapshot |
 | `make cron-install` | (ré)installe `scripts/crontab` comme crontab de l'hôte |
