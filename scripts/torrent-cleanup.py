@@ -143,6 +143,12 @@ SONARR_API_KEY = _ARR_ENV.get("SONARR_API_KEY")
 def host_to_arr_path(host_path):
     return host_path.replace(DATA_ROOT, "/data_root", 1)
 
+
+# Sens inverse, utilisé par la vue Films (movieFile.path est vu par le
+# conteneur Radarr) pour retrouver le fichier réel côté hôte.
+def arr_path_to_host(container_path):
+    return container_path.replace("/data_root", DATA_ROOT, 1)
+
 # Un seul fichier de log, pensé pour du debug/maintenance a posteriori : DEBUG
 # = détail RPC/lookups (utile pour comprendre un comportement inattendu),
 # INFO = actions normales (lancement, suppressions), WARNING = anomalie
@@ -480,6 +486,153 @@ def execute_arr_plan(plan):
             logger.warning("échec d'exécution de l'action arr %r : %s", action.get("description"), e)
 
 
+# --- Vues Séries/Films : suppression d'un titre entier d'un coup (torrents +
+# fichiers + retrait complet de Sonarr/Radarr), par opposition à la vue
+# Torrents qui ne touche qu'un torrent (et, pour Sonarr, seulement l'épisode/
+# la saison correspondante, voir plan_sonarr_unmonitor). Une série "qui
+# n'intéresse plus" doit disparaître complètement, peu importe si une saison
+# est encore en cours de diffusion (ADR CLAUDE.md à venir).
+
+def fetch_series_list():
+    series = arr_api(SONARR_CONTAINER, SONARR_URL, SONARR_API_KEY, "GET", "/api/v3/series")
+    if not series:
+        return []
+    series.sort(key=lambda s: s["title"].lower())
+    return series
+
+
+def fetch_movies_list():
+    movies = arr_api(RADARR_CONTAINER, RADARR_URL, RADARR_API_KEY, "GET", "/api/v3/movie")
+    if not movies:
+        return []
+    movies.sort(key=lambda m: m["title"].lower())
+    return movies
+
+
+def find_series_torrents(all_torrents, library_index, cross_seed_child_ids, series_path):
+    """Torrents top-level (hors enfants cross-seed, cascadés avec leur parent
+    — voir build_cross_seed_groups) ayant au moins un fichier library/ sous le
+    dossier de la série. Même préfixe que plan_sonarr_unmonitor, mais sans sa
+    condition "saison terminée" : ici on veut tout supprimer, peu importe
+    l'état de diffusion."""
+    prefix = series_path + "/"
+    result = []
+    for t in all_torrents:
+        if t["id"] in cross_seed_child_ids:
+            continue
+        host_files = torrent_host_files(t)
+        lib_matches = find_library_matches(host_files, library_index)
+        if any(p.startswith(prefix) for p, _s in lib_matches):
+            result.append((t, host_files, lib_matches))
+    return result
+
+
+def find_movie_torrent(all_torrents, cross_seed_child_ids, movie_host_path):
+    """Torrent top-level dont un fichier correspond au fichier du film (même
+    (dev, inode) via resolved_stat(), donc cross-seed symlinks compris). Un
+    film n'a qu'un seul fichier : au plus un torrent top-level peut en être la
+    source, build_cross_seed_groups ayant déjà regroupé tout ce qui partage
+    cet inode sous un même parent."""
+    target_stat = resolved_stat(movie_host_path)
+    if target_stat is None:
+        return None
+    target = (target_stat.st_dev, target_stat.st_ino)
+    for t in all_torrents:
+        if t["id"] in cross_seed_child_ids:
+            continue
+        for path, _size in torrent_host_files(t):
+            st = resolved_stat(path)
+            if st and (st.st_dev, st.st_ino) == target:
+                return t
+    return None
+
+
+def bulk_delete_torrents(client, matched, all_torrents, linked_ids, missing_ids, cross_seed_groups):
+    """Supprime une liste de torrents top-level (matched: [(torrent, host_files,
+    lib_matches), ...]) sans plan Sonarr/Radarr par-torrent (arr_plan=[]) — une
+    action arr globale (retrait complet de la série/du film) suit de toute
+    façon juste après, un plan désactivation-épisode par-torrent serait
+    redondant. Ignore un torrent déjà supprimé en cascade (cross-seed d'un
+    autre élément de `matched` traité plus tôt), même logique que la purge P.
+    Un échec par torrent (ex. Transmission injoignable un instant) est capturé
+    individuellement plutôt que de laisser apply_deletion() remonter
+    l'exception et interrompre le reste du lot — même invariant "best-effort"
+    que la purge P (touche Maj+P) : un torrent en échec ne doit jamais bloquer
+    les suivants, ni empêcher le nettoyage des fichiers résiduels/le retrait
+    Sonarr-Radarr qui suit dans execute_delete_series()."""
+    freed = 0
+    deleted = 0
+    failed = 0
+    for torrent, host_files, lib_matches in matched:
+        current_ids = {t["id"] for t in all_torrents}
+        if torrent["id"] not in current_ids:
+            continue
+        try:
+            all_torrents, f = apply_deletion(client, torrent, host_files, lib_matches, [], all_torrents,
+                                              linked_ids, missing_ids, cross_seed_groups)
+        except Exception as e:
+            logger.error("échec de la suppression groupée de %r (id=%s) : %s", torrent["name"], torrent["id"], e)
+            failed += 1
+            continue
+        freed += f
+        deleted += 1
+    return all_torrents, freed, deleted, failed
+
+
+def cleanup_orphan_series_files(series_path):
+    """Supprime tout fichier restant sous le dossier de la série après le
+    passage de bulk_delete_torrents — un fichier sans torrent Transmission
+    correspondant (retiré par un autre moyen, ou jamais suivi) resterait
+    sinon orphelin malgré la promesse "tous les épisodes téléchargés"."""
+    removed = 0
+    if not os.path.isdir(series_path):
+        return removed
+    for root, _dirs, files in os.walk(series_path):
+        for name in files:
+            path = os.path.join(root, name)
+            try:
+                os.remove(path)
+                removed += 1
+                logger.info("fichier orphelin de série supprimé : %s", path)
+                prune_empty_dirs(path)
+            except OSError as e:
+                logger.warning("échec de suppression du fichier orphelin %s : %s", path, e)
+    return removed
+
+
+def execute_delete_series(client, series, matched, all_torrents, cross_seed_groups, linked_ids, missing_ids):
+    """Supprime tous les torrents connus de la série (matched, déjà calculé par
+    l'appelant pour l'écran de confirmation — pas recalculé ici, ça évite de
+    rescanner tous les torrents une deuxième fois pour le même résultat) + les
+    fichiers résiduels de son dossier, puis retire la série de Sonarr
+    (deleteFiles=false : les fichiers ont déjà été supprimés ici même, comme
+    pour un film via plan_radarr_deletion) avec exclusion de liste pour ne
+    jamais la voir revenir via un import list sync."""
+    host_path = arr_path_to_host(series["path"])  # series["path"] est vu par le conteneur Sonarr, pas par l'hôte
+    all_torrents, freed, deleted, failed = bulk_delete_torrents(client, matched, all_torrents, linked_ids,
+                                                                 missing_ids, cross_seed_groups)
+    orphan_removed = cleanup_orphan_series_files(host_path)
+    arr_api(SONARR_CONTAINER, SONARR_URL, SONARR_API_KEY, "DELETE", f"/api/v3/series/{series['id']}",
+            params={"deleteFiles": "false", "addImportListExclusion": "true"})
+    logger.info("Sonarr: série %r (id=%s) retirée complètement (+ exclusion) — %d torrent(s) supprimé(s), "
+                "%d échec(s), %d fichier(s) orphelin(s)",
+                series["title"], series["id"], deleted, failed, orphan_removed)
+    return all_torrents, freed, deleted, failed
+
+
+def execute_delete_movie_no_torrent(movie):
+    """Chemin de repli quand find_movie_torrent() ne trouve aucun torrent
+    (jamais téléchargé, ou fichier orphelin hors suivi Transmission) : Radarr
+    supprime lui-même son fichier (deleteFiles=true) puisqu'aucun torrent ne
+    s'en charge ici, contrairement au chemin normal où plan_radarr_deletion
+    laisse toujours deleteFiles=false (le fichier est déjà retiré par ce
+    script via lib_matches)."""
+    arr_api(RADARR_CONTAINER, RADARR_URL, RADARR_API_KEY, "DELETE", f"/api/v3/movie/{movie['id']}",
+            params={"deleteFiles": "true" if movie.get("hasFile") else "false", "addImportExclusion": "true"})
+    logger.info("Radarr: film %r (id=%s) retiré complètement (+ exclusion), sans torrent correspondant",
+                movie["title"], movie["id"])
+
+
 # Champs de tri disponibles (touche 's' pour passer au suivant, 'S' pour
 # inverser le sens du champ courant) — même ordre que les colonnes affichées.
 # BIB/ABS (bibliothèque/absent, ex-marqueurs 'L'/'M') lisent des attributs
@@ -498,9 +651,12 @@ SORT_FIELDS = [
 ]
 
 
-def sort_torrents(torrents, sort_idx, reverse):
-    _label, key_func = SORT_FIELDS[sort_idx]
-    torrents.sort(key=key_func, reverse=reverse)
+def sort_items(items, fields, sort_idx, reverse):
+    """Générique — utilisée avec SORT_FIELDS (vue Torrents), SERIES_SORT_FIELDS
+    ou FILMS_SORT_FIELDS (voir plus bas) : même mécanisme de tri dans les
+    trois vues, seule la liste de champs triables change."""
+    _label, key_func = fields[sort_idx]
+    items.sort(key=key_func, reverse=reverse)
 
 
 def human_age(added_ts):
@@ -774,18 +930,19 @@ def col_label(name, width, active, reverse):
     return f"{text:<{width}}"
 
 
-# Lignes réservées hors liste : en-tête + séparateur (2) + ligne session +
-# pied de page (2) — factorisé car draw_list() et la boucle de main() (pour
-# le défilement) doivent rester d'accord sur ce nombre. max(1, ...) pour
-# éviter une slice à borne négative sur un terminal minuscule.
+# Lignes réservées hors liste : onglets (1) + en-tête + séparateur (2) +
+# ligne session + pied de page (2) — factorisé car les draw_*() et la boucle
+# de main() (pour le défilement) doivent rester d'accord sur ce nombre.
+# max(1, ...) pour éviter une slice à borne négative sur un terminal minuscule.
 def visible_rows(h):
-    return max(1, h - 4)
+    return max(1, h - 5)
 
 
 def draw_list(stdscr, tree_rows, selected, offset, filter_str, linked_ids, missing_ids, sort_idx, sort_reverse,
               session_freed_bytes, session_deletions, expanded_ids, total_torrents, group_count):
     h, w = stdscr.getmaxyx()
     stdscr.erase()
+    draw_tabs(stdscr, "torrents")
     header = (
         f"{col_label('BIB', 3, sort_idx == 0, sort_reverse)} "
         f"{col_label('ABS', 3, sort_idx == 1, sort_reverse)} "
@@ -795,12 +952,12 @@ def draw_list(stdscr, tree_rows, selected, offset, filter_str, linked_ids, missi
         f"{col_label('TRACKER', 20, sort_idx == 5, sort_reverse)} "
         f"{col_label('NOM', 3, sort_idx == 6, sort_reverse)}"
     )
-    stdscr.addstr(0, 0, header[:w - 1], curses.A_BOLD | cp(COLOR_HEADER))
-    stdscr.addstr(1, 0, "-" * min(w - 1, len(header)), cp(COLOR_HEADER))
+    stdscr.addstr(1, 0, header[:w - 1], curses.A_BOLD | cp(COLOR_HEADER))
+    stdscr.addstr(2, 0, "-" * min(w - 1, len(header)), cp(COLOR_HEADER))
     visible = visible_rows(h)
     for i, tree_row in enumerate(tree_rows[offset:offset + visible]):
         t = tree_row["torrent"]
-        row = 2 + i
+        row = 3 + i
         is_selected = offset + i == selected
         linked = t["id"] in linked_ids
         missing = t["id"] in missing_ids
@@ -853,20 +1010,168 @@ def draw_list(stdscr, tree_rows, selected, offset, filter_str, linked_ids, missi
     stdscr.refresh()
 
 
+VIEWS = ["torrents", "series", "films"]
+VIEW_LABELS = {"torrents": "Torrents", "series": "Séries", "films": "Films"}
+
+# Mêmes conventions que SORT_FIELDS (torrents, plus haut) — même ordre que les
+# colonnes affichées par draw_series_list()/draw_films_list(). Défaut sur
+# TITRE (dernier champ) pour préserver le tri alphabétique déjà posé par
+# fetch_series_list()/fetch_movies_list() tant que l'utilisateur n'a pas
+# encore appuyé sur 's'.
+SERIES_SORT_FIELDS = [
+    ("MON", lambda s: bool(s.get("monitored"))),
+    ("SAISONS", lambda s: sum(1 for se in s.get("seasons", []) if se.get("monitored"))),
+    ("EPISODES", lambda s: s.get("statistics", {}).get("episodeFileCount", 0)),
+    ("TAILLE", lambda s: s.get("statistics", {}).get("sizeOnDisk", 0)),
+    ("TITRE", lambda s: s["title"].lower()),
+]
+
+FILMS_SORT_FIELDS = [
+    ("MON", lambda m: bool(m.get("monitored"))),
+    ("FICH", lambda m: bool(m.get("hasFile"))),
+    ("ANNEE", lambda m: m.get("year", 0)),
+    ("TAILLE", lambda m: m.get("sizeOnDisk", 0)),
+    ("TITRE", lambda m: m["title"].lower()),
+]
+
+
+def draw_tabs(stdscr, view_mode):
+    """Barre d'onglets sur la ligne 0 — la vue active est en vidéo inverse,
+    les autres restent dans la couleur d'en-tête normale. Dessinée par
+    chacun des draw_*() plutôt qu'une seule fois dans la boucle de main() :
+    ils appellent déjà stdscr.erase() avant, la tracer ailleurs la ferait
+    effacer aussitôt."""
+    w = stdscr.getmaxyx()[1]
+    col = 0
+    for v in VIEWS:
+        label = f" {VIEW_LABELS[v]} "
+        attr = curses.A_REVERSE | curses.A_BOLD if v == view_mode else cp(COLOR_HEADER)
+        stdscr.addstr(0, col, label[:max(0, w - 1 - col)], attr)
+        col += len(label)
+        if v != VIEWS[-1] and col < w - 1:
+            stdscr.addstr(0, col, "│", cp(COLOR_HEADER))
+            col += 1
+
+
+def filter_by_title(items, filter_str):
+    needle = filter_str.lower()
+    if not needle:
+        return items
+    return [i for i in items if needle in i["title"].lower()]
+
+
+def draw_series_list(stdscr, rows, selected, offset, filter_str, total_series, sort_idx, sort_reverse):
+    h, w = stdscr.getmaxyx()
+    stdscr.erase()
+    draw_tabs(stdscr, "series")
+    header = (
+        f"{col_label('MON', 3, sort_idx == 0, sort_reverse)} "
+        f"{col_label('SAISONS', 9, sort_idx == 1, sort_reverse)} "
+        f"{col_label('EPISODES', 10, sort_idx == 2, sort_reverse)} "
+        f"{col_label('TAILLE', 9, sort_idx == 3, sort_reverse)} "
+        f"{col_label('TITRE', 5, sort_idx == 4, sort_reverse)}"
+    )
+    stdscr.addstr(1, 0, header[:w - 1], curses.A_BOLD | cp(COLOR_HEADER))
+    stdscr.addstr(2, 0, "-" * min(w - 1, len(header)), cp(COLOR_HEADER))
+    visible = visible_rows(h)
+    for i, series in enumerate(rows[offset:offset + visible]):
+        row = 3 + i
+        is_selected = offset + i == selected
+        base_attr = curses.A_REVERSE if is_selected else curses.A_NORMAL
+        stats = series.get("statistics", {})
+        seasons = series.get("seasons", [])
+        monitored_seasons = sum(1 for s in seasons if s.get("monitored"))
+        monitored = series.get("monitored")
+
+        col = 0
+        mon_str = f"{'✓' if monitored else '':<3} "
+        mon_attr = base_attr if (is_selected or not monitored) else base_attr | cp(COLOR_LINKED)
+        stdscr.addstr(row, col, mon_str[:max(0, w - 1 - col)], mon_attr)
+        col += len(mon_str)
+        seasons_str = f"{monitored_seasons}/{len(seasons)}"
+        seasons_str = f"{seasons_str:<9} "
+        stdscr.addstr(row, col, seasons_str[:max(0, w - 1 - col)], base_attr)
+        col += len(seasons_str)
+        ep_str = f"{stats.get('episodeFileCount', 0)}/{stats.get('totalEpisodeCount', 0)}"
+        ep_str = f"{ep_str:<10} "
+        stdscr.addstr(row, col, ep_str[:max(0, w - 1 - col)], base_attr)
+        col += len(ep_str)
+        size_str = f"{human_size(stats.get('sizeOnDisk', 0)):<9} "
+        stdscr.addstr(row, col, size_str[:max(0, w - 1 - col)], base_attr)
+        col += len(size_str)
+        stdscr.addstr(row, col, series["title"][:max(0, w - 1 - col)], base_attr)
+    sort_label, _ = SERIES_SORT_FIELDS[sort_idx]
+    footer = f"{len(rows)}/{total_series} série(s)"
+    footer += f" | tri: {sort_label} {'▼' if sort_reverse else '▲'}"
+    if filter_str:
+        footer += f" | filtre: {filter_str}"
+    footer += " | Tab: vue suivante | Entrée: supprimer toute la série | ? aide"
+    stdscr.addstr(h - 1, 0, footer[:w - 1], curses.A_DIM)
+    stdscr.refresh()
+
+
+def draw_films_list(stdscr, rows, selected, offset, filter_str, total_movies, sort_idx, sort_reverse):
+    h, w = stdscr.getmaxyx()
+    stdscr.erase()
+    draw_tabs(stdscr, "films")
+    header = (
+        f"{col_label('MON', 3, sort_idx == 0, sort_reverse)} "
+        f"{col_label('FICH', 4, sort_idx == 1, sort_reverse)} "
+        f"{col_label('ANNEE', 6, sort_idx == 2, sort_reverse)} "
+        f"{col_label('TAILLE', 9, sort_idx == 3, sort_reverse)} "
+        f"{col_label('TITRE', 5, sort_idx == 4, sort_reverse)}"
+    )
+    stdscr.addstr(1, 0, header[:w - 1], curses.A_BOLD | cp(COLOR_HEADER))
+    stdscr.addstr(2, 0, "-" * min(w - 1, len(header)), cp(COLOR_HEADER))
+    visible = visible_rows(h)
+    for i, movie in enumerate(rows[offset:offset + visible]):
+        row = 3 + i
+        is_selected = offset + i == selected
+        base_attr = curses.A_REVERSE if is_selected else curses.A_NORMAL
+        monitored = movie.get("monitored")
+        has_file = movie.get("hasFile")
+
+        col = 0
+        mon_str = f"{'✓' if monitored else '':<3} "
+        mon_attr = base_attr if (is_selected or not monitored) else base_attr | cp(COLOR_LINKED)
+        stdscr.addstr(row, col, mon_str[:max(0, w - 1 - col)], mon_attr)
+        col += len(mon_str)
+        fich_str = f"{'✓' if has_file else '':<4} "
+        fich_attr = base_attr if (is_selected or not has_file) else base_attr | cp(COLOR_LINKED)
+        stdscr.addstr(row, col, fich_str[:max(0, w - 1 - col)], fich_attr)
+        col += len(fich_str)
+        year_str = f"{movie.get('year', ''):<6} "
+        stdscr.addstr(row, col, year_str[:max(0, w - 1 - col)], base_attr)
+        col += len(year_str)
+        size_str = f"{human_size(movie.get('sizeOnDisk', 0)):<9} "
+        stdscr.addstr(row, col, size_str[:max(0, w - 1 - col)], base_attr)
+        col += len(size_str)
+        stdscr.addstr(row, col, movie["title"][:max(0, w - 1 - col)], base_attr)
+    sort_label, _ = FILMS_SORT_FIELDS[sort_idx]
+    footer = f"{len(rows)}/{total_movies} film(s)"
+    footer += f" | tri: {sort_label} {'▼' if sort_reverse else '▲'}"
+    if filter_str:
+        footer += f" | filtre: {filter_str}"
+    footer += " | Tab: vue suivante | Entrée: supprimer le film | ? aide"
+    stdscr.addstr(h - 1, 0, footer[:w - 1], curses.A_DIM)
+    stdscr.refresh()
+
+
 # Un raccourci par ligne (touche, description) — source unique pour show_help(),
 # plutôt que la liste condensée qu'affichait le footer avant (devenue illisible
 # une fois 'P' ajouté, cf. discussion utilisateur du 2026-07-28).
 HELP_KEYS = [
+    ("Tab", "vue suivante (Torrents → Séries → Films)"),
     ("↑/↓, j/k", "naviguer"),
     ("PgUp/PgDown", "naviguer par page"),
     ("/", "filtrer par nom"),
-    ("s", "champ de tri suivant"),
-    ("S", "inverser le sens du tri"),
-    ("→ / l", "déplier les cross-seeds du torrent sélectionné"),
-    ("← / h", "replier"),
-    ("Entrée", "supprimer (avec confirmation)"),
-    ("D", "supprimer sans confirmation"),
-    ("P", "purger tous les torrents marqués ABS (avec confirmation)"),
+    ("s", "champ de tri suivant (de la vue courante)"),
+    ("S", "inverser le sens du tri (de la vue courante)"),
+    ("→ / l", "déplier les cross-seeds du torrent sélectionné (vue Torrents)"),
+    ("← / h", "replier (vue Torrents)"),
+    ("Entrée", "supprimer (vue Torrents) / supprimer toute la série ou le film (vues Séries/Films)"),
+    ("D", "supprimer sans confirmation, même effet qu'Entrée mais sans l'écran de confirmation (les 3 vues)"),
+    ("P", "purger tous les torrents marqués ABS (vue Torrents, avec confirmation)"),
     ("?", "cette aide"),
     ("q / Échap", "quitter"),
 ]
@@ -886,6 +1191,13 @@ def show_help(stdscr):
     lines.append(("▸/▾ devant un nom : torrent cross-seedé sur plusieurs indexeurs (même fichier",
                    curses.A_NORMAL))
     lines.append(("réel qu'un ou plusieurs autres torrents) — replié par défaut, voir →/l.",
+                   curses.A_NORMAL))
+    lines.append(("", curses.A_NORMAL))
+    lines.append(("Vues Séries/Films : Entrée supprime TOUT le titre d'un coup (tous ses torrents +",
+                   curses.A_NORMAL))
+    lines.append(("fichiers, puis retrait complet + exclusion côté Sonarr/Radarr) — pas de retour",
+                   curses.A_NORMAL))
+    lines.append(("en arrière possible autrement qu'en rajoutant le titre à la main.",
                    curses.A_NORMAL))
     lines.append(("", curses.A_NORMAL))
     lines.append(("Appuyez sur une touche pour revenir", curses.A_DIM))
@@ -988,6 +1300,79 @@ def confirm_bulk_delete(stdscr, torrents):
     return key in (ord("o"), ord("O"), ord("y"), ord("Y"))
 
 
+def confirm_delete_series(stdscr, series, matched):
+    """Écran de confirmation pour la suppression d'une série entière (vue
+    Séries) — contrairement à confirm_delete (un seul torrent, un plan
+    Sonarr/Radarr par-épisode/saison), ici l'action finale est toujours un
+    retrait complet de la série + exclusion, quel que soit l'état des
+    saisons."""
+    total_files = sum(len(host_files) for _t, host_files, _lm in matched)
+    total_size = sum(s for _t, host_files, _lm in matched for _p, s in host_files)
+    stdscr.erase()
+    h, w = stdscr.getmaxyx()
+    none_attr = curses.A_NORMAL
+    lines = [
+        (f"Supprimer toute la série : {series['title']}", curses.A_BOLD | cp(COLOR_HEADER)),
+        ("", none_attr),
+    ]
+    if matched:
+        lines.append((f"{len(matched)} torrent(s) Transmission ({total_files} fichier(s), {human_size(total_size)}) :",
+                       none_attr))
+        for t, _hf, _lm in matched[:10]:
+            lines.append((f"  - {t['name']}", none_attr))
+        if len(matched) > 10:
+            lines.append((f"  ... et {len(matched) - 10} de plus", none_attr))
+    else:
+        lines.append(("Aucun torrent Transmission trouvé pour cette série.", cp(COLOR_WARN)))
+    lines.append(("", none_attr))
+    lines.append(("Tout fichier résiduel dans le dossier de la série (sans torrent correspondant) "
+                   "sera aussi supprimé.", none_attr))
+    lines.append(("", none_attr))
+    lines.append((f'Sonarr : "{series["title"]}" sera retirée complètement (+ exclusion de liste).',
+                   curses.A_BOLD | cp(COLOR_DANGER)))
+    lines.append(("", none_attr))
+    lines.append(("Confirmer la suppression de TOUTE la série ? [o/N]", curses.A_BOLD | cp(COLOR_DANGER)))
+    for i, (line, attr) in enumerate(lines[:h - 1]):
+        stdscr.addstr(i, 0, line[:w - 1], attr)
+    stdscr.refresh()
+    curses.echo()
+    key = stdscr.getch()
+    curses.noecho()
+    return key in (ord("o"), ord("O"), ord("y"), ord("Y"))
+
+
+def confirm_delete_movie_no_torrent(stdscr, movie):
+    """Écran de confirmation pour la vue Films quand find_movie_torrent() ne
+    trouve aucun torrent (jamais téléchargé, ou fichier orphelin hors suivi) —
+    quand un torrent est trouvé, on réutilise confirm_delete() tel quel (le
+    plan_arr_actions qu'il calcule détecte déjà le film via movieFile.path)."""
+    stdscr.erase()
+    h, w = stdscr.getmaxyx()
+    none_attr = curses.A_NORMAL
+    lines = [
+        (f"Supprimer : {movie['title']}", curses.A_BOLD | cp(COLOR_HEADER)),
+        ("", none_attr),
+    ]
+    if movie.get("hasFile"):
+        lines.append(("Aucun torrent Transmission trouvé pour ce film — Radarr supprimera",
+                       cp(COLOR_WARN)))
+        lines.append((f"lui-même son fichier ({human_size(movie.get('sizeOnDisk', 0))}).", cp(COLOR_WARN)))
+    else:
+        lines.append(("Ce film n'a jamais été téléchargé — rien à supprimer sur le disque.", none_attr))
+    lines.append(("", none_attr))
+    lines.append((f'Radarr : "{movie["title"]}" sera retiré complètement (+ exclusion de liste).',
+                   curses.A_BOLD | cp(COLOR_DANGER)))
+    lines.append(("", none_attr))
+    lines.append(("Confirmer la suppression ? [o/N]", curses.A_BOLD | cp(COLOR_DANGER)))
+    for i, (line, attr) in enumerate(lines[:h - 1]):
+        stdscr.addstr(i, 0, line[:w - 1], attr)
+    stdscr.refresh()
+    curses.echo()
+    key = stdscr.getch()
+    curses.noecho()
+    return key in (ord("o"), ord("O"), ord("y"), ord("Y"))
+
+
 def do_delete(client, torrent, host_files, lib_matches, arr_plan, dependents=()):
     log_deletion(torrent, host_files, lib_matches, arr_plan)
     client.remove_torrent(torrent["id"])
@@ -1041,6 +1426,29 @@ def apply_deletion(client, torrent, host_files, lib_matches, arr_plan, all_torre
     return remaining, freed
 
 
+def delete_single_torrent(stdscr, client, torrent, library_index, cross_seed_groups, all_torrents, linked_ids,
+                           missing_ids, confirm=True):
+    """Un seul torrent, avec ou sans écran de confirmation — factorise ce que
+    la vue Torrents (Entrée = confirmé, D = direct) et la vue Films (Entrée
+    sur un film dont find_movie_torrent() a retrouvé le torrent) ont en
+    commun. Renvoie None si l'utilisateur a refusé la confirmation (confirm=
+    True uniquement, D n'en propose pas), sinon (all_torrents,
+    cross_seed_groups, cross_seed_child_ids, freed)."""
+    if confirm:
+        result = confirm_delete(stdscr, torrent, library_index, cross_seed_groups)
+        if not result:
+            return None
+        host_files, lib_matches, arr_plan = result
+    else:
+        host_files = torrent_host_files(torrent)
+        lib_matches = find_library_matches(host_files, library_index)
+        arr_plan = plan_arr_actions(lib_matches)
+    all_torrents, freed = apply_deletion(client, torrent, host_files, lib_matches, arr_plan, all_torrents,
+                                          linked_ids, missing_ids, cross_seed_groups)
+    cross_seed_groups, cross_seed_child_ids = build_cross_seed_groups(all_torrents)
+    return all_torrents, cross_seed_groups, cross_seed_child_ids, freed
+
+
 def main(stdscr):
     global COLORS_ON
     logger.info("=== démarrage torrent-cleanup (DATA_ROOT=%s) ===", DATA_ROOT)
@@ -1088,33 +1496,72 @@ def main(stdscr):
     cross_seed_groups, cross_seed_child_ids = build_cross_seed_groups(all_torrents)
     expanded_ids = set()
 
-    sort_idx, sort_reverse = 2, False  # AGE ascendant par défaut (le plus ancien en premier)
-    sort_torrents(all_torrents, sort_idx, sort_reverse)
+    # Un jeu tri (champ + sens) par vue, même principe que selected/offset/filters
+    # plus bas : les touches s/S s'appliquent à la vue courante, voir SORT_FIELDS/
+    # SERIES_SORT_FIELDS/FILMS_SORT_FIELDS. AGE ascendant par défaut pour les
+    # torrents (le plus ancien en premier) ; TITRE (dernier champ des deux
+    # autres) pour préserver le tri alphabétique déjà posé par fetch_series_list()/
+    # fetch_movies_list() tant que l'utilisateur n'a pas trié lui-même.
+    sort_idx = {"torrents": 2, "series": len(SERIES_SORT_FIELDS) - 1, "films": len(FILMS_SORT_FIELDS) - 1}
+    sort_reverse = {v: False for v in VIEWS}
+    sort_items(all_torrents, SORT_FIELDS, sort_idx["torrents"], sort_reverse["torrents"])
     logger.info("torrents avec correspondance library/ : %d/%d", len(linked_ids), len(all_torrents))
     logger.info("torrents avec fichier manquant sur disque : %d/%d", len(missing_ids), len(all_torrents))
     logger.info("groupes cross-seed détectés : %d", len(cross_seed_groups))
 
-    filter_str = ""
-    selected = 0
-    offset = 0
+    stdscr.addstr(0, 0, "Chargement des séries (Sonarr) et films (Radarr)...")
+    stdscr.clrtoeol()
+    stdscr.refresh()
+    series_list = fetch_series_list()
+    movies_list = fetch_movies_list()
+    logger.info("séries Sonarr chargées : %d — films Radarr chargés : %d", len(series_list), len(movies_list))
+
+    # Vue courante (Tab pour cycler, voir VIEWS) + un jeu sélection/défilement/
+    # filtre par vue plutôt qu'un seul partagé : changer de vue ne doit pas
+    # faire perdre la position ou le filtre en cours dans les autres.
+    view_mode = "torrents"
+    selected = {v: 0 for v in VIEWS}
+    offset = {v: 0 for v in VIEWS}
+    filters = {v: "" for v in VIEWS}
     message = ""
     message_color = COLOR_LINKED
     session_freed_bytes = 0
     session_deletions = 0
 
     while True:
-        top_level = [t for t in all_torrents if t["id"] not in cross_seed_child_ids]
-        tree_rows = build_tree(top_level, cross_seed_groups, expanded_ids, filter_str)
-        selected = max(0, min(selected, len(tree_rows) - 1)) if tree_rows else 0
+        tree_rows, rows = [], []
+        if view_mode == "torrents":
+            top_level = [t for t in all_torrents if t["id"] not in cross_seed_child_ids]
+            tree_rows = build_tree(top_level, cross_seed_groups, expanded_ids, filters["torrents"])
+            rows_len = len(tree_rows)
+        elif view_mode == "series":
+            rows = filter_by_title(series_list, filters["series"])
+            rows_len = len(rows)
+        else:
+            rows = filter_by_title(movies_list, filters["films"])
+            rows_len = len(rows)
+
+        sel = max(0, min(selected[view_mode], rows_len - 1)) if rows_len else 0
+        selected[view_mode] = sel
         h, _w = stdscr.getmaxyx()
         visible = visible_rows(h)
-        if selected < offset:
-            offset = selected
-        if selected >= offset + visible:
-            offset = selected - visible + 1
+        off = offset[view_mode]
+        if sel < off:
+            off = sel
+        if sel >= off + visible:
+            off = sel - visible + 1
+        offset[view_mode] = off
 
-        draw_list(stdscr, tree_rows, selected, offset, filter_str, linked_ids, missing_ids, sort_idx, sort_reverse,
-                  session_freed_bytes, session_deletions, expanded_ids, len(all_torrents), len(cross_seed_groups))
+        if view_mode == "torrents":
+            draw_list(stdscr, tree_rows, sel, off, filters["torrents"], linked_ids, missing_ids,
+                      sort_idx["torrents"], sort_reverse["torrents"], session_freed_bytes, session_deletions,
+                      expanded_ids, len(all_torrents), len(cross_seed_groups))
+        elif view_mode == "series":
+            draw_series_list(stdscr, rows, sel, off, filters["series"], len(series_list), sort_idx["series"],
+                              sort_reverse["series"])
+        else:
+            draw_films_list(stdscr, rows, sel, off, filters["films"], len(movies_list), sort_idx["films"],
+                             sort_reverse["films"])
         if message:
             stdscr.addstr(0, 0, message[: stdscr.getmaxyx()[1] - 1], curses.A_BOLD | cp(message_color))
             stdscr.refresh()
@@ -1125,65 +1572,85 @@ def main(stdscr):
             break
         elif key == ord("?"):
             show_help(stdscr)
+        elif key == 9:  # Tab : Torrents -> Séries -> Films -> Torrents
+            view_mode = VIEWS[(VIEWS.index(view_mode) + 1) % len(VIEWS)]
         elif key in (curses.KEY_DOWN, ord("j")):
-            selected = min(selected + 1, len(tree_rows) - 1) if tree_rows else 0
+            selected[view_mode] = min(sel + 1, rows_len - 1) if rows_len else 0
         elif key in (curses.KEY_UP, ord("k")):
-            selected = max(selected - 1, 0)
+            selected[view_mode] = max(sel - 1, 0)
         elif key == curses.KEY_NPAGE:
-            selected = min(selected + visible, len(tree_rows) - 1) if tree_rows else 0
+            selected[view_mode] = min(sel + visible, rows_len - 1) if rows_len else 0
         elif key == curses.KEY_PPAGE:
-            selected = max(selected - visible, 0)
-        elif key in (curses.KEY_RIGHT, ord("l")) and tree_rows:
+            selected[view_mode] = max(sel - visible, 0)
+        elif key in (curses.KEY_RIGHT, ord("l")) and view_mode == "torrents" and tree_rows:
             # Déplier : uniquement pertinent sur une ligne racine avec des
             # cross-seeds (child_count > 0) — no-op sinon.
-            row = tree_rows[selected]
+            row = tree_rows[sel]
             if row["child_count"] > 0:
                 expanded_ids.add(row["torrent"]["id"])
-        elif key in (curses.KEY_LEFT, ord("h")) and tree_rows:
+        elif key in (curses.KEY_LEFT, ord("h")) and view_mode == "torrents" and tree_rows:
             # Replier : sur une ligne enfant, replie le groupe parent et
             # ramène le curseur dessus plutôt que de laisser la sélection
             # retomber arbitrairement sur la ligne suivante après le
             # rétrécissement de la liste.
-            row = tree_rows[selected]
+            row = tree_rows[sel]
             collapse_id = row["torrent"]["id"] if row["depth"] == 0 else row["parent_id"]
             if collapse_id is not None:
                 expanded_ids.discard(collapse_id)
                 if row["depth"] == 1:
-                    tree_rows = build_tree(top_level, cross_seed_groups, expanded_ids, filter_str)
+                    tree_rows = build_tree(top_level, cross_seed_groups, expanded_ids, filters["torrents"])
                     ids = [r["torrent"]["id"] for r in tree_rows]
                     if collapse_id in ids:
-                        selected = ids.index(collapse_id)
+                        selected["torrents"] = ids.index(collapse_id)
         elif key == ord("/"):
             curses.echo()
             stdscr.addstr(stdscr.getmaxyx()[0] - 1, 0, "filtre> ")
             stdscr.clrtoeol()
             stdscr.refresh()
-            filter_str = stdscr.getstr(stdscr.getmaxyx()[0] - 1, 8, 60).decode(errors="replace")
+            filters[view_mode] = stdscr.getstr(stdscr.getmaxyx()[0] - 1, 8, 60).decode(errors="replace")
             curses.noecho()
-            offset = 0
+            offset[view_mode] = 0
         elif key in (ord("s"), ord("S")):
-            selected_id = tree_rows[selected]["torrent"]["id"] if tree_rows else None
-            if key == ord("s"):
-                sort_idx = (sort_idx + 1) % len(SORT_FIELDS)
-                sort_reverse = False
+            # Même mécanique dans les 3 vues : champ suivant ('s') ou sens
+            # inversé ('S') sur le tri de la vue courante — seule la liste de
+            # champs triables change (SORT_FIELDS/SERIES_SORT_FIELDS/
+            # FILMS_SORT_FIELDS).
+            if view_mode == "torrents":
+                fields, items = SORT_FIELDS, all_torrents
+            elif view_mode == "series":
+                fields, items = SERIES_SORT_FIELDS, series_list
             else:
-                sort_reverse = not sort_reverse
-            sort_torrents(all_torrents, sort_idx, sort_reverse)
-            top_level = [t for t in all_torrents if t["id"] not in cross_seed_child_ids]
-            tree_rows = build_tree(top_level, cross_seed_groups, expanded_ids, filter_str)
-            if selected_id is not None:
-                ids = [r["torrent"]["id"] for r in tree_rows]
-                selected = ids.index(selected_id) if selected_id in ids else 0
-            offset = 0
-        elif key in (curses.KEY_ENTER, 10, 13) and tree_rows:
-            torrent = tree_rows[selected]["torrent"]
+                fields, items = FILMS_SORT_FIELDS, movies_list
+            selected_id = None
+            if view_mode == "torrents" and tree_rows:
+                selected_id = tree_rows[sel]["torrent"]["id"]
+            elif view_mode != "torrents" and rows:
+                selected_id = rows[sel]["id"]
+            if key == ord("s"):
+                sort_idx[view_mode] = (sort_idx[view_mode] + 1) % len(fields)
+                sort_reverse[view_mode] = False
+            else:
+                sort_reverse[view_mode] = not sort_reverse[view_mode]
+            sort_items(items, fields, sort_idx[view_mode], sort_reverse[view_mode])
+            if view_mode == "torrents":
+                top_level = [t for t in all_torrents if t["id"] not in cross_seed_child_ids]
+                tree_rows = build_tree(top_level, cross_seed_groups, expanded_ids, filters["torrents"])
+                if selected_id is not None:
+                    ids = [r["torrent"]["id"] for r in tree_rows]
+                    selected["torrents"] = ids.index(selected_id) if selected_id in ids else 0
+            else:
+                rows = filter_by_title(items, filters[view_mode])
+                if selected_id is not None:
+                    ids = [r["id"] for r in rows]
+                    selected[view_mode] = ids.index(selected_id) if selected_id in ids else 0
+            offset[view_mode] = 0
+        elif key in (curses.KEY_ENTER, 10, 13) and view_mode == "torrents" and tree_rows:
+            torrent = tree_rows[sel]["torrent"]
             try:
-                result = confirm_delete(stdscr, torrent, library_index, cross_seed_groups)
+                result = delete_single_torrent(stdscr, client, torrent, library_index, cross_seed_groups,
+                                                all_torrents, linked_ids, missing_ids, confirm=True)
                 if result:
-                    host_files, lib_matches, arr_plan = result
-                    all_torrents, freed = apply_deletion(client, torrent, host_files, lib_matches, arr_plan,
-                                                          all_torrents, linked_ids, missing_ids, cross_seed_groups)
-                    cross_seed_groups, cross_seed_child_ids = build_cross_seed_groups(all_torrents)
+                    all_torrents, cross_seed_groups, cross_seed_child_ids, freed = result
                     session_freed_bytes += freed
                     session_deletions += 1
                     message = f"Supprimé : {torrent['name']}"
@@ -1192,18 +1659,65 @@ def main(stdscr):
                 logger.error("échec de la suppression de %r : %s", torrent["name"], e)
                 message = f"ÉCHEC (voir {LOG_PATH}) : {e}"
                 message_color = COLOR_DANGER
-        elif key == ord("D") and tree_rows:
+        elif key in (curses.KEY_ENTER, 10, 13) and view_mode == "series" and rows:
+            series = rows[sel]
+            try:
+                matched = find_series_torrents(all_torrents, library_index, cross_seed_child_ids,
+                                                arr_path_to_host(series["path"]))
+                if confirm_delete_series(stdscr, series, matched):
+                    all_torrents, freed, deleted, failed = execute_delete_series(
+                        client, series, matched, all_torrents, cross_seed_groups, linked_ids, missing_ids)
+                    cross_seed_groups, cross_seed_child_ids = build_cross_seed_groups(all_torrents)
+                    series_list = [s for s in series_list if s["id"] != series["id"]]
+                    session_freed_bytes += freed
+                    session_deletions += deleted
+                    message = f"Série supprimée : {series['title']} ({deleted} torrent(s)"
+                    message += f", {failed} échec(s)" if failed else ""
+                    message += ")"
+                    message_color = COLOR_DANGER if failed else COLOR_LINKED
+            except Exception as e:
+                logger.error("échec de la suppression de la série %r : %s", series["title"], e)
+                message = f"ÉCHEC (voir {LOG_PATH}) : {e}"
+                message_color = COLOR_DANGER
+        elif key in (curses.KEY_ENTER, 10, 13) and view_mode == "films" and rows:
+            movie = rows[sel]
+            try:
+                host_path = arr_path_to_host(movie["movieFile"]["path"]) if movie.get("hasFile") else None
+                torrent = find_movie_torrent(all_torrents, cross_seed_child_ids, host_path) if host_path else None
+                if torrent:
+                    # Même écran/mécanique qu'une suppression normale dans la
+                    # vue Torrents : plan_arr_actions() (appelé par
+                    # confirm_delete via delete_single_torrent) détecte déjà le
+                    # film via movieFile.path et produit tout seul l'action
+                    # "radarr_delete".
+                    result = delete_single_torrent(stdscr, client, torrent, library_index, cross_seed_groups,
+                                                    all_torrents, linked_ids, missing_ids, confirm=True)
+                    if result:
+                        all_torrents, cross_seed_groups, cross_seed_child_ids, freed = result
+                        movies_list = [m for m in movies_list if m["id"] != movie["id"]]
+                        session_freed_bytes += freed
+                        session_deletions += 1
+                        message = f"Film supprimé : {movie['title']}"
+                        message_color = COLOR_LINKED
+                elif confirm_delete_movie_no_torrent(stdscr, movie):
+                    execute_delete_movie_no_torrent(movie)
+                    movies_list = [m for m in movies_list if m["id"] != movie["id"]]
+                    session_deletions += 1
+                    message = f"Film supprimé : {movie['title']}"
+                    message_color = COLOR_LINKED
+            except Exception as e:
+                logger.error("échec de la suppression du film %r : %s", movie["title"], e)
+                message = f"ÉCHEC (voir {LOG_PATH}) : {e}"
+                message_color = COLOR_DANGER
+        elif key == ord("D") and view_mode == "torrents" and tree_rows:
             # Suppression directe, sans écran de confirmation (demandé
             # explicitement) — contrairement à Entrée. À utiliser en
             # connaissance de cause.
-            torrent = tree_rows[selected]["torrent"]
+            torrent = tree_rows[sel]["torrent"]
             try:
-                host_files = torrent_host_files(torrent)
-                lib_matches = find_library_matches(host_files, library_index)
-                arr_plan = plan_arr_actions(lib_matches)
-                all_torrents, freed = apply_deletion(client, torrent, host_files, lib_matches, arr_plan,
-                                                      all_torrents, linked_ids, missing_ids, cross_seed_groups)
-                cross_seed_groups, cross_seed_child_ids = build_cross_seed_groups(all_torrents)
+                all_torrents, cross_seed_groups, cross_seed_child_ids, freed = delete_single_torrent(
+                    stdscr, client, torrent, library_index, cross_seed_groups, all_torrents, linked_ids,
+                    missing_ids, confirm=False)
                 session_freed_bytes += freed
                 session_deletions += 1
                 message = f"Supprimé (sans confirmation) : {torrent['name']}"
@@ -1212,7 +1726,52 @@ def main(stdscr):
                 logger.error("échec de la suppression rapide de %r : %s", torrent["name"], e)
                 message = f"ÉCHEC (voir {LOG_PATH}) : {e}"
                 message_color = COLOR_DANGER
-        elif key == ord("P"):
+        elif key == ord("D") and view_mode == "series" and rows:
+            # Même geste que D en vue Torrents (pas d'écran de confirmation)
+            # appliqué à toute la série — même mécanique qu'Entrée sur cette
+            # vue sinon (voir execute_delete_series).
+            series = rows[sel]
+            try:
+                matched = find_series_torrents(all_torrents, library_index, cross_seed_child_ids,
+                                                arr_path_to_host(series["path"]))
+                all_torrents, freed, deleted, failed = execute_delete_series(
+                    client, series, matched, all_torrents, cross_seed_groups, linked_ids, missing_ids)
+                cross_seed_groups, cross_seed_child_ids = build_cross_seed_groups(all_torrents)
+                series_list = [s for s in series_list if s["id"] != series["id"]]
+                session_freed_bytes += freed
+                session_deletions += deleted
+                message = f"Série supprimée (sans confirmation) : {series['title']} ({deleted} torrent(s)"
+                message += f", {failed} échec(s)" if failed else ""
+                message += ")"
+                message_color = COLOR_DANGER if failed else COLOR_LINKED
+            except Exception as e:
+                logger.error("échec de la suppression rapide de la série %r : %s", series["title"], e)
+                message = f"ÉCHEC (voir {LOG_PATH}) : {e}"
+                message_color = COLOR_DANGER
+        elif key == ord("D") and view_mode == "films" and rows:
+            # Même geste que D en vue Torrents, appliqué au film — même
+            # mécanique qu'Entrée sur cette vue sinon (voir
+            # find_movie_torrent/execute_delete_movie_no_torrent).
+            movie = rows[sel]
+            try:
+                host_path = arr_path_to_host(movie["movieFile"]["path"]) if movie.get("hasFile") else None
+                torrent = find_movie_torrent(all_torrents, cross_seed_child_ids, host_path) if host_path else None
+                if torrent:
+                    all_torrents, cross_seed_groups, cross_seed_child_ids, freed = delete_single_torrent(
+                        stdscr, client, torrent, library_index, cross_seed_groups, all_torrents, linked_ids,
+                        missing_ids, confirm=False)
+                    session_freed_bytes += freed
+                else:
+                    execute_delete_movie_no_torrent(movie)
+                movies_list = [m for m in movies_list if m["id"] != movie["id"]]
+                session_deletions += 1
+                message = f"Film supprimé (sans confirmation) : {movie['title']}"
+                message_color = COLOR_LINKED
+            except Exception as e:
+                logger.error("échec de la suppression rapide du film %r : %s", movie["title"], e)
+                message = f"ÉCHEC (voir {LOG_PATH}) : {e}"
+                message_color = COLOR_DANGER
+        elif key == ord("P") and view_mode == "torrents":
             # Purge groupée de tous les torrents marqués ABS (fichier disparu
             # du disque), pas seulement ceux du filtre courant — le but est
             # un rattrapage global, comme demandé après le cas cross-seed du

@@ -122,6 +122,34 @@ explicitement :
   release, pas retiré. Sortie JSON sur stdout (`{"found", "deleted",
   "torrent"}`) pour être consommée par un appelant scripté plutôt que lue
   dans le log.
+  Vues **Séries**/**Films** (ajoutées le 2026-07-31, touche `Tab` pour
+  cycler Torrents → Séries → Films) : pour un titre qui n'intéresse plus
+  du tout, plutôt que de supprimer torrent par torrent puis gérer
+  manuellement Sonarr/Radarr. `Entrée` sur une série retrouve tous ses
+  torrents (préfixe du dossier de la série, comme `plan_sonarr_unmonitor`
+  mais sans sa condition "saison terminée" — ici on supprime tout, peu
+  importe l'état de diffusion), les supprime, nettoie aussi tout fichier
+  résiduel du dossier sans torrent correspondant
+  (`cleanup_orphan_series_files`), puis retire la série de Sonarr
+  (`DELETE /api/v3/series/{id}`, `addImportListExclusion=true`) — retrait
+  complet, pas juste `monitored=false`, symétrique avec le comportement
+  film existant (`plan_radarr_deletion`). `Entrée` sur un film réutilise
+  directement le flux de suppression normal d'un torrent quand un
+  correspond (le `radarr_delete` de `plan_arr_actions` s'en charge déjà) ;
+  sans torrent correspondant (jamais téléchargé, ou fichier orphelin hors
+  suivi), Radarr supprime lui-même son fichier (`deleteFiles=true`).
+  Piège rencontré en testant en lecture seule avant d'activer quoi que ce
+  soit côté destructif : `series["path"]` (API Sonarr) est vu par le
+  **conteneur** (`/data_root/library/...`), pas par l'hôte — sans passer
+  par `arr_path_to_host()` (symétrique de `host_to_arr_path()`) avant de
+  comparer aux chemins de `library_index`/`find_library_matches` (en
+  espace hôte), aucun torrent n'aurait jamais matché une série et
+  `cleanup_orphan_series_files` aurait cherché un dossier inexistant sur
+  le disque. Pas de jaquette dans ces vues (demandé explicitement) :
+  `curses` ne sait afficher que du texte, une vraie image nécessiterait
+  un protocole terminal (Kitty/iTerm2/Sixel, marche seulement si le
+  terminal SSH le supporte) ou une dépendance externe (`chafa`, rendu
+  approximatif) — reporté à plus tard.
 - **`dashboard` (`traefik/docker-compose.yml`) accessible en WAN comme en
   LAN** (changé le 2026-07-24, avant restreint par `ipallowlist`) — les
   sous-domaines qu'elle liste sont de toute façon publics via Certificate
