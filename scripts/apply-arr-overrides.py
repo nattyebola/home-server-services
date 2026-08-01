@@ -31,8 +31,13 @@ SONARR_SIZE_OVERRIDES = {
 }
 
 RADARR_SIZE_OVERRIDES = {
-    "WEBDL-1080p": {"minSize": 10, "preferredSize": 30, "maxSize": 45},
-    "WEBRip-1080p": {"minSize": 10, "preferredSize": 30, "maxSize": 45},
+    # maxSize WEBDL/WEBRip-1080p remonté de 45 à 50 Mo/min le 2026-08-01
+    # (demandé explicitement) : seule release WEB-DL trouvée pour "Maradona
+    # par Kusturica" (documentaire Kusturica, 90 min) pesait 4174 Mio =
+    # 46,4 Mo/min, rejetée de peu par l'ancien plafond (45). Marge donnée
+    # au-dessus de ce cas réel plutôt que collée dessus.
+    "WEBDL-1080p": {"minSize": 10, "preferredSize": 30, "maxSize": 50},
+    "WEBRip-1080p": {"minSize": 10, "preferredSize": 30, "maxSize": 50},
     "Bluray-1080p": {"minSize": 18, "preferredSize": 40, "maxSize": 60},
     "WEBDL-2160p": {"minSize": 25, "preferredSize": 65, "maxSize": 100},
     "WEBRip-2160p": {"minSize": 25, "preferredSize": 65, "maxSize": 100},

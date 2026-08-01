@@ -181,6 +181,51 @@ radarr:
         reset_unmatched_scores:
           enabled: true
         min_format_score: 0  # 1000 par défaut (guide) — bloquait tout : score qui repose sur des tags de release-group "de confiance" (BHDStudio, hallowed, WEB/Bluray/UHD Tier N) absents chez C411/Torr9
+        # HDTV activé en dernier recours (2026-08-01, demandé explicitement) —
+        # certains films (art et essai/anciens : Dead Man, Le Temps des
+        # gitans, Coffee and Cigarettes...) n'ont jamais de sortie WEB-DL/
+        # Bluray par un groupe "Tier" reconnu, seulement des encodages HDTV/
+        # HDLight ; le guide les désactive entièrement ("not wanted in
+        # profile", aucun rattrapage possible par score). quality_sort:
+        # bottom place ces deux paliers explicitement listés tout en bas de
+        # la liste de préférence (les groupes Bluray|WEB non listés restent
+        # au-dessus, "unspecified" = non affectés) — jamais préférés à un
+        # Bluray/WEB si l'un des deux existe pour le même film.
+        # Piège testé via `recyclarr sync --preview` : lister uniquement
+        # HDTV-1080p/2160p dans `qualities:` désactivait purement et
+        # simplement les groupes Bluray|WEB (2160p/1080p) du guide et
+        # déplaçait le cutoff dessus — dès qu'une propriété `qualities:` est
+        # fournie, TOUT groupe non listé explicitement repasse `enabled:
+        # false`, contrairement à ce que la doc recyclarr laisse penser
+        # ("unspecified qualities appear above/below", rien sur leur état
+        # enabled). Il faut donc redéclarer explicitement les deux groupes
+        # du guide (avec leurs sous-qualités) en plus de HDTV, dans l'ordre
+        # de préférence voulu.
+        quality_sort: bottom
+        qualities:
+          - name: Bluray|WEB-2160p
+            enabled: true
+            qualities:
+              - Bluray-2160p
+              - WEBRip-2160p
+              - WEBDL-2160p
+          - name: Bluray|WEB-1080p
+            enabled: true
+            qualities:
+              - Bluray-1080p
+              - WEBRip-1080p
+              - WEBDL-1080p
+          - name: HDTV-1080p
+            enabled: true
+          - name: HDTV-2160p
+            enabled: true
+          # DVD activé en dernier recours (2026-08-01, demandé explicitement,
+          # cas concret : "La vie est un miracle", aucune release HD/HDTV
+          # jamais sortie chez les indexeurs, seulement des DVDRip XviD
+          # ~3 Go/~26 Mo/min) — sous HDTV-2160p (encore moins préféré),
+          # jamais choisi si HDTV/Bluray/WEB existe pour le même film.
+          - name: DVD
+            enabled: true
     # Même piège que côté Sonarr (voir plus haut) mais version Radarr : le
     # guide sqp-streaming fixe bien un maxSize par palier ici (contrairement
     # au type "series"), mais preferredSize est calé quasi au max partout
@@ -252,6 +297,36 @@ radarr:
         assign_scores_to:
           - name: "[SQP] SQP-1 WEB (2160p)"
             score: 300
+      # SDR/x265-sans-HDR acceptés en dernier recours (2026-08-01, demandé
+      # explicitement) — le barème du guide (`trash_score_set`) les met à
+      # -10000 (rejet automatique quel que soit le reste, MULTi/VOSTFR/tier
+      # inclus), pensé pour du contenu mainstream où une alternative HDR/
+      # Bluray "Tier" existe presque toujours. Pour des films sans master
+      # HDR ni sortie par un groupe "Tier" connu (mêmes films que ci-dessus),
+      # ça rejetait TOUTE release existante. -300 : reste dissuasif (une
+      # release HDR/Tier l'emporte toujours, MULTi=300/VOSTFR=100 à eux
+      # seuls ne suffisent qu'à peine à compenser) sans être un mur — testé
+      # par calcul sur les releases réelles de Dead Man/Le Temps des gitans
+      # (BluRay/WEB x265 MULTi ou VOSTFR : score net positif après ce
+      # changement). Un cas non couvert : une release SDR/x265 sans aucun
+      # tag MULTi/VOSTFR reste sous min_format_score=0 (300+50+50-300<0
+      # sans le bonus langue) — accepté en connaissance de cause, aucun des
+      # films en question n'est dans ce cas.
+      - trash_ids:
+          - 9c38ebb7384dada637be8899efa68e6f  # SDR
+        assign_scores_to:
+          - name: "[SQP] SQP-1 WEB (2160p)"
+            score: -300
+      - trash_ids:
+          - 25c12f78430a3a23413652cbd1d48d77  # SDR (no WEBDL)
+        assign_scores_to:
+          - name: "[SQP] SQP-1 WEB (2160p)"
+            score: -300
+      - trash_ids:
+          - 839bea857ed2c0a8e084f3cbdbd65ecb  # x265 (no HDR/DV)
+        assign_scores_to:
+          - name: "[SQP] SQP-1 WEB (2160p)"
+            score: -300
       - trash_ids:
           - 9172b2f683f6223e3a1846427b417a3d  # VOSTFR
         assign_scores_to:
