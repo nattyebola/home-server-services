@@ -241,26 +241,54 @@ def build_prowlarr_tracker_map():
 
 
 def resolve_tracker_name(hostname, tracker_map):
+    """Renvoie (nom, officiel) — officiel=True si le hostname se rattache à
+    un indexeur réellement configuré dans Prowlarr, False s'il retombe sur le
+    hostname brut (tracker public embarqué dans le .torrent, pas un indexeur
+    qu'on interroge nous-mêmes) : voir tracker_display, qui replie tous les
+    non-officiels sous un seul libellé."""
     # TRACKER_ALIASES (arr/.env) d'abord : couvre les trackers publics
     # génériques qu'aucune API ne permet de rattacher à un indexeur (voir
     # parse_tracker_aliases). Matché en exact, jamais via base_domain — un
     # domaine public à 2 labels type eu.org serait un bien pire faux positif
     # que l'inverse.
     if hostname in TRACKER_ALIASES:
-        return TRACKER_ALIASES[hostname]
-    return tracker_map.get(base_domain(hostname), hostname)
+        return TRACKER_ALIASES[hostname], True
+    name = tracker_map.get(base_domain(hostname))
+    if name:
+        return name, True
+    return hostname, False
+
+
+OTHER_TRACKER_LABEL = "Autre"
 
 
 def tracker_display(torrent, tracker_map):
+    """Renvoie (libellé, hostnames_non_officiels) pour la colonne TRACKER.
+
+    Tout host non rattaché à un indexeur Prowlarr est replié sous un seul
+    "Autre" plutôt que listé tel quel : une release peut embarquer une
+    vingtaine de trackers publics de secours en plus du sien (constaté le
+    2026-08-02 sur un post YggReborn ancien, 24 hosts d'annonce), ce qui
+    débordait complètement la colonne — en TUI comme en web. Le détail reste
+    accessible : les hostnames bruts sont renvoyés à part pour alimenter un
+    tooltip côté web (`title=` natif — pas un tooltip Bootstrap, qui
+    nécessiterait Popper, non vendoré, voir CLAUDE.md)."""
     hosts = tracker_host(torrent)
     if hosts == "?":
-        return "?"
+        return "?", ""
     # dict.fromkeys plutôt qu'un set : dédup en préservant l'ordre. Via
     # TRACKER_ALIASES, plusieurs hosts d'un même torrent peuvent résoudre
     # vers le même nom (ex. les 5 trackers publics de Nyaa) — sans ça, la
     # colonne affichait "Nyaa.si,Nyaa.si,Nyaa.si,Nyaa.si,Nyaa.si".
-    names = (resolve_tracker_name(h, tracker_map) for h in hosts.split(","))
-    return ",".join(dict.fromkeys(names))
+    names, others = [], []
+    for host in hosts.split(","):
+        name, official = resolve_tracker_name(host, tracker_map)
+        (names if official else others).append(name)
+    labels = list(dict.fromkeys(names))
+    others = list(dict.fromkeys(others))
+    if others:
+        labels.append(OTHER_TRACKER_LABEL)
+    return ",".join(labels), ",".join(others)
 
 
 def arr_api(base_url, api_key, method, path, params=None, json_body=None):
@@ -911,7 +939,7 @@ def load_full_state():
 
     tracker_map = build_prowlarr_tracker_map()
     for t in all_torrents:
-        t["_tracker_name"] = tracker_display(t, tracker_map)
+        t["_tracker_name"], t["_tracker_others"] = tracker_display(t, tracker_map)
 
     library_index = build_library_index()
     linked_ids, missing_ids = set(), set()

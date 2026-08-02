@@ -42,7 +42,7 @@
       <td>{{ g.parent.age }}</td>
       <td>{{ g.parent.size }}</td>
       <td class="ratio-{{ g.parent.ratio_class }}">{{ g.parent.ratio }}</td>
-      <td class="text-body-secondary">{{ g.parent.tracker }}</td>
+      <td class="text-body-secondary"{% if g.parent.tracker_others %} title="{{ g.parent.tracker_others }}"{% endif %}>{{ g.parent.tracker }}</td>
       <td class="{{ 'text-danger' if g.parent.abs_danger else '' }}">
         {{ g.parent.name }}
         {% if g.children %}
@@ -63,7 +63,7 @@
       <td>{{ c.age }}</td>
       <td>{{ c.size }}</td>
       <td class="ratio-{{ c.ratio_class }}">{{ c.ratio }}</td>
-      <td class="text-body-secondary">{{ c.tracker }}</td>
+      <td class="text-body-secondary"{% if c.tracker_others %} title="{{ c.tracker_others }}"{% endif %}>{{ c.tracker }}</td>
       <td class="text-body-secondary ps-4">└ {{ c.name }}</td>
       <td></td>
     </tr>

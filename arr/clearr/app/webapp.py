@@ -85,6 +85,9 @@ def torrent_view(t, child=False):
         "ratio": f"{t['uploadRatio']:.2f}",
         "ratio_class": ratio_class(t["uploadRatio"]),
         "tracker": t.get("_tracker_name", "?"),
+        # Hostnames bruts repliés sous "Autre" par core.tracker_display —
+        # affichés en tooltip natif (title=), vide s'il n'y en a aucun.
+        "tracker_others": t.get("_tracker_others", ""),
     }
 
 

@@ -1087,6 +1087,30 @@ explicitement :
   en dédupliquant par nom résolu avant d'accumuler. Même dédup appliquée à
   `tracker_display()` dans `torrent-cleanup.py` (affichait sinon
   `"Nyaa.si,Nyaa.si,Nyaa.si,Nyaa.si,Nyaa.si"` dans la colonne TRACKER).
+  **Un tracker non rattachable à un indexeur Prowlarr est désormais traité à
+  part des indexeurs configurés** (2026-08-02, dans les deux consommateurs) :
+  `resolve_tracker_name()` renvoie `(nom, officiel)` au lieu du seul nom,
+  `officiel=False` signifiant "retombé sur le hostname brut" (tracker public
+  embarqué dans le `.torrent`, pas un indexeur qu'on interroge nous-mêmes).
+  Déclencheur : une vieille release YggReborn (post de janvier, grabbée le
+  2026-08-02) embarquait **24 hosts d'annonce** — son tracker plus une
+  vingtaine de trackers publics de secours, dont des IPs nues. Conséquences
+  côté affichage, différentes par frontend :
+  - Dashboard (`tracker-card.html`) : les lignes non officielles restent dans
+    le HTML généré mais sont masquées par CSS (`.tracker-row-other`), un
+    switch "Tous les trackers" les révèle (classe `show-all-trackers`, état
+    en `localStorage` — même mécanisme et même raison que le switch
+    Monitoring : la page est régénérée par cron toutes les 5 min). Filtrage
+    côté client, pas côté Python : la donnée reste dans le JSON de
+    `transmission-stats.py` (champ `official` par entrée).
+  - `clearr` (colonne TRACKER) : tous les non-officiels d'un même torrent
+    sont repliés sous un seul libellé `"Autre"` (`OTHER_TRACKER_LABEL`), les
+    hostnames bruts partant dans un tooltip `title=` natif — **pas** un
+    tooltip Bootstrap, qui aurait exigé Popper (non vendoré, voir plus haut).
+    `tracker_display()` renvoie donc `(libellé, hostnames_non_officiels)`.
+    Bénéficie aussi à la TUI, qui hérite du libellé court (sa colonne
+    tronquait déjà à 19 caractères, donc jamais cassée — c'était bien le web
+    le cas à corriger).
 - **Supprimer un episodefile via l'API Sonarr (`DELETE
   /api/v3/episodefile/{id}`) déclenche quasi instantanément la recherche
   automatique interne de Sonarr pour l'épisode redevenu "manquant"** —
