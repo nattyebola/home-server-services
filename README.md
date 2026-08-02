@@ -122,11 +122,12 @@ Détail de chaque service, schémas et rationale des choix : voir
    ```sh
    make up STACK=jellyfin
    ```
-   Dans l'UI Jellyfin, ajoutez deux bibliothèques : type Films →
-   `/library/film`, type Séries → `/library/series` (chemins montés en
-   lecture seule depuis `${DATA_ROOT}/library`, alimentés par Sonarr/Radarr,
-   voir étape 12). Sans ça, [Seerr](#seerr) ne peut pas savoir qu'un
-   contenu est déjà téléchargé et le proposera à tort en requête.
+   Dans l'UI Jellyfin, ajoutez trois bibliothèques : type Films →
+   `/library/film`, type Séries → `/library/series` et `/library/anime`
+   (chemins montés en lecture seule depuis `${DATA_ROOT}/library`, alimentés
+   par Sonarr/Radarr, voir étape 12 — une bibliothèque par Root Folder arr).
+   Sans ça, [Seerr](#seerr) ne peut pas savoir qu'un contenu est déjà
+   téléchargé et le proposera à tort en requête.
 
 10. **Démarrer Nextcloud**
     ```sh
@@ -155,15 +156,23 @@ Détail de chaque service, schémas et rationale des choix : voir
        Settings → General dans chaque UI), reportez-les dans `arr/.env`.
        Récupérez aussi la clé cross-seed (`docker compose ... exec
        cross-seed cross-seed api-key`) pour `CROSSSEED_API_KEY`.
-    2. `make up STACK=arr` à nouveau pour que `cross-seed`/`recyclarr`
-       redémarrent avec les vraies clés.
+    2. `make up STACK=arr` à nouveau pour que `cross-seed` redémarre avec
+       les vraies clés. (`recyclarr` n'est pas un service qui tourne en
+       continu : il est en `profiles: [manual]` et ne s'exécute qu'à la
+       demande via `make recyclarr-sync`, voir étape 13.)
     3. Configuration manuelle via les UI (normal pour cet écosystème, pas
        automatisable en compose) :
        - ajouter des indexeurs dans Prowlarr, le connecter à Sonarr/Radarr
          (Settings → Apps) ;
        - configurer Transmission comme client de téléchargement dans
          Sonarr/Radarr (host `transmission-vpn`, port `9091`) ;
-       - ajouter `/library/series` et `/library/movies` comme Root Folders ;
+       - ajouter les Root Folders : `/data_root/library/series` et
+         `/data_root/library/anime` côté Sonarr, `/data_root/library/film`
+         côté Radarr. Le préfixe `/data_root` est important : Sonarr/Radarr
+         montent **tout** `${DATA_ROOT}` en un seul volume, condition du
+         hardlink à l'import (voir [`ARCHITECTURE.md`](ARCHITECTURE.md)) —
+         Jellyfin, lui, voit la même bibliothèque sous `/library` (étape 9),
+         d'où les deux chemins différents pour les mêmes fichiers ;
        - ajouter le script `/config/custom-cross-seed-notify.sh` comme
          Connection **Custom Script** (déclenché sur Import/Upgrade) dans
          Sonarr/Radarr — pas le type "Webhook" générique, voir
@@ -189,7 +198,20 @@ Détail de chaque service, schémas et rationale des choix : voir
     copie au lieu du hardlink — fonctionnel mais plus lent et
     transitoirement plus gourmand en espace disque.
 
-13. **Démarrer et configurer Seerr** (nécessite `jellyfin` et `arr` déjà
+13. **Provisionner les profils qualité arr** (nécessite `sonarr`/`radarr`
+    démarrés et leurs clés API dans `arr/.env`) :
+    ```sh
+    make recyclarr-sync   # custom formats + profils issus des guides TRaSH
+    make arr-overrides    # réglages que recyclarr ne sait pas exprimer
+                          # + config anime versionnée (arr/profiles/)
+    ```
+    Dans cet ordre : `arr-overrides` référence par nom des custom formats
+    que `recyclarr-sync` vient de créer, et échoue explicitement s'ils
+    manquent. Ces deux commandes sont ensuite enchaînées chaque nuit par le
+    cron (étape 17) — les lancer ici évite d'attendre la première
+    exécution pour avoir des profils utilisables.
+
+14. **Démarrer et configurer Seerr** (nécessite `jellyfin` et `arr` déjà
     démarrés, la stack rejoint le réseau de `arr/`) :
     ```sh
     mkdir -p ${DATA_ROOT}/.seerr/config && sudo chown -R ${PUID}:${PGID} ${DATA_ROOT}/.seerr
@@ -209,16 +231,33 @@ Détail de chaque service, schémas et rationale des choix : voir
     & Cache) plutôt que d'attendre le cron périodique, pour que Seerr
     reconnaisse immédiatement le contenu déjà téléchargé.
 
-14. **Vérifier** : `https://www.<DOMAIN>` (Nextcloud), `https://jellyfin.<DOMAIN>`,
-    `https://transmission.<DOMAIN>` depuis le LAN, et `https://seerr.<DOMAIN>`.
+15. **Générer le dashboard** (page de liens servie par la stack `traefik`
+    sur `<DOMAIN>`/`www.<DOMAIN>`) :
+    ```sh
+    make dashboard-refresh
+    ```
+    `dashboard/html/` est généré, pas versionné — sans cette commande le
+    domaine nu renvoie une page vide jusqu'au premier passage du cron
+    (étape 17).
 
-15. **Sauvegardes** :
+16. **Vérifier** : `https://<DOMAIN>` (dashboard),
+    `https://nextcloud.<DOMAIN>`, `https://jellyfin.<DOMAIN>`,
+    `https://seerr.<DOMAIN>`, et `https://transmission.<DOMAIN>` depuis le
+    LAN.
+
+17. **Sauvegardes et tâches planifiées** :
     ```sh
     make backup          # première exécution : crée le dépôt restic et
                           # génère sauvegarde/restic-password — copiez-le
                           # ailleurs immédiatement (gestionnaire de mdp)
-    make cron-install     # programme la sauvegarde hebdo + le cron Nextcloud
+    make cron-install     # installe scripts/crontab comme crontab de l'hôte
     ```
+    `make cron-install` programme quatre tâches : le cron interne Nextcloud
+    (`cron.php`, 5 min), la sauvegarde restic (hebdomadaire, dimanche 3h),
+    la régénération du dashboard (5 min) et `recyclarr-sync` +
+    `apply-arr-overrides.py` (quotidien, minuit). Les tâches liées à une
+    stack sont protégées par `scripts/require-running.sh` : elles ne font
+    rien si la stack concernée est arrêtée.
 
 ### Maintenance courante
 
@@ -235,6 +274,8 @@ Détail de chaque service, schémas et rationale des choix : voir
 | `make cron-install` | (ré)installe `scripts/crontab` comme crontab de l'hôte |
 | `make clearr` | TUI de nettoyage torrents/bibliothèque (service `clearr`), voir ci-dessous |
 | `make dashboard-refresh` | régénère le dashboard immédiatement (aussi via cron 5 min) |
+| `make recyclarr-sync` | applique les guides TRaSH aux profils qualité arr (aussi via cron quotidien) |
+| `make arr-overrides` | réapplique les réglages hors périmètre recyclarr + provisionne `arr/profiles/` (à lancer après `recyclarr-sync`) |
 
 #### Supprimer un torrent + sa place dans la bibliothèque (`clearr`)
 
