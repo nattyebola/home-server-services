@@ -13,23 +13,31 @@ un barème de scores par Custom Format (`formatItems`), et Sonarr grab/importe
 automatiquement une release si son score bat celui du fichier déjà présent
 (`upgradeAllowed: true` sur ces deux profils).
 
-Deux profils existent pour ça, tous deux définis directement via l'API
-Sonarr (pas gérés par recyclarr — `arr/recyclarr/recyclarr.yml` ne gère que
-"WEB-2160p (Combined)" côté Sonarr, ces deux-là ne sont donc jamais
-resynchronisés/écrasés par `recyclarr sync`) :
+Deux profils existent pour ça. Ils ne sont pas gérés par recyclarr
+(`arr/recyclarr/recyclarr.yml` ne gère que "WEB-2160p (Combined)" côté
+Sonarr) mais sont versionnés dans `arr/profiles/sonarr-anime.json` et
+réappliqués par `scripts/apply-arr-overrides.py` — **toute modification
+faite uniquement via l'API sera écrasée au prochain cron** (minuit) :
+la changer aussi dans ce JSON.
 
-- **`Anime (Fansub)`** — profil par défaut des séries anime, Custom Format
-  `FRENCH` scoré à 0 (neutre, sans effet).
-- **`Anime (Fansub) VF`** — même profil, mais `FRENCH` scoré à 200 (au-dessus
-  de `MULTi`=100 et `VOSTFR`=50 déjà présents par défaut sur ce profil).
-  `VOSTFR` ici veut dire *japonais + sous-titres français* (regex
-  `VOST.*?FR`), **pas** de l'audio français — ne pas confondre les deux.
+- **`Anime (Fansub) VOSTFR`** — profil par défaut des séries anime depuis le
+  2026-08-02 (il a remplacé `Anime (Fansub)`, supprimé ce jour-là et dont les
+  14 séries ont été migrées ici). `FRENCH` y est scoré 0 (neutre),
+  `VOSTFR (hors suffixe)`=50, `MULTi`=20, `cutoffFormatScore`=20.
+- **`Anime (Fansub) VF`** — `FRENCH` scoré à 200 (au-dessus de `MULTi`=100),
+  `VOSTFR` pénalisé à −100, `cutoffFormatScore`=200.
+  `VOSTFR` veut dire *japonais + sous-titres français*, **pas** de l'audio
+  français — ne pas confondre les deux.
 
-Le Custom Format `FRENCH` (créé une fois, id à résoudre par nom, ne pas
-supposer un id fixe) matche `\b(TRUEFRENCH|FRENCH|VFF|VFQ)\b` dans le titre
-de la release — ce sont les tags scène courants pour de l'audio français.
+Le Custom Format `FRENCH` (id à résoudre par nom, ne pas supposer un id fixe)
+matche `\b(TRUEFRENCH|FRENCH|VFF|VFQ)\b(?![^()]*\))` dans le titre de la
+release — les tags scène courants pour de l'audio français. Le lookahead
+final exclut les suffixes entre parenthèses que certains groupes ajoutent au
+titre du post (`(VF, FRENCH, SUBFRENCH, VOSTFR)`) sans qu'ils figurent dans
+le nom du fichier : sans lui, le score au grab dépassait le score après
+import et la même release était regrabée en boucle (voir CLAUDE.md).
 
-Ne PAS modifier `Anime (Fansub)` directement pour biaiser son scoring — le
+Ne PAS biaiser le scoring du profil par défaut pour obtenir de la VF — le
 principe retenu est bien deux profils distincts + bascule par série, pas un
 seul profil partagé par tous les animes.
 

@@ -55,20 +55,31 @@ sonarr:
         # réel (utilisé à l'import, cf. Ghost in the Shell S01E04 sur le
         # profil Anime (Fansub)), un épisode jamais "cutoff met" reste
         # éligible à re-recherche à chaque RSS sync/tâche périodique et peut
-        # regrabber indéfiniment la même release déjà possédée. until_score
-        # plafonné à 4000 ici : Tier (max 1700, les 4 tiers sont mutuellement
-        # exclusifs) + DV Boost (1000) + HDR (500, une release Dolby Vision
-        # matche souvent les deux) + MULTi (300) + VOSTFR (100) + plateforme
-        # (75, un seul applicable) + x265 (50) + Repack (7) ≈ 3732 de score
-        # réellement atteignable sur une seule release — 4000 laisse une
-        # marge sans retomber dans l'inatteignable comme 10000. Resynchronisé
-        # par recyclarr (cron interne @daily, voir docker-compose.yml) donc
-        # doit rester ici plutôt qu'un simple PUT API qui serait écrasé au
-        # prochain sync — contrairement aux profils Anime (Fansub)*, gérés à
-        # la main via l'API (voir CLAUDE.md).
+        # regrabber indéfiniment la même release déjà possédée.
+        #
+        # until_score était à 4000 (2026-07-29), estimé "atteignable avec
+        # marge" — recalculé le 2026-08-02 en tenant compte des groupes
+        # mutuellement exclusifs (un seul tier, une seule plateforme de
+        # streaming, un seul boost de résolution, un seul niveau de repack) :
+        # le maximum réel est 3907, donc 4000 était lui aussi inatteignable.
+        # L'estimation d'origine avait additionné des CF qui ne peuvent pas
+        # coexister sur une même release.
+        #
+        # Ramené à 2000 : calé sur le haut de la distribution réellement
+        # observée (43 fichiers sur ce profil, médiane 250, max 3405 — les
+        # scores sont bimodaux, selon qu'une release porte ou non un tag de
+        # groupe "Tier", +1600 à 1700, largement absent des trackers FR,
+        # même raison qui avait fait remettre min_format_score à 0). Une
+        # release Tier plus un extra suffit donc à clore la recherche, au
+        # lieu de la poursuivre indéfiniment pour du quota indexeur.
+        #
+        # Resynchronisé par recyclarr, doit rester ici plutôt qu'un simple
+        # PUT API qui serait écrasé au prochain sync — contrairement aux
+        # profils Anime (Fansub)*, versionnés dans arr/profiles/ et appliqués
+        # par scripts/apply-arr-overrides.py (voir CLAUDE.md).
         upgrade:
           allowed: true
-          until_score: 4000
+          until_score: 2000
     # Même remarque que côté Radarr : sélectionner un CF via
     # custom_format_groups le fait exister/matcher mais ne lui donne un
     # score que s'il fait partie du trash_score_set du profil — ici il n'y
@@ -181,6 +192,22 @@ radarr:
         reset_unmatched_scores:
           enabled: true
         min_format_score: 0  # 1000 par défaut (guide) — bloquait tout : score qui repose sur des tags de release-group "de confiance" (BHDStudio, hallowed, WEB/Bluray/UHD Tier N) absents chez C411/Torr9
+        # cutoffFormatScore restait au défaut du guide (10000, inatteignable)
+        # — le correctif du 2026-07-29 n'avait couvert que les profils Sonarr,
+        # Radarr était passé à travers. Maximum réellement atteignable ici :
+        # 4562 (groupes exclusifs pris en compte : un tier, un format audio,
+        # une plateforme, une résolution, un niveau de repack). Ramené à 1800,
+        # calé sur le haut de la distribution observée (19 fichiers, médiane
+        # 255, max 2105 — 9 fichiers déjà ≥ 1800), même raisonnement que le
+        # profil Sonarr ci-dessus.
+        # `until_quality` est obligatoire dès qu'on déclare `upgrade` sur un
+        # profil qui fournit une liste `qualities:` explicite (validation
+        # recyclarr) — repris tel quel du cutoff qualité déjà en place pour
+        # ne rien changer d'autre que le score.
+        upgrade:
+          allowed: true
+          until_quality: Bluray|WEB-2160p
+          until_score: 1800
         # HDTV activé en dernier recours (2026-08-01, demandé explicitement) —
         # certains films (art et essai/anciens : Dead Man, Le Temps des
         # gitans, Coffee and Cigarettes...) n'ont jamais de sortie WEB-DL/

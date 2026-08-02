@@ -1266,6 +1266,66 @@ explicitement :
   géré par recyclarr, mais le suffixe est une pratique Tsundere-Raws (anime
   1080p) qui ne croise pas ce profil 2160p — à revoir si un regrab en boucle y
   apparaît.
+
+  **Tous les `cutoffFormatScore` repris le 2026-08-02** en généralisant le
+  raisonnement : un cutoff n'a de sens que s'il est (a) atteignable et (b)
+  posé là où l'objectif du profil est rempli. Le calcul de 2026-07-29
+  additionnait naïvement les CF à score positif, sans voir que beaucoup sont
+  **mutuellement exclusifs** (un seul tier, une seule plateforme de streaming,
+  un seul codec vidéo, un seul format audio, une seule résolution, un seul
+  niveau de repack — les specs `negate` du guide les enchaînent) : plusieurs
+  valeurs "réalistes" étaient donc encore inatteignables. Maximums réels
+  recalculés en tenant compte de ces groupes :
+  - `Anime (Fansub) VF` (10) : 335 → **200** (= score `FRENCH`, son CF
+    déterminant ; max réel 325, l'ancien 335 comptait AV1 *et* x265).
+  - `Anime (Fansub) VOSTFR` (11) : 105 → **20** (max réel 95). Pas 50
+    (= score `VOSTFR`) comme le raisonnement "CF déterminant" le voudrait :
+    20 = score `MULTi` sur ce profil, choisi pour que les 14 séries migrées
+    depuis `Anime (Fansub)` (voir ci-dessous) ne repartent pas en masse en
+    recherche. Contrepartie assumée : un fichier MULTi déjà en place bloque
+    l'upgrade vers un VOSTFR, la préférence VOSTFR ne joue donc plus qu'au
+    moment du grab, quand les deux sont proposés dans la même recherche.
+  - `WEB-2160p (Combined)` (8) : 4000 → **2000** (max réel 3907).
+  - Radarr `[SQP] SQP-1 WEB (2160p)` : 10000 → **1800** (max réel 4562) —
+    jamais couvert par le correctif de 2026-07-29, qui n'avait touché que
+    Sonarr. Ajouté dans `recyclarr.yml` (le champ n'y était pas du tout,
+    d'où le défaut du guide).
+    Piège rencontré en l'ajoutant : dès qu'un profil fournit une liste
+    `qualities:` explicite (le cas depuis l'activation HDTV/DVD du
+    2026-08-01), recyclarr **exige** `until_quality` en plus de
+    `until_score`, sinon le sync échoue en validation. Repris tel quel du
+    cutoff qualité déjà en place (`Bluray|WEB-2160p`) pour ne rien changer
+    d'autre que le score.
+  Pour les deux profils généralistes (8 et Radarr 7), pas de CF déterminant :
+  la valeur est calée sur le haut de la distribution réellement observée
+  (Sonarr 8 : 43 fichiers, médiane 250, max 3405 ; Radarr : 19 fichiers,
+  médiane 255, max 2105). Ces distributions sont **bimodales** selon qu'une
+  release porte ou non un tag de groupe "Tier" (+1600 à 1700), largement
+  absent des trackers FR — même constat qui avait fait remettre
+  `min_format_score` à 0. Viser le maximum aurait maintenu des recherches
+  perpétuelles (donc du quota indexeur) pour la majorité des titres, pour
+  lesquels aucune release Tier n'existera jamais.
+
+- **Profil Sonarr `Anime (Fansub)` supprimé** (2026-08-02, demandé) : ses 14
+  séries (dont One Piece, 23 saisons — 133 épisodes au total) déplacées vers
+  `Anime (Fansub) VOSTFR` via `PUT /api/v3/series/editor`, puis
+  `DELETE /api/v3/qualityprofile/9`. Ordre imposé : Sonarr refuse de
+  supprimer un profil encore assigné, et il fallait d'abord le retirer de
+  `arr/profiles/sonarr-anime.json` sous peine de le voir recréé au cron
+  suivant par `apply-arr-overrides.py`. Impact chiffré avant d'agir (c'est
+  ce qui a fixé le cutoff à 20 plutôt que 50) : à 50, 70 des 133 fichiers
+  repassaient sous le cutoff ; à 20, seulement 17 — ceux qui n'ont ni
+  `MULTi` ni `VOSTFR` (One Piece ×10, Dorohedoro ×4, Smoking Behind… ×2,
+  BLACK TORCH ×1), donc légitimement à améliorer.
+  **Piège de méthode** : `GET /api/v3/wanted/cutoff` ne reflète **que** le
+  cutoff *qualité*, pas `cutoffFormatScore` — un épisode dont le fichier est
+  à la bonne qualité mais sous le score n'y apparaît pas, alors qu'il reste
+  bel et bien éligible à l'upgrade. Ne pas s'en servir pour estimer l'ampleur
+  d'une vague de re-recherche : recalculer les scores fichier par fichier
+  (`GET /api/v3/episodefile`, champ `customFormats`, croisé avec les
+  `formatItems` du profil cible), ou vérifier au cas par cas avec
+  `GET /api/v3/release` dont les `rejections` mentionnent explicitement
+  `Existing file meets cutoff`.
 - **Un bind-mount Docker d'un fichier unique (pas un dossier) peut rester
   figé sur l'ancien inode si le fichier hôte est remplacé plutôt que modifié
   en place** — repéré le 2026-07-29 en éditant `arr/recyclarr/recyclarr.yml`
