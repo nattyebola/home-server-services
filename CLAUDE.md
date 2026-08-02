@@ -1306,6 +1306,18 @@ explicitement :
   perpétuelles (donc du quota indexeur) pour la majorité des titres, pour
   lesquels aucune release Tier n'existera jamais.
 
+- **Profil Sonarr `WEB-1080p` supprimé** (2026-08-02, demandé) — assigné à
+  aucune série, absent de `recyclarr.yml` comme de `arr/profiles/`, donc
+  jamais recréé (vérifié par un cycle `recyclarr-sync` +
+  `apply-arr-overrides.py` complet après suppression). Ses 37 scores de
+  custom format et son `cutoffFormatScore=1782` n'avaient jamais été
+  reproductibles depuis le repo — c'était le seul trou identifié en
+  inventoriant les profils ce jour-là, refermé en supprimant le profil
+  plutôt qu'en le versionnant. La mention `WEB-1080p`→1782 plus haut est un
+  reliquat historique du correctif de 2026-07-29, le profil n'existe plus.
+  Profils Sonarr restants : les 6 par défaut (aucun utilisé),
+  `WEB-2160p (Combined)`, `Anime (Fansub) VF`, `Anime (Fansub) VOSTFR`.
+
 - **Profil Sonarr `Anime (Fansub)` supprimé** (2026-08-02, demandé) : ses 14
   séries (dont One Piece, 23 saisons — 133 épisodes au total) déplacées vers
   `Anime (Fansub) VOSTFR` via `PUT /api/v3/series/editor`, puis
