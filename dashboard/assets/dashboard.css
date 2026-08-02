@@ -204,7 +204,14 @@ a.card:hover { transform: translateY(-2px); }
    à plat dans le flux, plus un accordéon replié : mini-barre par ligne,
    plus adaptée qu'une jauge à la taille d'une cellule de tableau. */
 .stat-tracker { align-items: stretch; justify-content: flex-start; }
-.stat-tracker > .stat-label { text-align: left; margin-bottom: .25rem; }
+.stat-tracker > .stat-header-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .25rem; }
+.stat-tracker > .stat-header-row > .stat-label { margin: 0; }
+.stat-tracker .switch-label { font-size: .75rem; opacity: .75; }
+/* Trackers publics bruts (pas un indexeur configuré dans Prowlarr) masqués
+   par défaut — voir render_tracker_row()/dashboard.js, switch "Tous les
+   trackers". */
+.tracker-row-other { display: none; }
+.stat-tracker.show-all-trackers .tracker-row-other { display: table-row; }
 .mini-meter { display: flex; align-items: center; gap: .5rem; }
 .mini-meter span { font-variant-numeric: tabular-nums; }
 .meter-track {

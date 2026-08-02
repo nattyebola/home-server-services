@@ -595,9 +595,17 @@ def render_tracker_row(tracker):
         "mini-meter.html", value=tracker["ratio_display"],
         fill_class=f"meter-fill-{ratio_zone(tracker['ratio'])}", pct=ratio_pct(tracker["ratio"]),
     )
+    # "official" (transmission-stats.py) distingue un indexeur réellement
+    # configuré dans Prowlarr d'un tracker public brut embarqué dans un
+    # .torrent (ex. tracker.p2p-world.net, ou les ~20 trackers d'une seule
+    # release multi-tracker) — masqué par défaut, révélé par le switch "Tous
+    # les trackers" (voir tracker-card.html/dashboard.js), pas de filtrage
+    # côté Python : la ligne existe toujours dans le HTML généré.
+    row_class = "" if tracker.get("official") else "tracker-row-other"
     return render(
         "tracker-row.html", name=tracker["name"], meter=meter,
         uploaded=tracker["uploaded_human"], downloaded=tracker["downloaded_human"],
+        row_class=row_class,
     )
 
 

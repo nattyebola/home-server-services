@@ -33,3 +33,26 @@ document.querySelectorAll('.card[data-probe]').forEach(function (card) {
     apply(toggle.checked);
   });
 })();
+
+// Table "Ratio par tracker" : masque par défaut les trackers publics bruts
+// embarqués dans un .torrent (pas un indexeur réellement configuré dans
+// Prowlarr — voir render_tracker_row() dans generate-dashboard.py), pour
+// qu'un torrent multi-tracker (ex. ~20 trackers publics sur une seule
+// release) ne noie pas les quelques trackers officiels dans la table. Switch
+// pour tout afficher, état retenu en localStorage (même raison que le switch
+// Monitoring ci-dessus : la page est régénérée par cron toutes les 5 min).
+(function () {
+  var card = document.querySelector('.stat-tracker');
+  var toggle = document.getElementById('tracker-all-toggle');
+  if (!card || !toggle) { return; }
+  var STORAGE_KEY = 'dashboard-trackers-show-all';
+  var apply = function (showAll) {
+    card.classList.toggle('show-all-trackers', showAll);
+    toggle.checked = showAll;
+  };
+  apply(localStorage.getItem(STORAGE_KEY) === '1');
+  toggle.addEventListener('change', function () {
+    localStorage.setItem(STORAGE_KEY, toggle.checked ? '1' : '0');
+    apply(toggle.checked);
+  });
+})();

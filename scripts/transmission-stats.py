@@ -155,9 +155,18 @@ def build_prowlarr_tracker_map():
 
 
 def resolve_tracker_name(hostname, tracker_map):
+    """Renvoie (nom, officiel) — officiel=True si hostname a été résolu vers
+    un indexeur réellement configuré dans Prowlarr (TRACKER_ALIASES ou
+    build_prowlarr_tracker_map()), False s'il retombe sur le hostname brut
+    (tracker public embarqué dans le .torrent, pas un indexeur qu'on
+    interroge nous-mêmes) — sert au filtre par défaut de la carte "Ratio
+    par tracker" (voir CLAUDE.md)."""
     if hostname in TRACKER_ALIASES:
-        return TRACKER_ALIASES[hostname]
-    return tracker_map.get(base_domain(hostname), hostname)
+        return TRACKER_ALIASES[hostname], True
+    name = tracker_map.get(base_domain(hostname))
+    if name:
+        return name, True
+    return hostname, False
 
 
 def tracker_hosts(torrent):
@@ -384,11 +393,11 @@ def main():
         # coïncidence — numérateur et dénominateur gonflés pareil).
         seen_names = set()
         for host in tracker_hosts(t) or ["?"]:
-            name = resolve_tracker_name(host, tracker_map) if host != "?" else "?"
+            name, official = resolve_tracker_name(host, tracker_map) if host != "?" else ("?", False)
             if name in seen_names:
                 continue
             seen_names.add(name)
-            entry = per_tracker.setdefault(name, {"uploaded": 0, "downloaded": 0})
+            entry = per_tracker.setdefault(name, {"uploaded": 0, "downloaded": 0, "official": official})
             entry["uploaded"] += t.get("uploadedEver", 0)
             entry["downloaded"] += t.get("downloadedEver", 0)
 
@@ -397,7 +406,8 @@ def main():
             {"name": name, "uploaded": v["uploaded"], "downloaded": v["downloaded"],
              "uploaded_human": human_size(v["uploaded"]), "downloaded_human": human_size(v["downloaded"]),
              "ratio": ratio(v["uploaded"], v["downloaded"]),
-             "ratio_display": ratio_display(ratio(v["uploaded"], v["downloaded"]))}
+             "ratio_display": ratio_display(ratio(v["uploaded"], v["downloaded"])),
+             "official": v["official"]}
             for name, v in per_tracker.items()
         ),
         key=lambda e: e["uploaded"], reverse=True,
