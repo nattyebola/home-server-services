@@ -1,0 +1,117 @@
+{
+  "custom_formats": [
+    {
+      "name": "FRENCH",
+      "specifications": [
+        {
+          "name": "FRENCH",
+          "implementation": "ReleaseTitleSpecification",
+          "negate": false,
+          "required": true,
+          "value": "\\b(TRUEFRENCH|FRENCH|VFF|VFQ)\\b(?![^()]*\\))"
+        }
+      ]
+    },
+    {
+      "name": "VOSTFR (hors suffixe)",
+      "specifications": [
+        {
+          "name": "VOSTFR",
+          "implementation": "ReleaseTitleSpecification",
+          "negate": false,
+          "required": false,
+          "value": "\\b(VOST.*?FR(E|A)?)\\b(?![^()]*\\))"
+        },
+        {
+          "name": "SUBFRENCH",
+          "implementation": "ReleaseTitleSpecification",
+          "negate": false,
+          "required": false,
+          "value": "\\b(SUBFR(A|ENCH)?)\\b(?![^()]*\\))"
+        }
+      ]
+    }
+  ],
+  "quality_profiles": [
+    {
+      "name": "Anime (Fansub)",
+      "upgradeAllowed": true,
+      "cutoff": "WEB 1080p",
+      "minFormatScore": 0,
+      "cutoffFormatScore": 100,
+      "allowed": [
+        "HDTV-720p",
+        "HDTV-1080p",
+        "WEB 720p",
+        "WEB 1080p"
+      ],
+      "scores": {
+        "VOSTFR (hors suffixe)": 50,
+        "Repack/Proper": 5,
+        "Bad Dual Groups": -10000,
+        "BR-DISK": -10000,
+        "BR-DISK (BTN)": -10000,
+        "Extras": -10000,
+        "LQ": -10000,
+        "LQ (Release Title)": -10000,
+        "Upscaled": -10000,
+        "MULTi": 100
+      }
+    },
+    {
+      "name": "Anime (Fansub) VF",
+      "upgradeAllowed": true,
+      "cutoff": "WEB 1080p",
+      "minFormatScore": 0,
+      "cutoffFormatScore": 335,
+      "allowed": [
+        "HDTV-720p",
+        "HDTV-1080p",
+        "WEB 720p",
+        "WEB 1080p"
+      ],
+      "scores": {
+        "FRENCH": 200,
+        "Repack/Proper": 5,
+        "AV1": 20,
+        "Bad Dual Groups": -10000,
+        "BR-DISK": -10000,
+        "BR-DISK (BTN)": -10000,
+        "Extras": -10000,
+        "LQ": -10000,
+        "LQ (Release Title)": -10000,
+        "Upscaled": -10000,
+        "x265": 10,
+        "MULTi": 100,
+        "VOSTFR": -100
+      }
+    },
+    {
+      "name": "Anime (Fansub) VOSTFR",
+      "upgradeAllowed": true,
+      "cutoff": "WEB 1080p",
+      "minFormatScore": 0,
+      "cutoffFormatScore": 105,
+      "allowed": [
+        "HDTV-720p",
+        "HDTV-1080p",
+        "WEB 720p",
+        "WEB 1080p"
+      ],
+      "scores": {
+        "VOSTFR (hors suffixe)": 50,
+        "Repack/Proper": 5,
+        "AV1": 20,
+        "Bad Dual Groups": -10000,
+        "BR-DISK": -10000,
+        "BR-DISK (BTN)": -10000,
+        "Extras": -10000,
+        "LQ": -10000,
+        "LQ (Release Title)": -10000,
+        "Upscaled": -10000,
+        "x265": 10,
+        "MULTi": 20
+      }
+    }
+  ]
+}

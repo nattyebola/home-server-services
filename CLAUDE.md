@@ -618,7 +618,39 @@ explicitement :
   autre id, ou répliqué sur un autre déploiement où l'id serait différent.
   Idempotent (compare avant d'écrire, `déjà à jour, rien à faire` si rien à
   changer) et best-effort par arr (une erreur sur Sonarr n'empêche pas
-  d'essayer Radarr). Ne couvre QUE ces deux profils : les profils
+  d'essayer Radarr).
+  **Élargi le 2026-08-02 à la config anime** (`arr/profiles/sonarr-anime.json`,
+  versionné) : les 2 custom formats qui nous appartiennent (`FRENCH`,
+  `VOSTFR (hors suffixe)`) et les 3 profils `Anime (Fansub)*`. Décision prise
+  après avoir remis à plat l'utilité de recyclarr — l'utilisateur le garde
+  (sa vraie valeur : les MAJ communautaires des ~120 regex, listes LQ /
+  groupes de release / tags de plateformes) mais veut que **toute la config
+  custom vive dans le repo**. Ces objets n'étaient couverts par aucun
+  `trash_id`, donc rien ne les recréait sur une installation neuve et rien ne
+  rattrapait leur dérive : ils n'existaient que dans la base Sonarr,
+  récupérables par la sauvegarde restic mais pas reproductibles depuis git.
+  Le JSON est **déclaratif et fait autorité** : tout custom format absent de
+  `scores` est remis à 0 sur le profil concerné.
+  Qualités et custom formats désignés **par nom**, jamais par id (propres à
+  chaque instance — c'est précisément pourquoi un dump d'API brut ne serait
+  pas reproductible) ; un profil absent est créé à partir de
+  `/api/v3/qualityprofile/schema` plutôt qu'en versionnant tout l'arbre des
+  paliers de qualité (2,7 Ko de JSON au total, relisible dans un diff). Ordre
+  imposé : custom formats d'abord, profils ensuite (qui les référencent par
+  nom) — et surtout `make recyclarr-sync` AVANT tout le script, sinon les CF
+  du guide scorés par les profils anime (`MULTi`, `LQ`, `Upscaled`...)
+  n'existent pas encore ; ce cas lève une erreur explicite plutôt que de
+  créer un profil silencieusement dépourvu de la moitié de ses scores.
+  `api_put` passe par un `api_write` commun qui vérifie désormais la réponse
+  (`curl -s` sort 0 même sur un 400 — sans ça une écriture refusée par la
+  validation Sonarr était comptée comme réussie).
+  Chemin de **création** testé explicitement le 2026-08-02 en dupliquant la
+  config sous des noms jetables (`… ZZTEST`) : les 3 profils créés de zéro
+  ressortent identiques aux vrais (cutoff, qualités autorisées, scores), 2e
+  exécution idempotente, objets supprimés après coup — sans quoi ce chemin,
+  celui qui justifie tout l'exercice, n'aurait jamais été exercé avant le
+  jour d'une vraie réinstallation (même leçon que le bug de `pg_dump` plus
+  haut). Ne couvre QUE ces deux profils : les profils
   `Anime (Fansub)*` (et le custom format `FRENCH` qui n'y est scoré que sur
   `Anime (Fansub) VF`) restent volontairement hors périmètre — usage
   personnel de l'utilisateur, pas géré pour la reproductibilité multi-PC,
@@ -1261,7 +1293,7 @@ server/
 │   ├── restore.sh                  # restauration guidée d'un snapshot restic
 │   ├── generate-dashboard.py       # régénère dashboard/html/ — `make dashboard-refresh`
 │   ├── transmission-stats.py       # JSON ratios/débits pour generate-dashboard.py
-│   ├── apply-arr-overrides.py      # réapplique tailles/language des 2 profils qualité principaux — `make arr-overrides`
+│   ├── apply-arr-overrides.py      # réapplique tailles/language des 2 profils qualité principaux + provisionne la config anime — `make arr-overrides`
 │   └── require-running.sh          # exit 0 si les services <project>/<service> donnés tournent — guard cron + backup.sh
 ├── sauvegarde/                # non versionné — dépôt restic + mot de passe + staging
 ├── traefik/                  # socket-proxy + traefik + dashboard (page statique de liens) ; .env(ACME_EMAIL)/.example
@@ -1269,7 +1301,8 @@ server/
 ├── nextcloud/                 # db-next/app/web/news-updater ; .env/.example ; override.yml(.example)
 ├── vpn/                       # transmission-vpn (réseau isolé) + sidecar transmission-proxy ; .env/.example
 ├── arr/                       # prowlarr/sonarr/radarr/cross-seed/recyclarr/clearr ; .env/.example ; override.yml.example (optionnel)
-│   └── clearr/                 # web (FastAPI/Jinja2/Bootstrap) + TUI + CLI delete-by-inode, un seul core.py partagé — voir plus haut
+│   ├── clearr/                 # web (FastAPI/Jinja2/Bootstrap) + TUI + CLI delete-by-inode, un seul core.py partagé — voir plus haut
+│   └── profiles/               # config arr custom versionnée (sonarr-anime.json) — appliquée par scripts/apply-arr-overrides.py
 ├── seerr/                     # recherche/requête unifiée (successeur Jellyseerr/Overseerr) ; pas de .env (config via son assistant web)
 └── dashboard/                 # templates/ (vues, string.Template) + assets (logos, css, js) + html/ généré — pas de compose file, servi par traefik/ (voir ci-dessus)
 ```
