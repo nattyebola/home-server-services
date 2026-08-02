@@ -1183,6 +1183,57 @@ explicitement :
   schéma de config recyclarr (`quality_profiles:`, confirmé via
   `https://schemas.recyclarr.dev/latest/config/quality-profiles.json`),
   validé avec `recyclarr sync --preview` avant application réelle.
+  **Ce fix seul ne suffisait pas** — constaté le 2026-08-02 sur `BLACK TORCH`
+  S01E05 (5 grabs, 4 imports en 2h le 2026-08-01), même signature sur
+  Chainsmoker Cat / Sparks of Tomorrow / Daemons of the Shadow Realm / Ghost
+  in the Shell (2 grabs à ~15 min d'écart, l'intervalle du RSS sync ; 8 grabs
+  strictement redondants sur 280 dans l'historique). Abaisser
+  `cutoffFormatScore` ne touche que le *plafond* ; le moteur de la boucle est
+  l'écart entre le score annoncé au grab et le score réévalué après import, et
+  155 restait au-dessus du maximum qu'un *fichier* peut atteindre sur ce
+  profil (100 pour une release MULTi, `VOSTFR` ne matchant jamais le nom du
+  `.mkv`) — la porte de l'upgrade ne se refermait donc jamais. Correctif de
+  fond appliqué le 2026-08-02, en deux volets :
+  - **Lookahead « pas entre parenthèses » `(?![^()]*\))`** ajouté aux regex
+    qui matchaient le suffixe `(VF, FRENCH, SUBFRENCH, VOSTFR)` des posts
+    Tsundere-Raws. Validé avant application sur les 193 titres réels de
+    `GET /api/v3/history` : 31 faux positifs supprimés, 81 vrais
+    VOSTFR/SUBFRENCH conservés ; CF `MULTi` vérifié non concerné (0 titre où
+    il ne matche qu'entre parenthèses), donc laissé tel quel.
+  - **`Anime (Fansub)` : `cutoffFormatScore` 155 → 100**, le vrai maximum
+    atteignable par un fichier importé sur ce profil — filet pour tout futur
+    suffixe exotique que le lookahead ne couvrirait pas.
+
+  Piège structurant rencontré en l'appliquant : **le CF `VOSTFR` est géré par
+  recyclarr** (`trash_id 07a32f77690263bb9fda1842db7e273f`, référencé deux
+  fois dans `recyclarr.yml` — `custom_formats` pour son score sur
+  `WEB-2160p (Combined)` et `custom_format_groups` via `[Optional] French
+  Audio Version`), et recyclarr resynchronise la **définition** du CF, pas
+  seulement son score : un `PUT /api/v3/customformat/49` est bien appliqué
+  mais serait réécrit au sync quotidien suivant. Repéré uniquement parce que
+  `recyclarr sync --preview` a été relancé *après* le PUT et affichait
+  `Update │ VOSTFR` (réflexe à garder pour tout changement API sur un CF :
+  vérifier qu'il n'est pas dans un `trash_ids` avant de supposer qu'il tient).
+  Solution retenue plutôt que de sortir `VOSTFR` de `recyclarr.yml` (qui
+  aurait aussi fait perdre sa création automatique sur un déploiement neuf,
+  donc un recul de reproductibilité) : un **CF distinct que nous possédons**,
+  `VOSTFR (hors suffixe)` (id 51), portant les regex corrigées — même schéma
+  que le CF `FRENCH` (id 50, créé à la main le 2026-07-28, confirmé absent du
+  diff recyclarr donc modifiable directement, ce qui a été fait). Le CF
+  `VOSTFR` du guide reste intact et scoré **0** sur les profils concernés, le
+  nouveau CF reprenant son score : `Anime (Fansub)` (9) et
+  `Anime (Fansub) VOSTFR` (11), les deux seuls profils anime où `VOSTFR` est
+  positif donc où `grab > fichier` est possible. Vérifié après coup :
+  `recyclarr sync --preview` ressort `No changes` sur Custom Format ET Quality
+  Profile, et `GET /api/v3/parse` score le titre à suffixe 100 (= le score du
+  fichier) au lieu de 150.
+  Deux trous connus laissés en l'état, délibérément : `Anime (Fansub) VF` (10)
+  a `VOSTFR` à **-100**, donc le suffixe fait scorer le grab *plus bas* que le
+  fichier — asymétrie inverse, incapable de boucler (son vrai risque venait du
+  CF `FRENCH`, corrigé) ; `WEB-2160p (Combined)` (8) a `VOSTFR` à +100 et est
+  géré par recyclarr, mais le suffixe est une pratique Tsundere-Raws (anime
+  1080p) qui ne croise pas ce profil 2160p — à revoir si un regrab en boucle y
+  apparaît.
 - **Un bind-mount Docker d'un fichier unique (pas un dossier) peut rester
   figé sur l'ancien inode si le fichier hôte est remplacé plutôt que modifié
   en place** — repéré le 2026-07-29 en éditant `arr/recyclarr/recyclarr.yml`
