@@ -30,7 +30,71 @@
     showModalIfTarget(target);
   }
 
+  // --- Jaquette au survol ---------------------------------------------------
+  // Un seul conteneur flottant réutilisé, attaché au <body> : les lignes vivent
+  // dans .table-responsive (overflow), qui découperait une vignette positionnée
+  // à l'intérieur du tableau. L'image n'est demandée qu'au premier survol
+  // (data-poster porte l'URL, pas un <img> déjà présent — voir
+  // templates/_meta.html) et reste ensuite dans le cache navigateur.
+  var POSTER_WIDTH = 180;
+  var posterPop = null;
+
+  function posterElement() {
+    if (!posterPop) {
+      posterPop = document.createElement("div");
+      posterPop.id = "poster-pop";
+      posterPop.innerHTML = '<img alt="">';
+      posterPop.querySelector("img").addEventListener("error", hidePoster);
+      document.body.appendChild(posterPop);
+    }
+    return posterPop;
+  }
+
+  function showPoster(host) {
+    var pop = posterElement();
+    var img = pop.querySelector("img");
+    var url = host.getAttribute("data-poster");
+    if (img.getAttribute("src") !== url) img.setAttribute("src", url);
+    img.alt = host.getAttribute("data-poster-title") || "";
+    pop.classList.add("visible");
+    // Ancré sur la cellule survolée (pas sur le curseur) : pas de vignette qui
+    // suit la souris, et la position reste stable pendant qu'on lit.
+    var rect = host.getBoundingClientRect();
+    var height = pop.offsetHeight || POSTER_WIDTH * 1.5;
+    var left = rect.right + 12;
+    if (left + POSTER_WIDTH > window.innerWidth - 8) {
+      left = Math.max(8, rect.left - POSTER_WIDTH - 12);
+    }
+    var top = rect.top + rect.height / 2 - height / 2;
+    top = Math.min(Math.max(8, top), Math.max(8, window.innerHeight - height - 8));
+    pop.style.left = left + "px";
+    pop.style.top = top + "px";
+  }
+
+  function hidePoster() {
+    if (posterPop) posterPop.classList.remove("visible");
+  }
+
+  document.addEventListener("mouseover", function (e) {
+    var host = e.target.closest("[data-poster]");
+    if (host) showPoster(host);
+  });
+
+  document.addEventListener("mouseout", function (e) {
+    if (e.target.closest("[data-poster]")) hidePoster();
+  });
+
+  // Un swap de fragment ou un défilement peut faire disparaître la cellule
+  // survolée sans qu'aucun mouseout ne soit émis — la vignette resterait
+  // affichée dans le vide.
+  window.addEventListener("scroll", hidePoster, true);
+
   document.addEventListener("click", function (e) {
+    // Les liens IMDb/TVDB/TMDB/Sonarr/Radarr sont de vrais liens externes
+    // (target=_blank) : ils ne doivent pas être interceptés par le handler
+    // data-get ci-dessous, et n'ont aucune raison de le déclencher.
+    if (e.target.closest(".meta-link")) return;
+    hidePoster();
     var get = e.target.closest("[data-get]");
     if (get) {
       e.preventDefault();

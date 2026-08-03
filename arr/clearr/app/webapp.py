@@ -10,7 +10,7 @@ import urllib.parse
 
 from fastapi import FastAPI, Form
 from fastapi.requests import Request
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -63,6 +63,22 @@ def health():
     return "ok"
 
 
+@app.get("/poster/{kind}/{arr_id}")
+def poster(kind: str, arr_id: int):
+    """Jaquette servie depuis le cache disque de Sonarr/Radarr (voir
+    core.poster_file) — jamais un aller-retour vers thetvdb/tmdb, ni même vers
+    l'API arr. 404 si le titre n'a pas de jaquette en cache : clearr.js n'a
+    alors rien à afficher au survol, ce qui est le comportement voulu (pas de
+    vignette cassée). Cache navigateur long : le contenu d'un
+    MediaCover/<id>/poster-250.jpg ne change pas sans une action explicite dans
+    Sonarr/Radarr."""
+    path = core.poster_file(kind, arr_id) if kind in core.MEDIA_COVER_DIRS else None
+    if not path:
+        return Response(status_code=404)
+    return FileResponse(path, media_type="image/jpeg",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+
 # --- helpers d'affichage (équivalent web de ratio_color/col_label de tui.py) ---
 
 def ratio_class(ratio):
@@ -73,9 +89,12 @@ def ratio_class(ratio):
     return "good"
 
 
-def torrent_view(t, child=False):
+def torrent_view(t, child=False, meta=None):
     return {
         "id": t["id"],
+        # Série/film Sonarr/Radarr auquel ce torrent appartient (None si jamais
+        # importé) — porte la jaquette et les liens, voir core.torrent_meta.
+        "meta": meta,
         "name": t["name"],
         "bib": "" if child else ("✓" if t.get("_linked") else ""),
         "abs": "" if child else ("✓" if t.get("_missing") else ""),
@@ -135,6 +154,11 @@ def render_torrents_tab(sort, reverse, filter_str, message=None, message_kind="s
 
     core.sort_items(all_torrents, core.SORT_FIELDS, field_index(core.SORT_FIELDS, sort), reverse)
 
+    meta_index = core.build_arr_meta_index()
+
+    def meta_of(torrent):
+        return core.torrent_meta(torrent, state["library_index"], meta_index)
+
     top_level = [t for t in all_torrents if t["id"] not in cross_seed_child_ids]
     needle = filter_str.lower()
     groups = []
@@ -146,8 +170,8 @@ def render_torrents_tab(sort, reverse, filter_str, message=None, message_kind="s
             continue
         children_sorted = sorted(children, key=lambda c: c.get("_tracker_name", ""))
         groups.append({
-            "parent": torrent_view(t),
-            "children": [torrent_view(c, child=True) for c in children_sorted],
+            "parent": torrent_view(t, meta=meta_of(t)),
+            "children": [torrent_view(c, child=True, meta=meta_of(c)) for c in children_sorted],
             "force_open": bool(needle and matching_children and not parent_match),
         })
 
@@ -163,53 +187,56 @@ def render_torrents_tab(sort, reverse, filter_str, message=None, message_kind="s
     )
 
 
-def render_series_tab(sort, reverse, filter_str, message=None, message_kind="success"):
-    series_list = core.fetch_series_list()
-    items = core.filter_by_title(series_list, filter_str)
-    core.sort_items(items, core.SERIES_SORT_FIELDS, field_index(core.SERIES_SORT_FIELDS, sort), reverse)
-    rows = []
-    for s in items:
-        stats = s.get("statistics", {})
-        seasons = s.get("seasons", [])
-        monitored_seasons = sum(1 for se in seasons if se.get("monitored"))
-        rows.append({
-            "id": s["id"],
-            "monitored": bool(s.get("monitored")),
-            "seasons": f"{monitored_seasons}/{len(seasons)}",
-            "episodes": f"{stats.get('episodeFileCount', 0)}/{stats.get('totalEpisodeCount', 0)}",
-            "size": core.human_size(stats.get("sizeOnDisk", 0)),
-            "title": s["title"],
-        })
-    return render(
-        "series_tab.html",
-        sort=sort, reverse=reverse, filter_str=filter_str,
-        qs=query_string(sort, reverse, filter_str),
-        columns=build_columns("series", core.SERIES_SORT_FIELDS, sort, reverse, filter_str),
-        rows=rows, total=len(series_list),
-        message=message, message_kind=message_kind,
-    )
+def series_row(s):
+    stats = s.get("statistics", {})
+    seasons = s.get("seasons", [])
+    monitored_seasons = sum(1 for se in seasons if se.get("monitored"))
+    return {
+        "id": s["id"],
+        "monitored": bool(s.get("monitored")),
+        "seasons": f"{monitored_seasons}/{len(seasons)}",
+        "episodes": f"{stats.get('episodeFileCount', 0)}/{stats.get('totalEpisodeCount', 0)}",
+        "size": core.human_size(stats.get("sizeOnDisk", 0)),
+        "title": s["title"],
+        "meta": core.item_meta("series", s),
+    }
 
 
-def render_films_tab(sort, reverse, filter_str, message=None, message_kind="success"):
-    movies_list = core.fetch_movies_list()
-    items = core.filter_by_title(movies_list, filter_str)
-    core.sort_items(items, core.FILMS_SORT_FIELDS, field_index(core.FILMS_SORT_FIELDS, sort), reverse)
-    rows = []
-    for m in items:
-        rows.append({
-            "id": m["id"],
-            "monitored": bool(m.get("monitored")),
-            "has_file": bool(m.get("hasFile")),
-            "year": m.get("year", ""),
-            "size": core.human_size(m.get("sizeOnDisk", 0)),
-            "title": m["title"],
-        })
+def film_row(m):
+    return {
+        "id": m["id"],
+        "monitored": bool(m.get("monitored")),
+        "has_file": bool(m.get("hasFile")),
+        "year": m.get("year", ""),
+        "size": core.human_size(m.get("sizeOnDisk", 0)),
+        "title": m["title"],
+        "meta": core.item_meta("film", m),
+    }
+
+
+# Les vues Séries et Films ne diffèrent que par ces 3 valeurs — d'où un seul
+# render_arr_tab() plutôt que deux fonctions au squelette identique (factorisé
+# le 2026-08-03 en y ajoutant les métadonnées, qui auraient sinon été écrites
+# deux fois). La vue Torrents, elle, garde sa fonction propre : elle part de
+# Transmission (load_full_state) et non d'un arr, et gère les groupes
+# cross-seed.
+ARR_TABS = {
+    "series": {"fetch": core.fetch_series_list, "fields": core.SERIES_SORT_FIELDS, "row": series_row},
+    "films": {"fetch": core.fetch_movies_list, "fields": core.FILMS_SORT_FIELDS, "row": film_row},
+}
+
+
+def render_arr_tab(tab, sort, reverse, filter_str, message=None, message_kind="success"):
+    spec = ARR_TABS[tab]
+    items = spec["fetch"]()
+    selected = core.filter_by_title(items, filter_str)
+    core.sort_items(selected, spec["fields"], field_index(spec["fields"], sort), reverse)
     return render(
-        "films_tab.html",
+        f"{tab}_tab.html",
         sort=sort, reverse=reverse, filter_str=filter_str,
         qs=query_string(sort, reverse, filter_str),
-        columns=build_columns("films", core.FILMS_SORT_FIELDS, sort, reverse, filter_str),
-        rows=rows, total=len(movies_list),
+        columns=build_columns(tab, spec["fields"], sort, reverse, filter_str),
+        rows=[spec["row"](i) for i in selected], total=len(items),
         message=message, message_kind=message_kind,
     )
 
@@ -227,12 +254,12 @@ def tab_torrents(sort: str = DEFAULT_SORT["torrents"], reverse: str = "0", filte
 
 @app.get("/tab/series", response_class=HTMLResponse)
 def tab_series(sort: str = DEFAULT_SORT["series"], reverse: str = "0", filter: str = ""):
-    return HTMLResponse(render_series_tab(sort, reverse == "1", filter))
+    return HTMLResponse(render_arr_tab("series", sort, reverse == "1", filter))
 
 
 @app.get("/tab/films", response_class=HTMLResponse)
 def tab_films(sort: str = DEFAULT_SORT["films"], reverse: str = "0", filter: str = ""):
-    return HTMLResponse(render_films_tab(sort, reverse == "1", filter))
+    return HTMLResponse(render_arr_tab("films", sort, reverse == "1", filter))
 
 
 # --- purge groupée des torrents marqués ABS — routes STATIQUES, doivent être
@@ -352,7 +379,7 @@ def torrent_delete(tid: int, sort: str = Form(DEFAULT_SORT["torrents"]), reverse
 
 @app.get("/series/{sid}/confirm", response_class=HTMLResponse)
 def series_confirm(sid: int, sort: str = DEFAULT_SORT["series"], reverse: str = "0", filter: str = ""):
-    series = next((s for s in core.fetch_series_list() if s["id"] == sid), None)
+    series = core.find_series_by_id(sid)
     if not series:
         return HTMLResponse("<p>Série introuvable. Fermez et rafraîchissez.</p>")
     state = core.load_full_state()
@@ -372,9 +399,9 @@ def series_confirm(sid: int, sort: str = DEFAULT_SORT["series"], reverse: str = 
 @app.post("/series/{sid}/delete", response_class=HTMLResponse)
 def series_delete(sid: int, sort: str = Form(DEFAULT_SORT["series"]), reverse: str = Form("0"),
                    filter: str = Form("")):
-    series = next((s for s in core.fetch_series_list() if s["id"] == sid), None)
+    series = core.find_series_by_id(sid)
     if not series:
-        return HTMLResponse(render_series_tab(sort, reverse == "1", filter,
+        return HTMLResponse(render_arr_tab("series", sort, reverse == "1", filter,
                                                message="Série déjà supprimée.", message_kind="warning"))
     state = core.load_full_state()
     matched = core.find_series_torrents(state["all_torrents"], state["library_index"],
@@ -387,14 +414,14 @@ def series_delete(sid: int, sort: str = Form(DEFAULT_SORT["series"]), reverse: s
     except Exception as e:
         core.logger.error("échec de la suppression de la série %r : %s", series["title"], e)
         message, kind = f"ÉCHEC (voir {core.LOG_PATH}) : {e}", "danger"
-    return HTMLResponse(render_series_tab(sort, reverse == "1", filter, message=message, message_kind=kind))
+    return HTMLResponse(render_arr_tab("series", sort, reverse == "1", filter, message=message, message_kind=kind))
 
 
 # --- suppression d'un film (vue Films) ---
 
 @app.get("/films/{mid}/confirm", response_class=HTMLResponse)
 def film_confirm(mid: int, sort: str = DEFAULT_SORT["films"], reverse: str = "0", filter: str = ""):
-    movie = next((m for m in core.fetch_movies_list() if m["id"] == mid), None)
+    movie = core.find_movie_by_id(mid)
     if not movie:
         return HTMLResponse("<p>Film introuvable. Fermez et rafraîchissez.</p>")
     state = core.load_full_state()
@@ -414,9 +441,9 @@ def film_confirm(mid: int, sort: str = DEFAULT_SORT["films"], reverse: str = "0"
 
 @app.post("/films/{mid}/delete", response_class=HTMLResponse)
 def film_delete(mid: int, sort: str = Form(DEFAULT_SORT["films"]), reverse: str = Form("0"), filter: str = Form("")):
-    movie = next((m for m in core.fetch_movies_list() if m["id"] == mid), None)
+    movie = core.find_movie_by_id(mid)
     if not movie:
-        return HTMLResponse(render_films_tab(sort, reverse == "1", filter,
+        return HTMLResponse(render_arr_tab("films", sort, reverse == "1", filter,
                                               message="Film déjà supprimé.", message_kind="warning"))
     state = core.load_full_state()
     try:
@@ -438,4 +465,4 @@ def film_delete(mid: int, sort: str = Form(DEFAULT_SORT["films"]), reverse: str 
     except Exception as e:
         core.logger.error("échec de la suppression du film %r : %s", movie["title"], e)
         message, kind = f"ÉCHEC (voir {core.LOG_PATH}) : {e}", "danger"
-    return HTMLResponse(render_films_tab(sort, reverse == "1", filter, message=message, message_kind=kind))
+    return HTMLResponse(render_arr_tab("films", sort, reverse == "1", filter, message=message, message_kind=kind))

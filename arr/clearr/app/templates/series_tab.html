@@ -1,3 +1,4 @@
+{% from "_meta.html" import title_cell %}
 {% include "_tabs.html" %}
 {% if message %}<div class="alert alert-{{ message_kind }} py-2">{{ message }}</div>{% endif %}
 
@@ -32,9 +33,11 @@
       <td>{{ s.seasons }}</td>
       <td>{{ s.episodes }}</td>
       <td>{{ s.size }}</td>
-      <td>{{ s.title }}</td>
+      <td>{{ title_cell(s.title, s.meta) }}</td>
       <td class="text-end">
-        <a href="#" class="btn btn-sm btn-outline-danger" data-get="/series/{{ s.id }}/confirm?{{ qs }}" data-target="#modal-body">Supprimer tout</a>
+        <a href="#" class="btn btn-sm btn-outline-danger btn-delete" data-get="/series/{{ s.id }}/confirm?{{ qs }}"
+           data-target="#modal-body" title="Supprimer la série entière (torrents, fichiers, Sonarr)"
+           aria-label="Supprimer la série entière">✕</a>
       </td>
     </tr>
     {% else %}

@@ -109,6 +109,64 @@ explicitement :
   color-scheme: dark)")` avant le rendu du `<body>` pour éviter un flash
   clair→sombre.
 
+- **Jaquette au survol + liens IMDb/TVDB/TMDB/Sonarr/Radarr dans les 3 vues de
+  `clearr`, sans aucun appel WAN côté serveur** (ajouté le 2026-08-03, contrainte
+  demandée explicitement) : les ids externes (`imdbId`/`tvdbId`/`tmdbId`/
+  `titleSlug`) sont déjà dans les objets `/api/v3/series`|`/movie` (vérifié :
+  0 manquant sur 21 séries / 24 films), et les jaquettes sont déjà en cache
+  disque sous `${DATA_ROOT}/.arr/{sonarr,radarr}/config/MediaCover/<id>/
+  poster-250.jpg` (~20 Ko), donc lisibles directement par `clearr` via son mount
+  `${DATA_ROOT}:/data_root` — servies par une route `/poster/{kind}/{arr_id}`
+  (`core.poster_file`, `arr_id` passé par `int()` = la garantie anti-traversal)
+  plutôt que proxifiées vers l'API arr, encore moins re-téléchargées chez
+  thetvdb/tmdb. Seuls les liens sortent, et c'est le navigateur qui les suit au
+  clic. TVDB adressé par `thetvdb.com/dereferrer/series/<tvdbId>` (Sonarr expose
+  l'id, pas le slug du site) ; Radarr par `<tmdbId>` (son `titleSlug` EST le
+  tmdbId).
+  Vue Torrents : un torrent n'est rattaché à un titre arr que via
+  `core.build_arr_meta_index()`/`torrent_meta()` (films par chemin exact de
+  `movieFile.path`, séries par préfixe de `series.path`, mêmes critères que
+  `plan_radarr_deletion`/`plan_sonarr_unmonitor`), en repartant des inodes déjà
+  calculés par `analyze_torrent_files()` — donc zéro `stat` supplémentaire et
+  symlinks cross-seed déjà résolus. Coût mesuré : +2 appels arr par rendu,
+  onglet Torrents toujours à ~50 ms sur 223 torrents. Best-effort : un torrent
+  jamais importé n'a ni jaquette ni lien (39 sur 168 parents au moment de
+  l'ajout), un arr injoignable dégrade la vue sans la casser.
+  Jaquette chargée seulement au premier survol (`data-poster` porte l'URL, pas
+  un `<img>` dans le HTML — sinon 45 images à chaque rendu de page alors qu'on
+  en regarde une), affichée dans un unique conteneur flottant attaché au
+  `<body>` : les lignes vivent dans `.table-responsive`, dont l'`overflow`
+  découperait une vignette positionnée dans le tableau. Ancrée sur la cellule
+  survolée et pas sur le curseur (pas de vignette qui suit la souris), `z-index`
+  sous celui de la modale Bootstrap. Pas de tooltip Bootstrap ici non plus
+  (exigerait Popper, non vendoré — voir plus haut).
+  Refacto au passage : `render_series_tab`/`render_films_tab` (squelettes
+  identiques) fusionnées en `render_arr_tab(tab, ...)` + un `ARR_TABS` de 3
+  valeurs par onglet, et la cellule titre des 3 vues passe par un seul macro
+  Jinja `templates/_meta.html` — sans quoi le même bloc jaquette/liens aurait
+  été écrit trois fois. `core.find_series_by_id`/`find_movie_by_id` remplacent
+  4 `next((... for ... if id == ...))` recopiés dans les routes.
+  Bouton de suppression réduit à **une croix ✕ (U+2715) dans les 3 vues**
+  (demandé le 2026-08-03, le sens passant par `title`/`aria-label`) — un emoji
+  (🗑, premier essai le même jour) a été rejeté par l'utilisateur : rendu par la
+  police couleur du système, donc ni monochrome ni cohérent d'un appareil à
+  l'autre, là où un glyphe texte hérite du rouge de `.btn-outline-danger`.
+  Et **colonne d'actions
+  figée à droite dans la vue Torrents** (`.table-sticky-actions`, `position:
+  sticky` sur le `:last-child`) : c'est la seule vue assez large pour que
+  `.table-responsive` défile horizontalement dès qu'on zoome, le bouton sortait
+  alors de l'écran. `background-color` explicite obligatoire sur la cellule
+  figée (`--bs-table-bg` est transparent, les cellules qui défilent dessous
+  resteraient visibles au travers) — le surlignage de survol de Bootstrap passe
+  par un `box-shadow` inset, donc peint par-dessus ce fond et continue de
+  marcher. Aucune bordure/ombre sur le bord gauche de cette colonne (essayée
+  puis retirée le même jour, demandé explicitement : visible en permanence, y
+  compris quand rien ne défile).
+  `DOMAIN` (nécessaire aux liens `sonarr.${DOMAIN}`/`radarr.${DOMAIN}`) vient de
+  `.env.shared`, donc hors du `env_file: .env` du service : injecté par un bloc
+  `environment:` dans `arr/docker-compose.yml`. Absent = pas de lien arr, le
+  reste fonctionne.
+
 - **Rootless par container**, pas de daemon Docker rootless. `cap_drop:
   ALL` + `security_opt: no-new-privileges:true` partout ; `cap_add` ciblé
   seulement sur `db-next` et `vpn/transmission-vpn` (démarrent root puis

@@ -462,6 +462,142 @@ def fetch_movies_list():
     return movies
 
 
+def find_series_by_id(series_id):
+    return next((s for s in fetch_series_list() if s["id"] == series_id), None)
+
+
+def find_movie_by_id(movie_id):
+    return next((m for m in fetch_movies_list() if m["id"] == movie_id), None)
+
+
+# --- Métadonnées d'affichage (jaquette + liens), partagées par les 3 vues -----
+#
+# Aucun appel WAN côté serveur, volontairement (demandé explicitement le
+# 2026-08-03) : les jaquettes sortent du cache disque de Sonarr/Radarr et les
+# ids externes (imdbId/tvdbId/tmdbId) sont déjà dans les objets renvoyés par
+# leur API, donc rien à aller chercher chez thetvdb/tmdb. Seuls les liens
+# eux-mêmes sortent — et c'est le navigateur qui les suit, sur clic.
+
+# Sonarr/Radarr téléchargent la jaquette à l'ajout du titre et la gardent sous
+# leur dossier de config, déjà visible par clearr via le mount unique
+# ${DATA_ROOT}:/data_root (mêmes chemins que dans arr/docker-compose.yml, cf.
+# commentaire d'en-tête) : on sert donc le fichier tel quel, sans même passer
+# par un proxy HTTP vers sonarr/radarr.
+MEDIA_COVER_DIRS = {
+    "series": os.path.join(DATA_ROOT, ".arr", "sonarr", "config", "MediaCover"),
+    "film": os.path.join(DATA_ROOT, ".arr", "radarr", "config", "MediaCover"),
+}
+# Du plus léger au plus lourd : poster-250 (~20 Ko) suffit largement pour une
+# vignette au survol, les autres ne servent que de repli si le cache d'un titre
+# est incomplet (rien ne garantit que les 3 variantes soient générées).
+POSTER_CANDIDATES = ("poster-250.jpg", "poster-500.jpg", "poster.jpg")
+
+# Les UI Sonarr/Radarr vivent sur des sous-domaines de ${DOMAIN} (LAN-only via
+# arr-lan-only, comme clearr lui-même). DOMAIN vient de .env.shared, donc
+# injecté explicitement dans l'environnement du conteneur (`environment:` dans
+# arr/docker-compose.yml, env_file ne chargeant que arr/.env) — absent = pas
+# de lien arr affiché, le reste fonctionne quand même.
+DOMAIN = os.environ.get("DOMAIN", "")
+
+
+def poster_file(kind, arr_id):
+    """Chemin disque de la jaquette d'une série/d'un film, ou None si le cache
+    Sonarr/Radarr n'en a pas (titre tout juste ajouté, cache purgé...). `arr_id`
+    est passé par int() : c'est ce qui garantit qu'aucune valeur venue de l'URL
+    ne puisse remonter hors de MediaCover/."""
+    directory = MEDIA_COVER_DIRS.get(kind)
+    if not directory:
+        return None
+    for name in POSTER_CANDIDATES:
+        path = os.path.join(directory, str(int(arr_id)), name)
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def external_links(kind, item):
+    """Liens vers les bases publiques, construits depuis les ids déjà présents
+    dans l'objet arr. TVDB est adressé par son endpoint /dereferrer/series/<id>
+    (redirection officielle par id) : Sonarr expose tvdbId, pas le slug du
+    site."""
+    links = []
+    if item.get("imdbId"):
+        links.append({"label": "IMDb", "url": f"https://www.imdb.com/title/{item['imdbId']}/"})
+    if kind == "series":
+        if item.get("tvdbId"):
+            links.append({"label": "TVDB", "url": f"https://thetvdb.com/dereferrer/series/{item['tvdbId']}"})
+    elif item.get("tmdbId"):
+        links.append({"label": "TMDB", "url": f"https://www.themoviedb.org/movie/{item['tmdbId']}"})
+    return links
+
+
+def arr_link(kind, item):
+    """Lien vers la fiche du titre dans l'UI Sonarr/Radarr. Sonarr adresse une
+    série par son titleSlug, Radarr un film par son tmdbId (son titleSlug EST
+    le tmdbId)."""
+    if not DOMAIN:
+        return None
+    if kind == "series":
+        slug = item.get("titleSlug")
+        return {"label": "Sonarr", "url": f"https://sonarr.{DOMAIN}/series/{slug}"} if slug else None
+    tmdb = item.get("tmdbId")
+    return {"label": "Radarr", "url": f"https://radarr.{DOMAIN}/movie/{tmdb}"} if tmdb else None
+
+
+def item_meta(kind, item):
+    """Bloc de métadonnées consommé identiquement par les 3 vues (voir
+    templates/_meta.html) : URL interne de la jaquette (None si pas de cache,
+    la vue n'affiche alors rien au survol) + liens externes et arr."""
+    links = external_links(kind, item)
+    arr = arr_link(kind, item)
+    if arr:
+        links.append(arr)
+    return {
+        "kind": kind,
+        "id": item["id"],
+        "title": item["title"],
+        "poster": f"/poster/{kind}/{item['id']}" if poster_file(kind, item["id"]) else None,
+        "links": links,
+    }
+
+
+def build_arr_meta_index():
+    """Index chemin bibliothèque -> métadonnées, pour rattacher un torrent au
+    titre Sonarr/Radarr dont il porte les fichiers (la vue Torrents ne connaît
+    qu'un torrent, contrairement aux vues Séries/Films qui partent déjà de
+    l'objet arr). Films indexés par chemin exact du fichier, séries par préfixe
+    de dossier — mêmes critères que plan_radarr_deletion/plan_sonarr_unmonitor,
+    et pas de traduction de chemin à faire (arr et clearr partagent /data_root).
+    Best-effort : un arr injoignable donne juste un index partiel, la vue reste
+    fonctionnelle sans jaquette ni lien."""
+    series = [(s["path"] + "/", item_meta("series", s)) for s in fetch_series_list() if s.get("path")]
+    movies = {}
+    for m in fetch_movies_list():
+        mf = m.get("movieFile") or {}
+        if mf.get("path"):
+            movies[mf["path"]] = item_meta("film", m)
+    logger.debug("index métadonnées arr : %d série(s), %d film(s) avec fichier", len(series), len(movies))
+    return {"series": series, "movies": movies}
+
+
+def torrent_meta(torrent, library_index, meta_index):
+    """Métadonnées du titre auquel appartient ce torrent, ou None (jamais
+    importé, ou fichier supprimé de library/). Repart des inodes déjà calculés
+    par analyze_torrent_files() — donc aucun stat supplémentaire, et les
+    symlinks cross-seed sont déjà résolus."""
+    for inode in sorted(torrent.get("_inodes") or ()):
+        path = library_index.get(inode)
+        if not path:
+            continue
+        meta = meta_index["movies"].get(path)
+        if meta:
+            return meta
+        for prefix, series_meta in meta_index["series"]:
+            if path.startswith(prefix):
+                return series_meta
+    return None
+
+
 def find_series_torrents(all_torrents, library_index, cross_seed_child_ids, series_path):
     """Torrents top-level (hors enfants cross-seed, cascadés avec leur parent
     — voir build_cross_seed_groups) ayant au moins un fichier library/ sous le

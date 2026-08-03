@@ -22,6 +22,88 @@ tr.collapsing {
   padding-right: .5rem;
 }
 
+/* Bouton de suppression réduit à un seul glyphe (les 3 vues, 2026-08-03) : le
+   sens passe par title/aria-label, pas par le texte. Une croix ✕ (U+2715) et
+   non un emoji type 🗑 (essayé et rejeté le 2026-08-03) — un emoji est rendu par
+   la police couleur du système, donc ni monochrome ni cohérent d'un appareil à
+   l'autre, alors qu'un glyphe texte hérite simplement du rouge de
+   .btn-outline-danger. Largeur figée pour que la colonne d'actions ne change pas
+   de largeur d'une ligne à l'autre. */
+.btn-delete {
+  width: 2rem;
+  padding-left: 0;
+  padding-right: 0;
+  line-height: 1.25;
+}
+
+/* Vue Torrents : colonne d'actions figée à droite. C'est la seule des 3 vues
+   assez large pour que .table-responsive défile horizontalement dès qu'on zoome
+   (7 colonnes + un nom de release très long) — le bouton sortait alors de
+   l'écran et il fallait défiler pour l'atteindre. background-color explicite
+   parce que --bs-table-bg est transparent : sans lui, les cellules qui défilent
+   dessous resteraient visibles à travers. Le surlignage de survol de Bootstrap
+   passe par un box-shadow inset (donc peint AU-DESSUS de ce fond) et continue
+   de fonctionner.
+   Pas de bordure ni d'ombre sur le bord gauche de cette colonne (essayé et
+   rejeté le 2026-08-03, demandé explicitement) : elle marquait une séparation
+   visible en permanence, y compris quand rien ne défile. */
+.table-sticky-actions > * > tr > :last-child {
+  position: sticky;
+  right: 0;
+  background-color: var(--bs-body-bg);
+}
+
+/* Jaquette au survol (voir clearr.js) — position: fixed pour échapper à
+   l'overflow de .table-responsive. z-index sous celui de la modale Bootstrap
+   (1055) : quand une confirmation est ouverte, elle doit rester au-dessus. */
+#poster-pop {
+  position: fixed;
+  z-index: 1030;
+  display: none;
+  pointer-events: none;
+}
+
+#poster-pop.visible {
+  display: block;
+}
+
+#poster-pop img {
+  display: block;
+  width: 180px;
+  border-radius: .375rem;
+  border: 1px solid var(--bs-border-color);
+  box-shadow: 0 .5rem 1rem rgba(0, 0, 0, .45);
+}
+
+/* Indique qu'une jaquette est disponible sans ajouter d'icône dans une ligne
+   déjà dense (souligné pointillé, même convention que l'abbr HTML). */
+.has-poster {
+  text-decoration: underline dotted var(--bs-border-color);
+  text-underline-offset: 3px;
+  cursor: help;
+}
+
+/* Liens IMDb/TVDB/TMDB/Sonarr/Radarr : volontairement discrets et de la taille
+   d'un badge, pour ne pas concurrencer le titre ni le bouton Supprimer. */
+.meta-link {
+  display: inline-block;
+  margin-left: .35rem;
+  padding: 0 .3rem;
+  border: 1px solid var(--bs-border-color);
+  border-radius: .25rem;
+  font-size: .68rem;
+  line-height: 1.4;
+  text-decoration: none;
+  color: var(--bs-secondary-color);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.meta-link:hover {
+  color: var(--bs-emphasis-color);
+  border-color: var(--bs-secondary-color);
+}
+
 /* Noms de torrent/release ("Some.Show.S01E01.1080p.WEB-DL.x265-GROUP.mkv")
    sont un seul "mot" sans espace pour le navigateur — un retour à la ligne
    forcé (overflow-wrap) coupait le mot n'importe où, moche (essayé et

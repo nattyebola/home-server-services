@@ -180,6 +180,12 @@ services:
       - /etc/localtime:/etc/localtime:ro
     env_file:
       - .env
+    environment:
+      # DOMAIN vit dans .env.shared (pas arr/.env, donc hors env_file) — clearr
+      # en a besoin pour construire les liens vers les fiches Sonarr/Radarr
+      # (sonarr.${DOMAIN}/radarr.${DOMAIN}, LAN-only comme clearr lui-même).
+      # Absent = pas de lien arr affiché, le reste de la vue fonctionne.
+      - DOMAIN=${DOMAIN}
     networks:
       - default
       - traefik-public

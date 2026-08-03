@@ -1,0 +1,20 @@
+{# Cellule "titre" commune aux 3 vues (Torrents/Séries/Films) : le libellé
+   lui-même, la jaquette au survol et les liens externes/arr. Un seul macro
+   plutôt que le même bloc recopié trois fois — c'est aussi ce qui garantit que
+   les trois vues se comportent pareil au survol.
+
+   `meta` vaut None quand il n'y a rien à rattacher (torrent jamais importé, ou
+   fichier bibliothèque supprimé) : on retombe alors sur du texte nu.
+
+   data-poster porte l'URL interne, PAS un <img> déjà dans le HTML : clearr.js
+   ne charge l'image qu'au premier survol de la ligne (45 jaquettes × ~20 Ko
+   seraient sinon téléchargées à chaque rendu de la page, alors qu'on en regarde
+   une ou deux). #}
+{% macro title_cell(text, meta, links=True, text_class='') %}
+  <span class="{{ text_class }}{% if meta and meta.poster %} has-poster{% endif %}"
+        {% if meta and meta.poster %}data-poster="{{ meta.poster }}" data-poster-title="{{ meta.title }}"{% endif %}>{{ text }}</span>
+  {%- if links and meta %}{% for l in meta.links %}
+  <a class="meta-link" href="{{ l.url }}" target="_blank" rel="noopener noreferrer"
+     title="Ouvrir dans {{ l.label }}">{{ l.label }}</a>
+  {%- endfor %}{% endif %}
+{% endmacro %}

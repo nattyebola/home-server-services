@@ -1,3 +1,4 @@
+{% from "_meta.html" import title_cell %}
 {% include "_tabs.html" %}
 {% if message %}<div class="alert alert-{{ message_kind }} py-2">{{ message }}</div>{% endif %}
 
@@ -20,7 +21,7 @@
 </p>
 
 <div class="table-responsive">
-<table class="table table-sm table-hover align-middle small mb-0">
+<table class="table table-sm table-hover align-middle small mb-0 table-sticky-actions">
   <thead>
     <tr class="text-body-secondary text-uppercase" style="font-size:.72rem;">
       {% for col in columns %}
@@ -44,7 +45,7 @@
       <td class="ratio-{{ g.parent.ratio_class }}">{{ g.parent.ratio }}</td>
       <td class="text-body-secondary"{% if g.parent.tracker_others %} title="{{ g.parent.tracker_others }}"{% endif %}>{{ g.parent.tracker }}</td>
       <td class="{{ 'text-danger' if g.parent.abs_danger else '' }}">
-        {{ g.parent.name }}
+        {{ title_cell(g.parent.name, g.parent.meta) }}
         {% if g.children %}
         <button type="button" class="btn btn-sm btn-link p-0 ms-1 align-baseline"
                 data-bs-toggle="collapse" data-bs-target=".xseed-{{ g.parent.id }}"
@@ -54,7 +55,8 @@
         {% endif %}
       </td>
       <td class="text-end">
-        <a href="#" class="btn btn-sm btn-outline-danger" data-get="/torrents/{{ g.parent.id }}/confirm?{{ qs }}" data-target="#modal-body">Supprimer</a>
+        <a href="#" class="btn btn-sm btn-outline-danger btn-delete" data-get="/torrents/{{ g.parent.id }}/confirm?{{ qs }}"
+           data-target="#modal-body" title="Supprimer ce torrent" aria-label="Supprimer ce torrent">✕</a>
       </td>
     </tr>
     {% for c in g.children %}
@@ -64,7 +66,7 @@
       <td>{{ c.size }}</td>
       <td class="ratio-{{ c.ratio_class }}">{{ c.ratio }}</td>
       <td class="text-body-secondary"{% if c.tracker_others %} title="{{ c.tracker_others }}"{% endif %}>{{ c.tracker }}</td>
-      <td class="text-body-secondary ps-4">└ {{ c.name }}</td>
+      <td class="text-body-secondary ps-4">└ {{ title_cell(c.name, c.meta, links=False) }}</td>
       <td></td>
     </tr>
     {% endfor %}
