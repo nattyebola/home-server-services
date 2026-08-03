@@ -92,9 +92,13 @@ dashboard-refresh:
 # continu par `make up STACK=arr`) et TUI (ce target, ponctuel) partagent la
 # même image/le même core.py ; ancien script hôte scripts/torrent-cleanup.py
 # retiré (tournait via docker exec, incompatible avec la conteneurisation).
+# `tui` seul, pas `python -m app tui` : l'image a un ENTRYPOINT
+# ["python", "-m", "app"] (arr/clearr/Dockerfile), les arguments donnés à `run`
+# s'y ajoutent — les répéter faisait voir `python` à argparse comme
+# sous-commande (`invalid choice: 'python'`).
 clearr: STACK := arr
 clearr: network
-	@$(compose) run --rm -it clearr python -m app tui
+	@$(compose) run --rm -it clearr tui
 
 # réapplique les tailles de quality definition + le champ language Radarr
 # que recyclarr ne gère pas et resynchronise à leurs défauts à chaque
