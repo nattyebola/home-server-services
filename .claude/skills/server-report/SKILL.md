@@ -1,17 +1,24 @@
 ---
 name: server-report
-description: Passe en revue l'état complet du serveur (containers, cron, disque, sauvegarde, logs de tous les services) et produit un rapport synthétique en français, distinguant ce qui nécessite une action de ce qui est du bruit résolu. À utiliser quand l'utilisateur demande un rapport d'état, un check de santé du serveur, ou de repasser sur les logs/l'état du projet.
+description: Passe en revue l'état complet du serveur (containers, cron, disque, sauvegarde, logs de tous les services) et rapporte en français uniquement ce qui ne va pas, en écartant le bruit déjà résolu. À utiliser quand l'utilisateur demande un rapport d'état, un check de santé du serveur, ou de repasser sur les logs/l'état du projet.
 ---
 
 # server-report — audit d'état + logs du serveur
 
 ## Objectif
 
-Ne pas juste dumper des logs bruts : chaque anomaly trouvée doit être
-**corrélée dans le temps** (avec un événement connu : redémarrage d'une
-stack, réinstallation du crontab, etc.) et **classée** — one-off résolu,
-récurrent à surveiller, ou action requise. Le rapport final doit tenir en
-un tableau/quelques paragraphes lisibles, pas en pages de grep.
+**Auditer largement, ne rapporter que les anomalies.** L'utilisateur a
+demandé explicitement le 2026-08-03 que ce qui est au vert ne figure pas
+dans le rapport : pas de tableau de containers sains, pas de lignes
+« disque OK », pas de détail sur une sauvegarde à jour.
+
+Ça ne change **rien** aux vérifications à faire : toutes les sections
+ci-dessous s'exécutent quand même, intégralement. C'est la restitution qui
+filtre — on ne peut pas affirmer que rien ne va mal sans avoir regardé.
+
+Chaque anomalie retenue doit être **corrélée dans le temps** (avec un
+événement connu : redémarrage d'une stack, réinstallation du crontab, etc.)
+et **classée** — one-off résolu, récurrent à surveiller, ou action requise.
 
 ## 1. Containers
 
@@ -98,13 +105,21 @@ Pour chaque motif trouvé, avant de le reporter comme un problème :
   l'impression que ça continue.
 - **Contexte** : `grep -B3` autour de l'erreur si la ligne seule ne dit pas
   ce qui a échoué (stack traces, etc.).
+- **Ne jamais reprendre le libellé d'une erreur au pied de la lettre** —
+  piège rencontré le 2026-08-03 : les `API Request Limit reached for X
+  (Prowlarr)` de Sonarr ont été rapportés comme des quotas d'indexeur
+  atteints, alors que la ligne `<error>` juste au-dessus disait
+  `due to recent failures` : c'était le backoff d'échec de Prowlarr, sur
+  trois causes racines distinctes (401 d'auth, 530 Cloudflare, un seul vrai
+  quota). Un composant qui relaie l'erreur d'un autre la requalifie souvent
+  à tort. Pour tout ce qui touche aux 429/désactivations d'indexeurs,
+  déléguer au skill **`indexer-quota`** plutôt que de conclure ici.
 
-Ne jamais reporter une info sensible trouvée dans les logs (domaine réel,
-IP, etc.) telle quelle si ce n'est pas nécessaire — décrire génériquement
-("le domaine principal") plutôt que de la recopier, même si ce n'est pas
-un secret à proprement parler (cf. `CLAUDE.md` : repo public, jamais de
-PII/valeur propre au déploiement en clair dans un fichier versionné — le
-même réflexe s'applique par prudence à ce qu'on écrit dans une réponse).
+Les fichiers de log internes (`/config/logs/*.txt` dans les conteneurs
+Servarr) sont plus fiables que `docker logs` quand il faut une fenêtre
+horaire précise : horodatés à la seconde et non tronqués par
+`max-size`/`max-file`. Ils tournent, donc dédupliquer les occurrences vues
+dans plusieurs fichiers.
 
 ## 5. Git
 
@@ -113,11 +128,36 @@ git status --porcelain=v1
 git status -sb   # confirme l'alignement avec origin/<branche>
 ```
 
-## 6. Format du rapport
+## 6. Format du rapport — anomalies seulement
 
-Un tableau `Service | Constat | Statut` pour les trouvailles de logs
-(Statut = résolu / à surveiller / action requise), plus une section courte
-pour containers/cron/disque/backup/git. Terminer par un résumé d'une
-phrase : rien de cassé, ou la liste des actions réellement nécessaires.
-Ne pas alarmer sur du bruit déjà résolu — le signaler pour mémoire, pas
-comme un problème actif.
+Structure :
+
+1. **Une seule ligne de couverture**, en tête, listant ce qui a été vérifié
+   et trouvé sain — sans détail ni tableau. Ex. : *« Vérifiés et au vert :
+   16/16 containers healthy, disque (41 %/48 %), sauvegarde (snapshot du
+   02/08), crontab en phase, git propre. »* C'est le seul endroit où le vert
+   apparaît, et il tient en une phrase. Ne pas le supprimer : sans lui, on
+   ne distingue pas « vérifié et sain » de « pas vérifié ».
+2. **Un tableau `Service | Constat | Statut`** des anomalies uniquement
+   (Statut = résolu / à surveiller / action requise). Un service sans
+   anomalie n'a pas de ligne.
+3. **Le résumé final**, une phrase : soit la liste des actions réellement
+   nécessaires, soit « rien qui demande une action ».
+
+Règles de restitution :
+
+- **Le bruit résolu ne mérite qu'une ligne de tableau**, pas un paragraphe :
+  une rafale terminée, une panne tracker passée, un warning cosmétique
+  récurrent. Le mentionner sert à dire « vu, écarté » — pas à documenter.
+- **Ne pas gonfler un constat pour remplir le rapport.** Un rapport à deux
+  lignes d'anomalies est un bon rapport.
+- **Chiffrer toute anomalie retenue** (occurrences, fenêtre horaire,
+  première/dernière occurrence) — sans ça, impossible de la classer.
+- **Distinguer une cause externe d'une cause locale** : panne tracker,
+  scan internet sur un vhost WAN, quota d'un service tiers. Externe et
+  terminé = ligne de tableau en « résolu », pas une action.
+- Ne jamais reporter une info sensible trouvée dans les logs (domaine réel,
+  IP, jeton de partage, clé d'API) telle quelle si ce n'est pas nécessaire
+  — décrire génériquement (« le domaine principal », « une URL d'abonnement
+  calendrier »), cf. `CLAUDE.md` : repo public, jamais de PII ni de valeur
+  propre au déploiement en clair.
