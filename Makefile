@@ -134,6 +134,11 @@ restore:
 # cron_marker_age_seconds()) ; created here rather than left to the first
 # cron tick so the dashboard doesn't have to guess between "never ran" and
 # "directory missing".
+# The substituted content goes through scripts/install-crontab.sh rather than
+# straight into `crontab -`: this repo's jobs are merged into a marked block and
+# every other line of the crontab (jobs the user added by hand, unrelated to
+# this repo) is preserved — piping into `crontab -` replaced the whole crontab
+# and dropped them silently.
 cron-install:
 	@test -f .env.shared || (echo ".env.shared missing — see .env.shared.example" >&2 && exit 1)
 	$(eval PUID := $(shell grep '^PUID=' .env.shared | cut -d= -f2))
@@ -141,6 +146,6 @@ cron-install:
 	@test -n "$(PUID)" || (echo "PUID not set in .env.shared" >&2 && exit 1)
 	@test -n "$(DATA_ROOT)" || (echo "DATA_ROOT not set in .env.shared" >&2 && exit 1)
 	@mkdir -p "$(DATA_ROOT)/.cron-status"
-	sed -e "s|__REPO_ROOT__|$(CURDIR)|g" -e "s|__PUID__|$(PUID)|g" -e "s|__DATA_ROOT__|$(DATA_ROOT)|g" scripts/crontab | crontab -
+	sed -e "s|__REPO_ROOT__|$(CURDIR)|g" -e "s|__PUID__|$(PUID)|g" -e "s|__DATA_ROOT__|$(DATA_ROOT)|g" scripts/crontab | scripts/install-crontab.sh "$(CURDIR)"
 	@echo "installed crontab:"
 	@crontab -l

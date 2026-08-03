@@ -887,6 +887,46 @@ explicitement :
 
 ## Pièges à ne pas répéter
 
+- **`make cron-install` ne doit jamais remplacer le crontab entier** — il
+  pipait `scripts/crontab` directement dans `crontab -`, qui écrase toute la
+  table : n'importe quel job ajouté à la main par l'utilisateur (sans rapport
+  avec ce repo) disparaissait silencieusement à l'installation suivante, sans
+  diff ni avertissement. Repéré le 2026-08-03 par l'utilisateur, juste après
+  qu'un job perso ait été ajouté au crontab. Fix :
+  `scripts/install-crontab.sh` (reçoit sur stdin le contenu déjà substitué,
+  le Makefile gardant la substitution puisque lui seul lit `.env.shared`)
+  fusionne les jobs du repo dans un **bloc délimité par deux commentaires
+  marqueurs** et recopie verbatim tout ce qui est en dehors. Conséquences à
+  garder en tête :
+  - Le bloc est ajouté **en dernier**, délibérément : un `MAILTO=""` ne
+    s'applique qu'aux lignes qui le *suivent* dans un crontab, donc le mettre
+    à la fin limite ce silence aux jobs du repo au lieu d'avaler aussi le mail
+    des jobs de l'utilisateur.
+  - Un job perso doit vivre **hors** du bloc ; à l'intérieur il serait bien
+    réécrit à chaque install (c'est le comportement voulu, `scripts/crontab`
+    reste la source de vérité pour ce qui est managé).
+  - Chemin de migration depuis les versions pré-marqueurs : les lignes du repo
+    déjà présentes sans marqueur sont retirées, sinon elles seraient
+    dupliquées. Deux règles, dans cet ordre — toute ligne présente **verbatim**
+    dans le bloc à installer (attrape les jobs, `MAILTO` et l'en-tête de
+    commentaires, qui resterait sinon orpheline dans la partie utilisateur),
+    puis toute ligne restante mentionnant le chemin du checkout (un job dont le
+    texte a changé entre deux versions du fichier). Les lignes retirées sont
+    affichées, un job perso qui mentionnerait le chemin du repo étant emporté
+    au passage.
+  - Le comparatif verbatim passe le bloc à `awk` **via un fichier, pas
+    `-v`** : une affectation `-v` traverse le traitement des séquences
+    d'échappement d'awk, qui transforme le `date +\%s` des lignes cron en
+    `date +%s` — elles cessent alors de matcher. Même piège `%` que ci-dessous,
+    une couche au-dessus.
+  Testé le 2026-08-03 sur les trois chemins avant de committer : migration
+  depuis un crontab pré-marqueurs contenant en plus 2 jobs perso (jobs perso et
+  leur commentaire conservés, 0 job repo dupliqué, 0 commentaire orphelin),
+  idempotence (3 réinstalls consécutifs → crontab bit-à-bit identique), et
+  première installation sur une machine sans crontab du tout (`crontab -l` sort
+  en erreur, cas géré) — ce dernier via un stub `crontab` dans le `PATH` pour ne
+  pas toucher au vrai.
+
 - **Un `%` non échappé dans la partie commande d'une ligne crontab est
   interprété par cron comme un saut de ligne** — tout ce qui suit devient
   l'entrée standard fournie à la commande, pas la suite de la ligne de
@@ -1418,7 +1458,8 @@ server/
 ├── ARCHITECTURE.md            # doc humaine : architecture, choix structurants
 ├── ISSUES.md                  # doc humaine : problèmes rencontrés
 ├── scripts/
-│   ├── crontab                    # source de vérité du crontab hôte — `make cron-install`
+│   ├── crontab                    # source de vérité des crons DU REPO — `make cron-install`
+│   ├── install-crontab.sh          # fusionne scripts/crontab dans un bloc marqué, préserve les jobs perso
 │   ├── backup.sh                   # sauvegarde restic hebdomadaire
 │   ├── restore.sh                  # restauration guidée d'un snapshot restic
 │   ├── generate-dashboard.py       # régénère dashboard/html/ — `make dashboard-refresh`
