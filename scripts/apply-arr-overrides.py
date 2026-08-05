@@ -11,6 +11,13 @@
 # que la dérive ne s'installe pas silencieusement entre deux exécutions
 # manuelles.
 #
+# Provisionne AUSSI la connexion Emby/Jellyfin de Sonarr/Radarr — création
+# incluse — à partir des constantes JELLYFIN_* plus bas et de JELLYFIN_API_KEY
+# (arr/.env, seule valeur secrète du lot). Contrairement au reste, ce n'est pas
+# recyclarr qui fait dériver ces réglages (il ne touche pas aux notifications) :
+# ils ne vivaient nulle part dans le repo, donc rien ne les recréait sur une
+# installation neuve ni ne rattrapait une modification par mégarde dans l'UI.
+#
 # Provisionne AUSSI la config anime (arr/profiles/sonarr-anime.json) : les
 # custom formats qui nous appartiennent et les 3 profils Anime (Fansub)*.
 # recyclarr ne les gère pas (aucun trash_id ne les couvre), donc rien ne les
@@ -35,6 +42,46 @@ RADARR_URL = "http://localhost:7878/api/v3"
 
 RADARR_PROFILE_NAME = "[SQP] SQP-1 WEB (2160p)"
 
+# --- connexion "Emby/Jellyfin" de Sonarr/Radarr (refresh ciblé de Jellyfin) ---
+#
+# Entièrement déclarée ici : nom, cible réseau, mapping de chemins et
+# déclencheurs. Rien de tout ça n'est propre au déploiement — `jellyfin:8096`
+# est le nom de service Docker (jellyfin/docker-compose.yml) et le mapping
+# découle des montages du repo (Sonarr/Radarr voient /data_root/library via leur
+# mount unique, Jellyfin voit /library via le sien, voir ARCHITECTURE.md). Seule
+# la clé API est un secret, donc la seule valeur en .env (JELLYFIN_API_KEY).
+#
+# Déclencheurs : onDownload/onUpgrade/onRename couvrent l'arrivée d'un fichier
+# (le rôle d'origine de ces connexions, 2026-07-24). Les deux déclencheurs de
+# suppression ont été ajoutés le 2026-08-05 : sans eux Jellyfin ne découvre la
+# disparition d'un titre que par son watcher de bibliothèque, dont le
+# LibraryMonitorDelay vaut 60 s — un titre supprimé restait affiché jusqu'à une
+# minute dans Jellyfin, et autant dans Kodi qui réplique la bibliothèque Jellyfin
+# via jellyfin-kodi (dont dépend l'addon kodi/context.clearr).
+#
+# Les variantes *ForUpgrade sont volontairement absentes : un remplacement est
+# déjà annoncé par onUpgrade, les activer n'ajouterait qu'un aller-retour
+# "retiré puis rajouté" côté Jellyfin à chaque upgrade. Comme pour les profils
+# anime, cette liste FAIT AUTORITÉ : tout autre déclencheur est remis à False.
+JELLYFIN_IMPLEMENTATION = "MediaBrowser"
+JELLYFIN_CONFIG_CONTRACT = "MediaBrowserSettings"
+JELLYFIN_CONNECTION_NAME = "Jellyfin"
+JELLYFIN_FIELDS = {
+    "host": "jellyfin",
+    "port": 8096,
+    "useSsl": False,
+    "urlBase": "",
+    # notify=False : pas de notification à l'écran des clients Jellyfin, on ne
+    # veut que le rafraîchissement de bibliothèque.
+    "notify": False,
+    "updateLibrary": True,
+    "mapFrom": "/data_root/library",
+    "mapTo": "/library",
+}
+JELLYFIN_COMMON_TRIGGERS = ("onDownload", "onUpgrade", "onRename")
+SONARR_JELLYFIN_TRIGGERS = JELLYFIN_COMMON_TRIGGERS + ("onSeriesDelete", "onEpisodeFileDelete")
+RADARR_JELLYFIN_TRIGGERS = JELLYFIN_COMMON_TRIGGERS + ("onMovieDelete", "onMovieFileDelete")
+
 SONARR_SIZE_OVERRIDES = {
     "WEBRip-2160p": {"maxSize": 100, "preferredSize": 85},
     "WEBDL-2160p": {"maxSize": 100, "preferredSize": 85},
@@ -53,6 +100,11 @@ RADARR_SIZE_OVERRIDES = {
     "WEBRip-2160p": {"minSize": 25, "preferredSize": 65, "maxSize": 100},
     "Bluray-2160p": {"minSize": 40, "preferredSize": 75, "maxSize": 120},
 }
+
+
+class MissingIntegration(Exception):
+    """Intégration documentée comme optionnelle et absente de ce déploiement :
+    ni une correction à signaler, ni une erreur à faire échouer le script."""
 
 
 def load_env_file(path):
@@ -126,6 +178,92 @@ def apply_radarr_language(container, base_url, api_key, profile_name):
     profile["language"] = {"id": -1, "name": "Any"}
     api_put(container, base_url, api_key, f"/qualityprofile/{profile['id']}", profile)
     return [f"Radarr {profile_name}: language {before} -> Any"]
+
+
+def set_field(body, name, value):
+    for field in body["fields"]:
+        if field["name"] == name:
+            field["value"] = value
+            return
+    body["fields"].append({"name": name, "value": value})
+
+
+def jellyfin_body(skeleton, jellyfin_key, triggers):
+    """Applique la config Jellyfin voulue sur un squelette — la connexion
+    existante, ou /notification/schema pour une création (même principe que
+    build_profile_body pour les profils qualité).
+
+    `jellyfin_key` à None laisse le champ apiKey tel quel : l'API renvoie les
+    champs secrets masqués en "********" et les préserve à l'écriture quand on
+    les repasse ainsi (vérifié le 2026-08-05 via POST /notification/testall, les
+    connexions restant valides après un PUT fait depuis un GET) — c'est ce qui
+    permet de corriger des déclencheurs sans connaître la clé."""
+    body = copy.deepcopy(skeleton)
+    body["name"] = JELLYFIN_CONNECTION_NAME
+    body["implementation"] = JELLYFIN_IMPLEMENTATION
+    body["configContract"] = JELLYFIN_CONFIG_CONTRACT
+    body["includeHealthWarnings"] = False
+    body["tags"] = []
+    for name, value in JELLYFIN_FIELDS.items():
+        set_field(body, name, value)
+    if jellyfin_key:
+        set_field(body, "apiKey", jellyfin_key)
+    # Déclaratif : la liste des déclencheurs voulus fait autorité, tout autre
+    # onX booléen est explicitement remis à False (les supportsOnX, en lecture
+    # seule côté API, ne commencent pas par "on" et ne sont donc pas touchés).
+    for key, value in body.items():
+        if key.startswith("on") and isinstance(value, bool):
+            body[key] = key in triggers
+    return body
+
+
+def jellyfin_signature(notification):
+    """apiKey exclue de la comparaison : l'API ne la révèle jamais (masquée en
+    "********"), donc une clé qui aurait dérivé côté Sonarr/Radarr est
+    indétectable d'ici — elle n'est réécrite qu'à la création, ou à l'occasion
+    d'une écriture déclenchée par un autre champ. `POST /notification/testall`
+    reste le seul moyen de vérifier qu'elle fonctionne encore."""
+    fields = {f["name"]: f.get("value") for f in notification["fields"] if f["name"] != "apiKey"}
+    triggers = {k: v for k, v in notification.items()
+                if k.startswith("on") and isinstance(v, bool)}
+    return (notification["name"], fields, triggers)
+
+
+def apply_jellyfin_connection(label, container, base_url, api_key, jellyfin_key, triggers):
+    """Provisionne la connexion Emby/Jellyfin de cet arr (création incluse).
+
+    Deux niveaux de service selon que JELLYFIN_API_KEY (arr/.env) est renseignée :
+    avec la clé, la connexion est créée si absente et entièrement réalignée ;
+    sans la clé, une connexion existante voit quand même ses champs non secrets
+    et ses déclencheurs corrigés, mais une connexion absente ne peut pas être
+    créée — MissingIntegration, donc une note et pas une erreur (la connexion
+    est documentée comme optionnelle dans README.md : un déploiement sans
+    Jellyfin ne doit pas voir le cron quotidien sortir en échec)."""
+    notifications = api_get(container, base_url, api_key, "/notification")
+    target = next((n for n in notifications
+                   if n["implementation"] == JELLYFIN_IMPLEMENTATION), None)
+    if target is None:
+        if not jellyfin_key:
+            raise MissingIntegration(
+                f"{label} : aucune connexion Jellyfin ({JELLYFIN_IMPLEMENTATION}) et "
+                "JELLYFIN_API_KEY absente de arr/.env — connexion non gérée "
+                "(voir arr/.env.example et README.md, étape de configuration de arr)")
+        schema = api_get(container, base_url, api_key, "/notification/schema")
+        skeleton = next((s for s in schema
+                         if s["implementation"] == JELLYFIN_IMPLEMENTATION), None)
+        if skeleton is None:
+            raise RuntimeError(
+                f"{label} : implémentation {JELLYFIN_IMPLEMENTATION} absente de "
+                "/notification/schema — nom changé côté Servarr ?")
+        api_write(container, base_url, api_key, "POST", "/notification",
+                  jellyfin_body(skeleton, jellyfin_key, triggers))
+        return [f"{label} connexion Jellyfin créée"]
+
+    body = jellyfin_body(target, jellyfin_key, triggers)
+    if jellyfin_signature(target) == jellyfin_signature(body):
+        return []
+    api_put(container, base_url, api_key, f"/notification/{target['id']}", body)
+    return [f"{label} connexion {target['name']!r} réalignée"]
 
 
 def spec_body(spec):
@@ -261,8 +399,12 @@ def main():
     arr_env = load_env_file(os.path.join(REPO_ROOT, "arr", ".env"))
     sonarr_api_key = arr_env.get("SONARR_API_KEY")
     radarr_api_key = arr_env.get("RADARR_API_KEY")
+    # Facultative (voir arr/.env.example) : sans elle la connexion Jellyfin
+    # existante est quand même maintenue, mais pas créée si elle manque.
+    jellyfin_api_key = arr_env.get("JELLYFIN_API_KEY")
 
     changed = []
+    notes = []
     errors = []
     try:
         changed += apply_quality_sizes("Sonarr", SONARR_CONTAINER, SONARR_URL,
@@ -277,16 +419,37 @@ def main():
     except Exception as e:
         errors.append(f"Sonarr (anime): {e}")
     try:
+        changed += apply_jellyfin_connection("Sonarr", SONARR_CONTAINER, SONARR_URL,
+                                             sonarr_api_key, jellyfin_api_key,
+                                             SONARR_JELLYFIN_TRIGGERS)
+    except MissingIntegration as e:
+        notes.append(str(e))
+    except Exception as e:
+        errors.append(f"Sonarr (Jellyfin): {e}")
+    try:
         changed += apply_quality_sizes("Radarr", RADARR_CONTAINER, RADARR_URL,
                                         radarr_api_key, RADARR_SIZE_OVERRIDES)
         changed += apply_radarr_language(RADARR_CONTAINER, RADARR_URL, radarr_api_key, RADARR_PROFILE_NAME)
     except Exception as e:
         errors.append(f"Radarr: {e}")
+    # Bloc à part de celui ci-dessus pour la même raison que la config anime :
+    # une connexion Jellyfin absente ou en erreur ne doit pas emporter les
+    # tailles de palier et le champ language de Radarr.
+    try:
+        changed += apply_jellyfin_connection("Radarr", RADARR_CONTAINER, RADARR_URL,
+                                             radarr_api_key, jellyfin_api_key,
+                                             RADARR_JELLYFIN_TRIGGERS)
+    except MissingIntegration as e:
+        notes.append(str(e))
+    except Exception as e:
+        errors.append(f"Radarr (Jellyfin): {e}")
 
     for line in changed:
         print(f"corrigé: {line}")
     if not changed and not errors:
         print("déjà à jour, rien à faire")
+    for note in notes:
+        print(f"note: {note}")
     for err in errors:
         print(f"erreur: {err}", file=sys.stderr)
     return 1 if errors else 0

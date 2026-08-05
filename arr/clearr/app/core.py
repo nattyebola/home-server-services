@@ -470,6 +470,58 @@ def find_movie_by_id(movie_id):
     return next((m for m in fetch_movies_list() if m["id"] == movie_id), None)
 
 
+# --- Résolution par id externe (IMDb/TVDB/TMDB) -------------------------------
+#
+# Utilisé par les routes /api/delete/* de webapp.py, donc par l'addon de menu
+# contextuel Kodi (kodi/context.clearr) : un client media ne connaît pas les ids
+# Sonarr/Radarr, seulement les ids des bases publiques — que jellyfin-kodi
+# recopie dans la base Kodi depuis les ProviderIds de Jellyfin. Ces ids sont
+# déjà dans les objets arr (mêmes champs que external_links plus bas, vérifiés
+# présents sur toute la bibliothèque le 2026-08-03), donc pas plus d'appel WAN
+# ici qu'ailleurs.
+
+def _same_external_id(wanted, actual):
+    # str() des deux côtés : Sonarr/Radarr renvoient tvdbId/tmdbId en entier
+    # alors que Kodi les stocke en chaîne. casefold pour les "tt..." d'IMDb.
+    if not wanted or not actual:
+        return False
+    return str(wanted).strip().casefold() == str(actual).strip().casefold()
+
+
+def _find_by_external_ids(items, ids, candidates):
+    """`candidates` = ((clé côté Kodi, clé côté arr), ...) dans l'ordre de
+    priorité. IMDb d'abord : c'est le seul id commun à Sonarr et Radarr, et
+    celui que Jellyfin renseigne le plus fidèlement — un tvdbId/tmdbId peut
+    venir d'une identification approximative côté Jellyfin.
+
+    Renvoie None si aucun id ne matche, mais AUSSI si un id matche plusieurs
+    titres : l'appelant supprime des fichiers, mieux vaut ne rien faire et
+    laisser l'utilisateur trancher dans l'UI web que de deviner."""
+    for kodi_key, arr_key in candidates:
+        wanted = ids.get(kodi_key)
+        if not wanted:
+            continue
+        matches = [i for i in items if _same_external_id(wanted, i.get(arr_key))]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            logger.warning("id externe %s=%r ambigu : %d titres correspondent (%s) — abandon",
+                           kodi_key, wanted, len(matches), ", ".join(m["title"] for m in matches))
+            return None
+    return None
+
+
+def find_series_by_external_ids(ids):
+    return _find_by_external_ids(fetch_series_list(), ids,
+                                 (("imdb", "imdbId"), ("tvdb", "tvdbId"), ("tmdb", "tmdbId")))
+
+
+def find_movie_by_external_ids(ids):
+    # Pas de tvdb côté Radarr : ses films n'ont que imdbId/tmdbId.
+    return _find_by_external_ids(fetch_movies_list(), ids,
+                                 (("imdb", "imdbId"), ("tmdb", "tmdbId")))
+
+
 # --- Métadonnées d'affichage (jaquette + liens), partagées par les 3 vues -----
 #
 # Aucun appel WAN côté serveur, volontairement (demandé explicitement le

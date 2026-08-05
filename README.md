@@ -185,12 +185,23 @@ Détail de chaque service, schémas et rationale des choix : voir
          doit chercher (page Indexers, l'ID apparaît dans l'URL de chaque
          indexeur) — propre à votre instance, pas dans `config.js` ; `make
          up STACK=arr` pour que cross-seed reparte avec ces IDs ;
-       - (optionnel) ajouter une connexion **Emby/Jellyfin**
-         (`implementation: MediaBrowser`) dans Sonarr/Radarr ciblant
-         `jellyfin:8096`, avec `mapFrom=/data_root/library` /
-         `mapTo=/library`, pour un refresh Jellyfin ciblé sur
-         import/upgrade/renommage (sinon Jellyfin ne détecte les nouveaux
-         fichiers que via sa surveillance temps réel).
+       - (optionnel, mais nécessaire à l'addon Kodi ci-dessous) renseigner
+         `JELLYFIN_API_KEY` dans `arr/.env` (Jellyfin > Tableau de bord >
+         Clés API — la même clé que Seerr convient), puis lancer `make
+         arr-overrides` : il **crée** la connexion **Emby/Jellyfin** dans
+         Sonarr et Radarr (cible `jellyfin:8096`,
+         `mapFrom=/data_root/library` / `mapTo=/library`) et la maintient
+         ensuite à chaque passage, y compris ses déclencheurs de suppression
+         (`onSeriesDelete`/`onEpisodeFileDelete` côté Sonarr,
+         `onMovieDelete`/`onMovieFileDelete` côté Radarr). Rien à cliquer dans
+         les UI : tout est déclaré dans `scripts/apply-arr-overrides.py`, seule
+         la clé vit en `.env`. Sans elle, le target le signale (`note: …`) sans
+         échouer, et une connexion créée à la main reste maintenue malgré tout.
+         Sans cette connexion, Jellyfin ne détecte les changements que via sa
+         surveillance temps réel, avec jusqu'à une minute de retard
+         (`LibraryMonitorDelay`) — un titre supprimé reste donc affiché
+         d'autant, dans Jellyfin comme dans les clients qui répliquent sa
+         bibliothèque.
 
     Si votre bibliothèque (`${DATA_ROOT}/library`) n'est pas sur le même
     disque que le reste de `DATA_ROOT` (vérifiable avec `df` sur les deux
@@ -275,7 +286,8 @@ Détail de chaque service, schémas et rationale des choix : voir
 | `make clearr` | TUI de nettoyage torrents/bibliothèque (service `clearr`), voir ci-dessous |
 | `make dashboard-refresh` | régénère le dashboard immédiatement (aussi via cron 5 min) |
 | `make recyclarr-sync` | applique les guides TRaSH aux profils qualité arr (aussi via cron quotidien) |
-| `make arr-overrides` | réapplique les réglages hors périmètre recyclarr + provisionne `arr/profiles/` (à lancer après `recyclarr-sync`) |
+| `make arr-overrides` | réapplique les réglages hors périmètre recyclarr + provisionne `arr/profiles/` + maintient les déclencheurs de suppression des connexions Jellyfin (à lancer après `recyclarr-sync`) |
+| `make kodi-install` | installe l'addon Kodi « Supprimer avec clearr » dans le profil Kodi de l'utilisateur courant, voir [`kodi/README.md`](kodi/README.md) |
 
 #### Supprimer un torrent + sa place dans la bibliothèque (`clearr`)
 
@@ -288,7 +300,10 @@ ne couvre ce cas précis). `clearr` (`arr/clearr/`, service de la stack
 partagent la même logique :
 - **web**, à `https://clearr.${DOMAIN}` (LAN uniquement, démarré en continu
   par `make up STACK=arr`) ;
-- **TUI**, via `make clearr` (ponctuel, même conteneur/image).
+- **TUI**, via `make clearr` (ponctuel, même conteneur/image) ;
+- **depuis le menu contextuel de Kodi**, pour un film ou une série entière —
+  addon à installer côté client avec `make kodi-install`, voir
+  [`kodi/README.md`](kodi/README.md).
 
 Liste les torrents Transmission (âge, taille, ratio, tracker — résolu via
 Prowlarr quand possible), avec un onglet Séries et un onglet Films en plus

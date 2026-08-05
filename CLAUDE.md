@@ -167,6 +167,147 @@ explicitement :
   `environment:` dans `arr/docker-compose.yml`. Absent = pas de lien arr, le
   reste fonctionne.
 
+- **Suppression d'un film/d'une série depuis le menu contextuel de Kodi**
+  (`kodi/context.clearr`, `make kodi-install`, ajouté le 2026-08-05 — voir
+  `kodi/README.md` pour le détail humain) : addon Kodi qui envoie les ids
+  externes du titre sélectionné à deux nouvelles routes JSON de clearr
+  (`POST /api/delete/{film,series}`), lesquelles réutilisent les mêmes helpers
+  `_delete_series`/`_delete_movie` que les routes web des vues Séries/Films
+  (extraits à cette occasion, la branche torrent/sans-torrent du film étant
+  sinon écrite deux fois). **Transport HTTP, pas la CLI** : la sous-commande
+  `python -m app delete-…` aurait été aussi courte à écrire, mais clearr tourne
+  en conteneur — l'atteindre depuis un client media supposerait soit SSH, soit
+  l'utilisateur Kodi dans le groupe `docker` (root-équivalent sur l'hôte, cf. la
+  décision « jamais de socket Docker monté » plus haut). Le conteneur écoute
+  déjà et est déjà joignable en LAN, l'addon n'a besoin que d'`urllib`.
+  Résolution par **id externe** (`core.find_series_by_external_ids`/
+  `find_movie_by_external_ids`), IMDb d'abord puis TVDB/TMDB : Kodi ne connaît
+  pas les ids Sonarr/Radarr, seulement les `ProviderIds` que jellyfin-kodi lui
+  recopie depuis Jellyfin. Un id qui matche **plusieurs** titres fait renvoyer
+  None (donc 404) plutôt que d'en deviner un — c'est une suppression de
+  fichiers. Vérifié le 2026-08-05 : les 21 séries et 24 films ont tous
+  `imdbId` **et** `tvdbId`/`tmdbId`, donc aucun repli à prévoir en pratique.
+  Le handler global `RuntimeError` de `webapp.py` teste désormais le préfixe
+  `/api/` et répond en JSON : sinon un `transmission-vpn` arrêté renvoyait à
+  l'addon le fragment Bootstrap destiné au navigateur, illisible pour lui.
+  Pas de jeton d'authentification sur ces routes, décidé explicitement : le
+  service est LAN-only (`arr-lan-only`) et son UI web expose déjà les mêmes
+  suppressions en POST sans jeton — à revoir pour les deux ensemble, jamais
+  pour l'API seule.
+  **Le retrait de la ligne dans Kodi n'est pas fait par l'addon** (option
+  écartée après comparatif présenté à l'utilisateur, qui a choisi celle-ci) :
+  Kodi ne réplique pas le disque mais la bibliothèque Jellyfin, donc la chaîne
+  est `clearr supprime` → `Jellyfin rafraîchit et retire l'item` →
+  `KodiSyncQueue` → `jellyfin-kodi le retire de la base Kodi`. Un
+  `VideoLibrary.RemoveMovie` local aurait fait disparaître la ligne
+  instantanément mais aurait désynchronisé la table de correspondance de
+  jellyfin-kodi.
+  **Aucun `Container.Refresh` à la fin** (il y en avait un, différé de 6 s ;
+  retiré le 2026-08-05 après mesure, demandé par l'utilisateur — « le fait que
+  la suppression se fasse bien me suffit ») : la propagation prend
+  **1 min 38 s**, chronométrée sur une vraie suppression (série de 12 torrents,
+  15,6 Go) en recoupant `.clearr.log`, les logs uvicorn/Sonarr/Jellyfin et
+  `~/.kodi/temp/kodi.log` — moins d'1 s côté serveur, puis 65 s de
+  `LibraryMonitorDelay`, 5 s de KodiSyncQueue, 25 s avant que jellyfin-kodi
+  reçoive `LibraryChanged`, 3 s de retrait. Un refresh à 6 s rerendait donc
+  strictement la même liste.
+  Durées des notifications Kodi dans `NOTIFICATION_MS`/`NOTIFICATION_ERROR_MS`
+  (2,5 s / 5 s, abaissées de 5 s / 7 s le 2026-08-05 sur demande) — la
+  suppression est déjà terminée quand elles s'affichent, ce n'est qu'un accusé
+  de réception ; l'erreur reste plus longue, elle porte une information à lire.
+  À ne pas confondre avec les toasts de jellyfin-kodi (`newvideotime`, 5 s dans
+  ses propres réglages), qui ne viennent pas de cet addon. Ids lus par JSON-RPC (`VideoLibrary.Get*Details`, propriété
+  `uniqueid`) et non par les InfoLabels `ListItem.UniqueID(imdb)`/`IMDBNumber`,
+  qui ne remontent que l'id désigné par défaut alors qu'on veut pouvoir
+  retomber sur les autres.
+  L'URL de clearr est un **réglage d'addon** (`resources/settings.xml`), pas une
+  constante : elle contient `${DOMAIN}`, hors de question dans un fichier
+  versionné (repo public). `make kodi-install` la pré-remplit depuis
+  `.env.shared` — et n'écrase jamais un `settings.xml` existant, Kodi
+  réécrivant lui-même ce fichier. Addon **copié** et non symlinké (Kodi refuse
+  de charger un addon dont le dossier est un lien sortant de son `addons/`).
+
+- **Déclencheurs de suppression activés sur les connexions Jellyfin de
+  Sonarr/Radarr** (2026-08-05), et **maintenus par
+  `scripts/apply-arr-overrides.py`** (`JELLYFIN_TRIGGERS`, élargi le même jour à
+  la demande de l'utilisateur — donc reproductibles depuis le repo, contrairement
+  au reste de ces connexions, cf. l'entrée `mapFrom`/`mapTo` plus bas) :
+  `onSeriesDelete`+`onEpisodeFileDelete` côté Sonarr,
+  `onMovieDelete`+`onMovieFileDelete` côté Radarr. Ils étaient **tous à
+  `False`** depuis la création des connexions le 2026-07-24 (seuls
+  download/upgrade/rename notifiaient) : Jellyfin ne découvrait donc une
+  suppression que par son propre watcher, et son `LibraryMonitorDelay` vaut 60
+  (`system.xml`) — soit jusqu'à une minute pendant laquelle un titre supprimé
+  restait affiché dans Jellyfin comme dans Kodi. Vrai aussi pour une
+  suppression faite dans l'UI web de clearr, pas seulement depuis Kodi.
+  Les `*ForUpgrade` restent volontairement à `False` : le remplacement est déjà
+  annoncé par `onUpgrade`, les activer ne ferait qu'ajouter un aller-retour
+  « retiré puis rajouté » à chaque upgrade.
+  **Toute la connexion est provisionnée, création incluse** (élargi le
+  2026-08-05 dans la même journée, en deux temps : d'abord les déclencheurs
+  seuls sur une connexion existante, puis la connexion entière sur demande de
+  l'utilisateur). `JELLYFIN_API_KEY` ajoutée à `arr/.env`/`.env.example` — même
+  clé que celle de Seerr, réutilisée plutôt que d'en générer une dédiée (cf.
+  ARCHITECTURE.md). Tout le reste (`JELLYFIN_FIELDS`, `JELLYFIN_*_TRIGGERS`)
+  est déclaré **dans le script** et non en `.env` : `jellyfin:8096` est un nom
+  de service Docker et `mapFrom`/`mapTo` découlent des montages du repo, donc
+  rien là-dedans n'identifie ce déploiement — seule la clé est un secret.
+  Déclaratif et faisant autorité, comme `arr/profiles/sonarr-anime.json` : tout
+  déclencheur `on*` booléen hors de la liste voulue est remis à `False`.
+  Deux niveaux de service selon que la clé est présente, et **`MissingIntegration`
+  → `note:` + exit 0** dans le cas le plus dégradé (corrigé le 2026-08-05 après
+  un premier jet qui levait une erreur) : `README.md` donne cette connexion pour
+  optionnelle, un déploiement sans Jellyfin verrait sinon le cron quotidien
+  sortir en échec pour une intégration qu'il n'utilise pas. D'où un 3e canal de
+  sortie dans `main()` (`notes`, à côté de `changed`/`errors`) — à réutiliser
+  pour toute future intégration optionnelle plutôt que de choisir entre
+  « silencieux » et « échec ». Sans clé mais avec une connexion existante, les
+  champs non secrets et les déclencheurs sont quand même maintenus.
+  **Piège central de ces objets : l'API Servarr renvoie les champs secrets
+  masqués en `********`** et les préserve quand on les repasse tels quels à
+  l'écriture — c'est ce qui rend possible le mode « sans clé », mais ça veut
+  aussi dire qu'une clé qui aurait dérivé est **indétectable** par comparaison
+  (elle est donc exclue de `jellyfin_signature()`, sinon chaque passage
+  réécrirait pour rien). `POST /api/v3/notification/testall` est le seul moyen
+  de vérifier qu'une clé stockée fonctionne encore — utilisé le 2026-08-05 pour
+  confirmer qu'un PUT reconstruit depuis un GET n'avait pas écrasé la clé par la
+  chaîne `********` (les 4 connexions ressortaient `isValid=True`).
+  Chemin de **création** testé le 2026-08-05 en supprimant pour de vrai la
+  connexion Jellyfin de Radarr **puis** celle de Sonarr et en laissant le script
+  les recréer : dans les deux cas l'objet recréé est identique à l'original
+  (nom, contrat, champs, déclencheurs — seul l'id change) et `testall` ressort
+  `isValid=True`, donc la clé de `.env` est la bonne. Même leçon que le bug de
+  `pg_dump` et que les profils anime : ce chemin-là est précisément celui qui
+  justifie l'exercice, il ne doit pas rester non exercé jusqu'au jour d'une
+  vraie réinstallation.
+  Contrairement au reste du script, ce n'est pas recyclarr qui fait dériver ces
+  champs (il ne touche pas aux notifications) : le réalignement quotidien ne sert
+  qu'à rattraper une modification par mégarde dans l'UI, la reproductibilité sur
+  une installation neuve étant l'objectif principal.
+  Trou connu : clearr supprime lui-même les fichiers dans la plupart des
+  chemins (Transmission + `library/`) et ne fait ensuite que retirer le titre
+  de Sonarr/Radarr — c'est donc `onSeriesDelete`/`onMovieDelete` qui porte la
+  notification. Une suppression qui ne retire pas le titre côté arr (vue
+  Torrents, où Sonarr se contente d'un `unmonitor`, voir
+  `plan_sonarr_unmonitor`) ne notifie rien et reste tributaire du watcher.
+  **Ces déclencheurs ne raccourcissent PAS le délai de Jellyfin** — affirmé à
+  tort le 2026-08-05 (« fait passer l'étape de ~60 s à immédiat »), démenti le
+  même jour par la mesure : `POST /Library/Media/Updated` (l'appel exact que
+  fait la connexion Emby/Jellyfin) émis à la main a déclenché le
+  rafraîchissement **60,04 s plus tard**. Jellyfin fait passer les mises à jour
+  *signalées* par le même temporisateur `LibraryMonitorDelay` (60 s,
+  `${DATA_ROOT}/.jellyfin/config/config/system.xml`) que les événements inotify.
+  Ce que les déclencheurs apportent réellement : le bon dossier est signalé
+  explicitement, sans dépendre d'inotify. Pour réduire le délai il faut baisser
+  `LibraryMonitorDelay` lui-même (non fait — réglage global qui affecte aussi
+  les imports, où les 60 s protègent d'un scan lancé sur un fichier encore en
+  écriture) et l'intervalle du plugin KodiSyncQueue.
+  À noter aussi : Sonarr logue deux `[Warn] MediaBrowserProxy: Unable to send
+  notification to Emby` par suppression alors que le champ `notify` est bien à
+  `false` — c'est la notification *à l'écran* des clients, pas le
+  rafraîchissement de bibliothèque, donc sans effet sur la chaîne. Non
+  diagnostiqué plus loin.
+
 - **Rootless par container**, pas de daemon Docker rootless. `cap_drop:
   ALL` + `security_opt: no-new-privileges:true` partout ; `cap_add` ciblé
   seulement sur `db-next` et `vpn/transmission-vpn` (démarrent root puis
@@ -1453,7 +1594,7 @@ explicitement :
 ```
 server/
 ├── .env.shared(.example)     # PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT — réel gitignoré, .example versionné
-├── Makefile                  # network/up/down/config/logs/update/update-all/backup/restore/cron-install STACK=<nom> ; dashboard-refresh/clearr/arr-overrides (sans STACK)
+├── Makefile                  # network/up/down/config/logs/update/update-all/backup/restore/cron-install STACK=<nom> ; dashboard-refresh/clearr/arr-overrides/kodi-install (sans STACK)
 ├── README.md                  # doc humaine : services, install
 ├── ARCHITECTURE.md            # doc humaine : architecture, choix structurants
 ├── ISSUES.md                  # doc humaine : problèmes rencontrés
@@ -1464,7 +1605,7 @@ server/
 │   ├── restore.sh                  # restauration guidée d'un snapshot restic
 │   ├── generate-dashboard.py       # régénère dashboard/html/ — `make dashboard-refresh`
 │   ├── transmission-stats.py       # JSON ratios/débits pour generate-dashboard.py
-│   ├── apply-arr-overrides.py      # réapplique tailles/language des 2 profils qualité principaux + provisionne la config anime — `make arr-overrides`
+│   ├── apply-arr-overrides.py      # réapplique tailles/language des 2 profils qualité principaux + provisionne la config anime et les connexions Jellyfin de Sonarr/Radarr — `make arr-overrides`
 │   └── require-running.sh          # exit 0 si les services <project>/<service> donnés tournent — guard cron + backup.sh
 ├── sauvegarde/                # non versionné — dépôt restic + mot de passe + staging
 ├── traefik/                  # socket-proxy + traefik + dashboard (page statique de liens) ; .env(ACME_EMAIL)/.example
@@ -1474,6 +1615,7 @@ server/
 ├── arr/                       # prowlarr/sonarr/radarr/cross-seed/recyclarr/clearr ; .env/.example ; override.yml.example (optionnel)
 │   ├── clearr/                 # web (FastAPI/Jinja2/Bootstrap) + TUI + CLI delete-by-inode, un seul core.py partagé — voir plus haut
 │   └── profiles/               # config arr custom versionnée (sonarr-anime.json) — appliquée par scripts/apply-arr-overrides.py
+├── kodi/                      # addon de menu contextuel « Supprimer avec clearr » — pas un service, installé côté client par `make kodi-install` (voir kodi/README.md)
 ├── seerr/                     # recherche/requête unifiée (successeur Jellyseerr/Overseerr) ; pas de .env (config via son assistant web)
 └── dashboard/                 # templates/ (vues, string.Template) + assets (logos, css, js) + html/ généré — pas de compose file, servi par traefik/ (voir ci-dessus)
 ```

@@ -1,0 +1,28 @@
+# Kodi Media Center language file
+# Addon Name: Supprimer avec clearr
+# Addon id: context.clearr
+msgid ""
+msgstr ""
+"Project-Id-Version: context.clearr\n"
+"Report-Msgid-Bugs-To: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: en_GB\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgctxt "#30000"
+msgid "Delete with clearr"
+msgstr ""
+
+msgctxt "#30100"
+msgid "General"
+msgstr ""
+
+msgctxt "#30101"
+msgid "clearr address"
+msgstr ""
+
+msgctxt "#30102"
+msgid "Base URL of the clearr web service, for example https://clearr.example.org"
+msgstr ""

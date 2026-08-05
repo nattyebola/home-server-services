@@ -6,7 +6,12 @@ STACKS := traefik jellyfin nextcloud vpn arr seerr
 
 UPDATE_STACKS := nextcloud vpn jellyfin arr seerr
 
-.PHONY: network up down config logs update update-all backup restore cron-install dashboard-refresh clearr arr-overrides recyclarr-sync
+.PHONY: network up down config logs update update-all backup restore cron-install dashboard-refresh clearr arr-overrides recyclarr-sync kodi-install
+
+# Kodi profile of the user running make (a media client, not a stack) — see the
+# kodi-install target and kodi/README.md. Overridable for a Kodi running under
+# another user or a non-default profile path: make kodi-install KODI_HOME=...
+KODI_HOME ?= $(HOME)/.kodi
 
 network:
 	@docker network inspect $(NETWORK) >/dev/null 2>&1 || docker network create $(NETWORK)
@@ -153,3 +158,30 @@ cron-install:
 	sed -e "s|__REPO_ROOT__|$(CURDIR)|g" -e "s|__PUID__|$(PUID)|g" -e "s|__DATA_ROOT__|$(DATA_ROOT)|g" scripts/crontab | scripts/install-crontab.sh "$(CURDIR)"
 	@echo "installed crontab:"
 	@crontab -l
+
+# installs the "Supprimer avec clearr" context menu addon (kodi/context.clearr)
+# into this user's Kodi profile: an entry on any movie/TV show that asks clearr
+# to delete it (torrents + library files + Sonarr/Radarr entry). Copied rather
+# than symlinked — Kodi refuses to load an addon whose directory is a symlink
+# outside its addons dir. clearr's URL holds ${DOMAIN}, which can't live in a
+# versioned file (public repo), so it is a Kodi addon setting pre-filled here
+# from .env.shared — same reason the crontab placeholders are substituted above.
+# Never overwrites an existing settings.xml: Kodi rewrites that file itself, and
+# the URL may have been adjusted by hand since.
+kodi-install:
+	@test -f .env.shared || (echo ".env.shared missing — see .env.shared.example" >&2 && exit 1)
+	$(eval DOMAIN := $(shell grep '^DOMAIN=' .env.shared | cut -d= -f2))
+	@test -n "$(DOMAIN)" || (echo "DOMAIN not set in .env.shared" >&2 && exit 1)
+	@test -d "$(KODI_HOME)" || (echo "$(KODI_HOME) not found — run Kodi once first, or pass KODI_HOME=" >&2 && exit 1)
+	@mkdir -p "$(KODI_HOME)/addons" "$(KODI_HOME)/userdata/addon_data/context.clearr"
+	@rm -rf "$(KODI_HOME)/addons/context.clearr"
+	@cp -r kodi/context.clearr "$(KODI_HOME)/addons/context.clearr"
+	@find "$(KODI_HOME)/addons/context.clearr" -name __pycache__ -prune -exec rm -rf {} +
+	@if [ -f "$(KODI_HOME)/userdata/addon_data/context.clearr/settings.xml" ]; then \
+		echo "settings.xml already there — clearr URL left untouched"; \
+	else \
+		printf '<settings version="2">\n    <setting id="clearr_url">https://clearr.%s</setting>\n</settings>\n' \
+			"$(DOMAIN)" > "$(KODI_HOME)/userdata/addon_data/context.clearr/settings.xml"; \
+		echo "clearr URL set to https://clearr.$(DOMAIN)"; \
+	fi
+	@echo "installed to $(KODI_HOME)/addons/context.clearr — restart Kodi to load it"

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<addon id="context.clearr" name="Supprimer avec clearr" version="1.0.0" provider-name="server">
+  <requires>
+    <!-- 3.0.0 plutôt que 3.0.1 (version réelle de Kodi 21 Omega, la cible ici) :
+         Omega accepte les addons 3.0.0, l'inverse n'est pas vrai. Rien dans
+         context.py n'utilise d'API postérieure à Kodi 19. -->
+    <import addon="xbmc.python" version="3.0.0"/>
+  </requires>
+  <extension point="kodi.context.item">
+    <menu id="kodi.core.main">
+      <item library="context.py">
+        <label>30000</label>
+        <!-- Uniquement sur un film ou une série de la bibliothèque : clearr ne
+             sait supprimer qu'un titre entier (pas un épisode ni une saison,
+             voir kodi/README.md), et il faut un DBID pour lire les uniqueids
+             par JSON-RPC. -->
+        <visible>[[String.IsEqual(ListItem.DBType,movie) | String.IsEqual(ListItem.DBType,tvshow)] + !String.IsEmpty(ListItem.DBID)]</visible>
+      </item>
+    </menu>
+  </extension>
+  <extension point="xbmc.addon.metadata">
+    <summary lang="fr_fr">Supprime le film ou la série sélectionné via clearr</summary>
+    <summary lang="en_gb">Delete the selected movie or TV show through clearr</summary>
+    <description lang="fr_fr">Ajoute une entrée « Supprimer avec clearr » au menu contextuel des films et séries. Envoie l'identifiant IMDb/TMDB/TVDB du titre sélectionné à l'API de clearr, qui supprime les torrents, les fichiers de la bibliothèque et l'entrée Sonarr/Radarr correspondante.</description>
+    <description lang="en_gb">Adds a "Delete with clearr" entry to the context menu of movies and TV shows. Sends the selected title's IMDb/TMDB/TVDB id to the clearr API, which removes the torrents, the library files and the matching Sonarr/Radarr entry.</description>
+    <platform>all</platform>
+    <license>MIT</license>
+    <assets/>
+  </extension>
+</addon>

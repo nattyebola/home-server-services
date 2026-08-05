@@ -217,7 +217,8 @@ hardlink fonctionne entre les deux, voir [`ISSUES.md`](ISSUES.md)), avec
 remote path mapping côté client de téléchargement.
 
 **Rafraîchissement ciblé de Jellyfin** : connexion **Emby/Jellyfin**
-(`implementation: MediaBrowser`) sur import/upgrade/renommage, ciblant
+(`implementation: MediaBrowser`) sur import/upgrade/renommage et sur
+suppression d'un titre ou d'un fichier, ciblant
 `jellyfin:8096` en direct (Sonarr/Radarr et Jellyfin partagent déjà le
 réseau `traefik-public`, pas besoin de passer par Traefik). Sans elle,
 Jellyfin comptait uniquement sur sa surveillance temps réel (inotify,
@@ -230,6 +231,26 @@ ci-dessus) alors que Jellyfin la voit sous `/library/...` d'où
 Clé API Jellyfin réutilisée depuis celle déjà générée pour Seerr plutôt
 qu'une clé dédiée — apparaît donc sous le nom "Seerr" dans Jellyfin →
 Tableau de bord → Clés API, purement cosmétique.
+
+Les déclencheurs de **suppression** de cette connexion comptent autant que
+ceux d'import : sans eux, Jellyfin ne découvre la disparition d'un titre que
+par sa surveillance temps réel (`LibraryMonitorDelay`, 60 s ici), et un
+client qui réplique la bibliothèque Jellyfin plutôt que le disque — Kodi via
+jellyfin-kodi, cf. [`kodi/README.md`](kodi/README.md) — continue de l'afficher
+d'autant.
+
+Ces deux connexions sont **entièrement provisionnées par
+`scripts/apply-arr-overrides.py`** (`make arr-overrides`), création incluse :
+nom, cible réseau, mapping de chemins et déclencheurs sont déclarés dans le
+script, la seule valeur en `.env` étant `JELLYFIN_API_KEY` (`arr/.env`) parce
+qu'elle est secrète. Les autres valeurs ne sont pas propres au déploiement —
+`jellyfin:8096` est un nom de service Docker et le mapping découle des montages
+du repo — donc rien ne justifiait de les sortir du code. La déclaration fait
+autorité : un déclencheur ajouté à la main dans l'UI est remis à `False` au
+passage suivant. Seule limite, la clé API elle-même n'est jamais relue (l'API
+Servarr la renvoie masquée en `********`) : une clé devenue invalide n'est donc
+pas détectée automatiquement, `POST /api/v3/notification/testall` est le moyen
+de la vérifier.
 
 Configuration manuelle des UI (indexeurs, connexions, clés API, root
 folders...) : voir les étapes d'installation dans

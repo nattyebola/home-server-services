@@ -10,9 +10,10 @@ import urllib.parse
 
 from fastapi import FastAPI, Form
 from fastapi.requests import Request
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 
 from . import core
 
@@ -51,6 +52,11 @@ ASSET_VERSION = _compute_asset_version()
 # haut), d'où ce handler global plutôt qu'un try/except répété partout.
 @app.exception_handler(RuntimeError)
 async def runtime_error_handler(request: Request, exc: RuntimeError):
+    # Les routes /api/ (menu contextuel Kodi) ont un appelant qui parse du JSON :
+    # lui renvoyer le fragment Bootstrap destiné au navigateur le ferait échouer
+    # sur un message illisible plutôt que sur la vraie cause.
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"deleted": False, "message": f"Erreur : {exc}"}, status_code=503)
     return HTMLResponse(f'<div class="alert alert-danger m-3">Erreur : {exc}</div>', status_code=503)
 
 
@@ -375,6 +381,37 @@ def torrent_delete(tid: int, sort: str = Form(DEFAULT_SORT["torrents"]), reverse
     return HTMLResponse(render_torrents_tab(sort, reverse == "1", filter, message=message, message_kind=kind))
 
 
+# --- suppression d'un titre entier, partagée entre les routes web (vues
+# Séries/Films) et les routes /api/ (menu contextuel Kodi) : la seule différence
+# entre les deux est la façon de rapporter le résultat, pas ce qui est supprimé.
+# Ces deux helpers lèvent sur échec, chaque appelant décidant du rendu. ---
+
+def _delete_series(series, state):
+    matched = core.find_series_torrents(state["all_torrents"], state["library_index"],
+                                         state["cross_seed_child_ids"], series["path"])
+    core.execute_delete_series(state["client"], series, matched, state["all_torrents"],
+                                state["cross_seed_groups"], state["linked_ids"], state["missing_ids"])
+    return f"Série supprimée : {series['title']}"
+
+
+def _delete_movie(movie, state):
+    movie_path = movie["movieFile"]["path"] if movie.get("hasFile") else None
+    torrent = core.find_movie_torrent(state["all_torrents"], state["cross_seed_child_ids"], movie_path) \
+        if movie_path else None
+    if torrent:
+        host_files = core.torrent_host_files(torrent)
+        lib_matches = core.find_library_matches(host_files, state["library_index"])
+        arr_plan = core.plan_arr_actions(lib_matches)
+        _remaining, freed = core.apply_deletion(state["client"], torrent, host_files, lib_matches, arr_plan,
+                                                  state["all_torrents"], state["linked_ids"],
+                                                  state["missing_ids"], state["cross_seed_groups"])
+        return f"Film supprimé : {movie['title']} ({core.human_size(freed)} libéré(s))"
+    # Jamais téléchargé, ou fichier orphelin hors suivi : c'est Radarr qui
+    # supprime son propre fichier (voir core.execute_delete_movie_no_torrent).
+    core.execute_delete_movie_no_torrent(movie)
+    return f"Film supprimé : {movie['title']}"
+
+
 # --- suppression d'une série entière (vue Séries) ---
 
 @app.get("/series/{sid}/confirm", response_class=HTMLResponse)
@@ -404,12 +441,8 @@ def series_delete(sid: int, sort: str = Form(DEFAULT_SORT["series"]), reverse: s
         return HTMLResponse(render_arr_tab("series", sort, reverse == "1", filter,
                                                message="Série déjà supprimée.", message_kind="warning"))
     state = core.load_full_state()
-    matched = core.find_series_torrents(state["all_torrents"], state["library_index"],
-                                         state["cross_seed_child_ids"], series["path"])
     try:
-        core.execute_delete_series(state["client"], series, matched, state["all_torrents"],
-                                    state["cross_seed_groups"], state["linked_ids"], state["missing_ids"])
-        message = f"Série supprimée : {series['title']}"
+        message = _delete_series(series, state)
         kind = "success"
     except Exception as e:
         core.logger.error("échec de la suppression de la série %r : %s", series["title"], e)
@@ -447,22 +480,66 @@ def film_delete(mid: int, sort: str = Form(DEFAULT_SORT["films"]), reverse: str 
                                               message="Film déjà supprimé.", message_kind="warning"))
     state = core.load_full_state()
     try:
-        movie_path = movie["movieFile"]["path"] if movie.get("hasFile") else None
-        torrent = core.find_movie_torrent(state["all_torrents"], state["cross_seed_child_ids"], movie_path) \
-            if movie_path else None
-        if torrent:
-            host_files = core.torrent_host_files(torrent)
-            lib_matches = core.find_library_matches(host_files, state["library_index"])
-            arr_plan = core.plan_arr_actions(lib_matches)
-            _remaining, freed = core.apply_deletion(state["client"], torrent, host_files, lib_matches, arr_plan,
-                                                      state["all_torrents"], state["linked_ids"],
-                                                      state["missing_ids"], state["cross_seed_groups"])
-            message = f"Film supprimé : {movie['title']} ({core.human_size(freed)} libéré(s))"
-        else:
-            core.execute_delete_movie_no_torrent(movie)
-            message = f"Film supprimé : {movie['title']}"
+        message = _delete_movie(movie, state)
         kind = "success"
     except Exception as e:
         core.logger.error("échec de la suppression du film %r : %s", movie["title"], e)
         message, kind = f"ÉCHEC (voir {core.LOG_PATH}) : {e}", "danger"
     return HTMLResponse(render_arr_tab("films", sort, reverse == "1", filter, message=message, message_kind=kind))
+
+
+# --- API JSON : suppression d'un titre par son id externe (IMDb/TVDB/TMDB) ----
+#
+# Consommée par l'addon de menu contextuel Kodi (kodi/context.clearr, entrée
+# « Supprimer avec clearr ») — un client media ne connaît pas les ids Sonarr/
+# Radarr, seulement ceux des bases publiques, d'où core.find_*_by_external_ids.
+# Supprime exactement ce que suppriment les vues Séries/Films (mêmes helpers
+# _delete_series/_delete_movie), pas une variante allégée.
+#
+# Aucune authentification, comme le reste de clearr : le service est LAN-only
+# (middleware arr-lan-only, arr/docker-compose.yml) et son UI web expose déjà
+# les mêmes suppressions en POST sans jeton — ces routes n'ajoutent donc pas une
+# classe d'exposition nouvelle. À revoir en même temps que celle de l'UI si le
+# besoin d'un jeton apparaît, pas séparément.
+#
+# Kodi ne retire PAS l'item de sa propre base à la réponse : c'est jellyfin-kodi
+# qui le fait quand Jellyfin lui pousse l'événement de suppression (Sonarr/
+# Radarr notifient Jellyfin dès le retrait du titre, déclencheurs onSeriesDelete/
+# onMovieDelete activés le 2026-08-05). Voir kodi/README.md pour la chaîne
+# complète et pourquoi le retrait local a été écarté.
+
+class ExternalIds(BaseModel):
+    imdb: str = ""
+    tvdb: str = ""
+    tmdb: str = ""
+
+
+def _api_delete(ids, find, delete, kind_label):
+    item = find(ids.model_dump())
+    if not item:
+        known = ", ".join(f"{k}={v}" for k, v in ids.model_dump().items() if v) or "aucun id fourni"
+        return JSONResponse(
+            {"deleted": False, "message": f"{kind_label} introuvable côté arr ({known})."},
+            status_code=404,
+        )
+    state = core.load_full_state()
+    try:
+        message = delete(item, state)
+    except Exception as e:
+        core.logger.error("API : échec de la suppression de %r : %s", item["title"], e)
+        return JSONResponse(
+            {"deleted": False, "title": item["title"], "message": f"ÉCHEC (voir {core.LOG_PATH}) : {e}"},
+            status_code=500,
+        )
+    core.logger.info("API : %s", message)
+    return {"deleted": True, "title": item["title"], "message": message}
+
+
+@app.post("/api/delete/series")
+def api_delete_series(ids: ExternalIds):
+    return _api_delete(ids, core.find_series_by_external_ids, _delete_series, "Série")
+
+
+@app.post("/api/delete/film")
+def api_delete_film(ids: ExternalIds):
+    return _api_delete(ids, core.find_movie_by_external_ids, _delete_movie, "Film")
