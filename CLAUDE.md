@@ -308,6 +308,43 @@ explicitement :
   rafraîchissement de bibliothèque, donc sans effet sur la chaîne. Non
   diagnostiqué plus loin.
 
+- **`scripts/provision.py` (`make api-keys` / `make provision`)** automatise la
+  configuration d'installation qui se faisait à la main dans les UI (ajouté le
+  2026-08-05, liste demandée par l'utilisateur : bibliothèques Jellyfin, clés
+  API arr + cross-seed + Jellyfin, applications Prowlarr, client de
+  téléchargement, root folders, Connection cross-seed, config Seerr complète).
+  **Deux targets et pas un** parce que l'ordre est contraint dans les deux
+  sens : `api-keys` doit précéder `recyclarr-sync`/`arr-overrides` (qui ont
+  besoin des clés), et la config Seerr de `provision` doit les suivre (elle
+  désigne les profils qualité **par nom**). Une seule commande aurait dû être
+  lancée deux fois.
+  **Créé-si-absent, jamais réécrit** — l'inverse d'`apply-arr-overrides.py`,
+  déclaratif et faisant autorité. Volontaire : ce sont des objets
+  d'infrastructure que l'utilisateur peut légitimement ajuster ensuite dans les
+  UI, et ce script n'est donc PAS dans `scripts/crontab`. Piège évité de peu en
+  l'écrivant : un premier jet POSTait `/settings/jellyfin` de Seerr sans garde,
+  ce qui aurait remplacé l'adresse publique réglée à la main par le nom de
+  service interne sur une installation en service.
+  Best-effort par objet (`run_step`), imposé par un cas réel : **Sonarr valide
+  le client de téléchargement en s'y connectant au moment du POST**, donc un
+  `vpn/transmission-vpn` arrêté faisait échouer tout le provisioning. Deux
+  autres validations du même genre, découvertes en testant : la Connection
+  Custom Script exige que le fichier existe côté conteneur, et Prowlarr vérifie
+  que Sonarr/Radarr sait le joindre en retour sur `PROWLARR_INTERNAL_URL`.
+  `jellyfin/.env` (nouveau) porte `JELLYFIN_ADMIN_USER`/`PASSWORD`, nécessaires
+  aux deux seules opérations que Jellyfin refuse à une clé API : créer la
+  première clé (bootstrap) et créer le compte propriétaire de Seerr. Vérifié en
+  revanche qu'une **clé API suffit pour créer une bibliothèque** (test d'une
+  bibliothèque jetable créée puis supprimée), donc `make provision` ne dépend
+  que de `arr/.env` — ne pas y réintroduire une dépendance aux identifiants.
+  Chemins de création testés le 2026-08-05 contre des **conteneurs jetables**
+  (Sonarr et Prowlarr neufs, config vide, rejoignant les mêmes réseaux) plutôt
+  qu'en cassant la config en service : root folders, client de téléchargement,
+  Connection cross-seed et application Prowlarr créés puis relus conformes aux
+  objets réels, 2e passage sans changement. **La config Seerr (`provision_seerr`)
+  reste le seul chemin de création non exercé** : il faut les identifiants admin
+  Jellyfin, que seul l'utilisateur possède.
+
 - **Rootless par container**, pas de daemon Docker rootless. `cap_drop:
   ALL` + `security_opt: no-new-privileges:true` partout ; `cap_add` ciblé
   seulement sur `db-next` et `vpn/transmission-vpn` (démarrent root puis
@@ -1605,6 +1642,7 @@ server/
 │   ├── restore.sh                  # restauration guidée d'un snapshot restic
 │   ├── generate-dashboard.py       # régénère dashboard/html/ — `make dashboard-refresh`
 │   ├── transmission-stats.py       # JSON ratios/débits pour generate-dashboard.py
+│   ├── provision.py                # config d'installation : clés API, biblios Jellyfin, objets arr, Seerr — `make api-keys` / `make provision`
 │   ├── apply-arr-overrides.py      # réapplique tailles/language des 2 profils qualité principaux + provisionne la config anime et les connexions Jellyfin de Sonarr/Radarr — `make arr-overrides`
 │   └── require-running.sh          # exit 0 si les services <project>/<service> donnés tournent — guard cron + backup.sh
 ├── sauvegarde/                # non versionné — dépôt restic + mot de passe + staging

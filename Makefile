@@ -6,7 +6,7 @@ STACKS := traefik jellyfin nextcloud vpn arr seerr
 
 UPDATE_STACKS := nextcloud vpn jellyfin arr seerr
 
-.PHONY: network up down config logs update update-all backup restore cron-install dashboard-refresh clearr arr-overrides recyclarr-sync kodi-install
+.PHONY: network up down config logs update update-all backup restore cron-install dashboard-refresh clearr arr-overrides recyclarr-sync kodi-install api-keys provision
 
 # Kodi profile of the user running make (a media client, not a stack) — see the
 # kodi-install target and kodi/README.md. Overridable for a Kodi running under
@@ -26,6 +26,16 @@ compose = docker compose --env-file .env.shared $(if $(wildcard $(STACK)/.env),-
 
 up: network
 	@test -n "$(STACK)" || (echo "usage: make up STACK=<$(STACKS)>" >&2 && exit 1)
+	@# seerr tourne nativement en UID 1000 sans étape root-puis-drop et ne chown
+	@# pas son volume : si ${DATA_ROOT}/.seerr/config n'existe pas, c'est Docker
+	@# qui le crée, en root:root, et le container crashe en boucle sur EACCES.
+	@# Le créer ici (donc en tant que l'utilisateur qui lance make) suffit à
+	@# éviter le cas, et remplace le mkdir+chown manuel de l'installation.
+	@if [ "$(STACK)" = "seerr" ]; then \
+		root=$$(grep '^DATA_ROOT=' .env.shared | cut -d= -f2); \
+		test -n "$$root" || (echo "DATA_ROOT not set in .env.shared" >&2 && exit 1); \
+		mkdir -p "$$root/.seerr/config"; \
+	fi
 	$(compose) up -d
 
 down:
@@ -104,6 +114,22 @@ dashboard-refresh:
 clearr: STACK := arr
 clearr: network
 	@$(compose) run --rm -it clearr tui
+
+# collecte les secrets générés au premier démarrage et les écrit dans arr/.env
+# (clés API Prowlarr/Sonarr/Radarr lues dans leur config.xml, clé cross-seed,
+# clé API Jellyfin créée au besoin) — voir scripts/provision.py. À lancer AVANT
+# recyclarr-sync/arr-overrides, qui ont besoin de ces clés.
+api-keys:
+	@python3 scripts/provision.py keys
+
+# crée les objets de configuration qui se faisaient à la main dans les UI :
+# bibliothèques Jellyfin, applications Prowlarr, client de téléchargement, root
+# folders et Connection cross-seed côté Sonarr/Radarr, configuration Seerr —
+# voir scripts/provision.py. À lancer APRÈS arr-overrides : la config Seerr
+# référence par nom les profils qualité que celui-ci provisionne. Idempotent et
+# strictement additif (ne réécrit jamais un objet existant), donc relançable.
+provision:
+	@python3 scripts/provision.py services
 
 # réapplique les tailles de quality definition + le champ language Radarr
 # que recyclarr ne gère pas et resynchronise à leurs défauts à chaque

@@ -53,7 +53,13 @@ Détail de chaque service, schémas et rationale des choix : voir
   démarrer ou que le tunnel ne route rien, vérifier `lsmod | grep
   ip_tables` et sinon créer `/etc/modules-load.d/ip-tables.conf` contenant
   `ip_tables` (puis `modprobe ip_tables` ou reboot).
+- `python3` (stdlib seule, aucun paquet pip) — utilisé par
+  `make dashboard-refresh`, `make arr-overrides` et les stats Transmission du
+  dashboard (`scripts/*.py`).
 - [`restic`](https://restic.net/) pour les sauvegardes.
+- (optionnel, client Kodi) Kodi 19+ avec l'addon `jellyfin-kodi` en mode sync,
+  si vous voulez l'entrée de menu contextuel « Supprimer avec clearr »
+  (étape 22).
 
 ### Étapes
 
@@ -87,7 +93,7 @@ Détail de chaque service, schémas et rationale des choix : voir
    cp traefik/.env.example    traefik/.env      # ACME_EMAIL
    cp nextcloud/.env.example  nextcloud/.env    # POSTGRES_USER/PASSWORD, NEXTCLOUD_ADMIN_USER/PASSWORD
    cp vpn/.env.example        vpn/.env          # OPENVPN_USERNAME/PASSWORD
-   cp arr/.env.example        arr/.env          # PROWLARR/SONARR/RADARR/CROSSSEED_API_KEY (à remplir après le 1er démarrage, étape 12)
+   cp arr/.env.example        arr/.env          # PROWLARR/SONARR/RADARR/CROSSSEED/JELLYFIN_API_KEY + CROSS_SEED_INDEXER_IDS (renseignés aux étapes 14 et 18)
    ```
 
 5. **Config OpenVPN** (si vous utilisez la stack `vpn/`) : déposez le
@@ -119,15 +125,19 @@ Détail de chaque service, schémas et rationale des choix : voir
    ```
 
 9. **Démarrer Jellyfin**
-   ```sh
-   make up STACK=jellyfin
-   ```
-   Dans l'UI Jellyfin, ajoutez trois bibliothèques : type Films →
-   `/library/film`, type Séries → `/library/series` et `/library/anime`
-   (chemins montés en lecture seule depuis `${DATA_ROOT}/library`, alimentés
-   par Sonarr/Radarr, voir étape 12 — une bibliothèque par Root Folder arr).
-   Sans ça, [Seerr](#seerr) ne peut pas savoir qu'un contenu est déjà
-   téléchargé et le proposera à tort en requête.
+    ```sh
+    make up STACK=jellyfin
+    ```
+    Créez le compte administrateur dans l'assistant de première connexion
+    (`https://jellyfin.<DOMAIN>`), puis reportez ses identifiants dans
+    `jellyfin/.env` :
+    ```sh
+    cp jellyfin/.env.example jellyfin/.env   # JELLYFIN_ADMIN_USER/PASSWORD
+    ```
+    Ils ne servent qu'à deux opérations que Jellyfin réserve à une session admin
+    et refuse à une clé API : créer la première clé API (étape 14) et créer le
+    compte propriétaire de Seerr (étape 17). Les bibliothèques, elles, sont
+    créées automatiquement à l'étape 17 — rien à ajouter à la main ici.
 
 10. **Démarrer Nextcloud**
     ```sh
@@ -144,64 +154,79 @@ Détail de chaque service, schémas et rationale des choix : voir
     `https://transmission.<DOMAIN>/transmission/rpc` (pas de port publié
     sur l'hôte).
 
-12. **Démarrer et configurer Arr** (nécessite `vpn` déjà démarré, la stack
-    rejoint son réseau `vpn-internal`) :
+12. **Démarrer Arr** (nécessite `vpn` déjà démarré, la stack rejoint son
+    réseau `vpn-internal`) :
     ```sh
     make up STACK=arr
     ```
-    Les clés API sont générées au premier démarrage de chaque app,
-    impossible de les connaître avant :
-    1. Récupérez `<ApiKey>` dans
-       `${DATA_ROOT}/.arr/{prowlarr,sonarr,radarr}/config/config.xml` (ou
-       Settings → General dans chaque UI), reportez-les dans `arr/.env`.
-       Récupérez aussi la clé cross-seed (`docker compose ... exec
-       cross-seed cross-seed api-key`) pour `CROSSSEED_API_KEY`.
-    2. `make up STACK=arr` à nouveau pour que `cross-seed` redémarre avec
-       les vraies clés. (`recyclarr` n'est pas un service qui tourne en
-       continu : il est en `profiles: [manual]` et ne s'exécute qu'à la
-       demande via `make recyclarr-sync`, voir étape 13.)
-    3. Configuration manuelle via les UI (normal pour cet écosystème, pas
-       automatisable en compose) :
-       - ajouter des indexeurs dans Prowlarr, le connecter à Sonarr/Radarr
-         (Settings → Apps) ;
-       - configurer Transmission comme client de téléchargement dans
-         Sonarr/Radarr (host `transmission-vpn`, port `9091`) ;
-       - ajouter les Root Folders : `/data_root/library/series` et
-         `/data_root/library/anime` côté Sonarr, `/data_root/library/film`
-         côté Radarr. Le préfixe `/data_root` est important : Sonarr/Radarr
-         montent **tout** `${DATA_ROOT}` en un seul volume, condition du
-         hardlink à l'import (voir [`ARCHITECTURE.md`](ARCHITECTURE.md)) —
-         Jellyfin, lui, voit la même bibliothèque sous `/library` (étape 9),
-         d'où les deux chemins différents pour les mêmes fichiers ;
-       - ajouter le script `/config/custom-cross-seed-notify.sh` comme
-         Connection **Custom Script** (déclenché sur Import/Upgrade) dans
-         Sonarr/Radarr — pas le type "Webhook" générique, voir
-         [`ISSUES.md`](ISSUES.md#arr--sonarr--radarr--cross-seed) ;
-       - mettre `useClientTorrents: true` dans `arr/cross-seed/config.js`
-         (faux par défaut), sinon les webhooks échouent systématiquement,
-         voir [`ISSUES.md`](ISSUES.md#arr--sonarr--radarr--cross-seed) ;
-       - renseigner `CROSS_SEED_INDEXER_IDS` dans `arr/.env` (voir
-         `.env.example`) avec les IDs des indexeurs Prowlarr que cross-seed
-         doit chercher (page Indexers, l'ID apparaît dans l'URL de chaque
-         indexeur) — propre à votre instance, pas dans `config.js` ; `make
-         up STACK=arr` pour que cross-seed reparte avec ces IDs ;
-       - (optionnel, mais nécessaire à l'addon Kodi ci-dessous) renseigner
-         `JELLYFIN_API_KEY` dans `arr/.env` (Jellyfin > Tableau de bord >
-         Clés API — la même clé que Seerr convient), puis lancer `make
-         arr-overrides` : il **crée** la connexion **Emby/Jellyfin** dans
-         Sonarr et Radarr (cible `jellyfin:8096`,
-         `mapFrom=/data_root/library` / `mapTo=/library`) et la maintient
-         ensuite à chaque passage, y compris ses déclencheurs de suppression
-         (`onSeriesDelete`/`onEpisodeFileDelete` côté Sonarr,
-         `onMovieDelete`/`onMovieFileDelete` côté Radarr). Rien à cliquer dans
-         les UI : tout est déclaré dans `scripts/apply-arr-overrides.py`, seule
-         la clé vit en `.env`. Sans elle, le target le signale (`note: …`) sans
-         échouer, et une connexion créée à la main reste maintenue malgré tout.
-         Sans cette connexion, Jellyfin ne détecte les changements que via sa
-         surveillance temps réel, avec jusqu'à une minute de retard
-         (`LibraryMonitorDelay`) — un titre supprimé reste donc affiché
-         d'autant, dans Jellyfin comme dans les clients qui répliquent sa
-         bibliothèque.
+
+13. **Démarrer Seerr** (nécessite `jellyfin` et `arr` démarrés, la stack
+    rejoint le réseau de `arr/`) :
+    ```sh
+    make up STACK=seerr
+    ```
+    Il démarre non configuré : c'est l'étape 17 qui le renseigne. `make up`
+    crée `${DATA_ROOT}/.seerr/config` au préalable — sans ça Docker le
+    créerait en `root:root` et Seerr crasherait en boucle sur `EACCES`, ne
+    tournant pas en root et ne chownant pas son volume lui-même (voir
+    [`ISSUES.md`](ISSUES.md)).
+
+14. **Collecter les clés API** — générées au premier démarrage, donc
+    impossibles à connaître avant :
+    ```sh
+    make api-keys
+    ```
+    Lit les clés Prowlarr/Sonarr/Radarr dans leur `config.xml`, demande la
+    sienne à cross-seed, crée la clé API Jellyfin, et écrit les cinq dans
+    `arr/.env` sans écraser une valeur déjà renseignée (voir
+    `scripts/provision.py`).
+
+15. **Redémarrer Arr** pour que `cross-seed` reparte avec les vraies clés :
+    ```sh
+    make up STACK=arr
+    ```
+    (`recyclarr` n'est pas un service continu : il est en `profiles: [manual]`
+    et ne s'exécute qu'à la demande, étape 16.)
+
+16. **Provisionner les profils qualité arr** :
+    ```sh
+    make recyclarr-sync   # custom formats + profils issus des guides TRaSH
+    make arr-overrides    # réglages hors périmètre recyclarr, config anime
+                          # versionnée (arr/profiles/), connexions Jellyfin
+    ```
+    Dans cet ordre : `arr-overrides` référence par nom des custom formats que
+    `recyclarr-sync` vient de créer, et échoue explicitement s'ils manquent.
+    Ces deux commandes sont ensuite enchaînées chaque nuit par le cron
+    (étape 21).
+
+17. **Provisionner le reste de la configuration** :
+    ```sh
+    make provision
+    ```
+    Crée ce qui se faisait auparavant à la main dans les UI : les trois
+    bibliothèques Jellyfin (`/library/film`, `/library/series`,
+    `/library/anime`), les applications Sonarr/Radarr côté Prowlarr,
+    Transmission comme client de téléchargement, les Root Folders
+    (`/data_root/library/...` — le préfixe `/data_root` est essentiel, c'est le
+    montage unique qui rend le hardlink possible à l'import, voir
+    [`ARCHITECTURE.md`](ARCHITECTURE.md)), la Connection **Custom Script**
+    cross-seed, puis toute la configuration de Seerr (compte propriétaire
+    importé depuis Jellyfin, bibliothèques, Sonarr/Radarr avec les profils de
+    l'étape 16, et le scan complet de bibliothèque).
+
+    À lancer **après** l'étape 16 : la configuration Seerr désigne les profils
+    qualité par nom. Strictement additif — il ne réécrit jamais un objet
+    existant — donc relançable sans risque, et chaque objet est indépendant :
+    un service arrêté ne fait échouer que ce qui le concerne.
+
+18. **Ajouter les indexeurs Prowlarr** (seule configuration d'UI restante :
+    elle demande vos identifiants de tracker) dans
+    `https://prowlarr.<DOMAIN>`. Reportez ensuite leurs IDs dans
+    `CROSS_SEED_INDEXER_IDS` (`arr/.env`, voir `.env.example` — l'ID apparaît
+    dans l'URL de chaque indexeur) et relancez `make up STACK=arr` pour que
+    cross-seed les prenne en compte. Prowlarr synchronise de lui-même les
+    nouveaux indexeurs vers Sonarr/Radarr, les applications de l'étape 17
+    étant en `fullSync`.
 
     Si votre bibliothèque (`${DATA_ROOT}/library`) n'est pas sur le même
     disque que le reste de `DATA_ROOT` (vérifiable avec `df` sur les deux
@@ -209,54 +234,21 @@ Détail de chaque service, schémas et rationale des choix : voir
     copie au lieu du hardlink — fonctionnel mais plus lent et
     transitoirement plus gourmand en espace disque.
 
-13. **Provisionner les profils qualité arr** (nécessite `sonarr`/`radarr`
-    démarrés et leurs clés API dans `arr/.env`) :
-    ```sh
-    make recyclarr-sync   # custom formats + profils issus des guides TRaSH
-    make arr-overrides    # réglages que recyclarr ne sait pas exprimer
-                          # + config anime versionnée (arr/profiles/)
-    ```
-    Dans cet ordre : `arr-overrides` référence par nom des custom formats
-    que `recyclarr-sync` vient de créer, et échoue explicitement s'ils
-    manquent. Ces deux commandes sont ensuite enchaînées chaque nuit par le
-    cron (étape 17) — les lancer ici évite d'attendre la première
-    exécution pour avoir des profils utilisables.
-
-14. **Démarrer et configurer Seerr** (nécessite `jellyfin` et `arr` déjà
-    démarrés, la stack rejoint le réseau de `arr/`) :
-    ```sh
-    mkdir -p ${DATA_ROOT}/.seerr/config && sudo chown -R ${PUID}:${PGID} ${DATA_ROOT}/.seerr
-    make up STACK=seerr
-    ```
-    Le `chown` est nécessaire avant le tout premier démarrage : contrairement
-    aux images `arr/`, Seerr tourne nativement en UID 1000 sans étape
-    root-puis-drop et ne chown pas lui-même son volume (voir
-    [`ISSUES.md`](ISSUES.md)).
-
-    Tout se configure ensuite via l'assistant de première connexion
-    (`https://seerr.<DOMAIN>`) : connexion à Jellyfin
-    (`http://jellyfin:8096`) puis à Sonarr/Radarr
-    (`http://sonarr:8989`/`http://radarr:7878`, clés API dans `arr/.env`).
-    Une fois les bibliothèques Jellyfin ajoutées (étape 9), lancez
-    manuellement le job **"Jellyfin Full Library Scan"** (Settings → Jobs
-    & Cache) plutôt que d'attendre le cron périodique, pour que Seerr
-    reconnaisse immédiatement le contenu déjà téléchargé.
-
-15. **Générer le dashboard** (page de liens servie par la stack `traefik`
+19. **Générer le dashboard** (page de liens servie par la stack `traefik`
     sur `<DOMAIN>`/`www.<DOMAIN>`) :
     ```sh
     make dashboard-refresh
     ```
     `dashboard/html/` est généré, pas versionné — sans cette commande le
     domaine nu renvoie une page vide jusqu'au premier passage du cron
-    (étape 17).
+    (étape 21).
 
-16. **Vérifier** : `https://<DOMAIN>` (dashboard),
+20. **Vérifier** : `https://<DOMAIN>` (dashboard),
     `https://nextcloud.<DOMAIN>`, `https://jellyfin.<DOMAIN>`,
     `https://seerr.<DOMAIN>`, et `https://transmission.<DOMAIN>` depuis le
     LAN.
 
-17. **Sauvegardes et tâches planifiées** :
+21. **Sauvegardes et tâches planifiées** :
     ```sh
     make backup          # première exécution : crée le dépôt restic et
                           # génère sauvegarde/restic-password — copiez-le
@@ -269,6 +261,18 @@ Détail de chaque service, schémas et rationale des choix : voir
     `apply-arr-overrides.py` (quotidien, minuit). Les tâches liées à une
     stack sont protégées par `scripts/require-running.sh` : elles ne font
     rien si la stack concernée est arrêtée.
+
+22. **(optionnel) Addon Kodi « Supprimer avec clearr »** — sur la machine où
+    tourne Kodi, pas forcément le serveur :
+    ```sh
+    make kodi-install     # ou KODI_HOME=/autre/.kodi
+    ```
+    Installe l'addon dans `~/.kodi/addons/` et pré-remplit l'URL de clearr
+    depuis `.env.shared`. **Redémarrer Kodi** ensuite ; si l'entrée n'apparaît
+    pas dans le menu contextuel d'un film/série, l'activer dans
+    `Paramètres → Extensions → Mes extensions → Menus contextuels`. Suppose
+    `jellyfin-kodi` en mode sync — détails et délais mesurés dans
+    [`kodi/README.md`](kodi/README.md).
 
 ### Maintenance courante
 
@@ -283,6 +287,8 @@ Détail de chaque service, schémas et rationale des choix : voir
 | `make backup` | sauvegarde restic (aussi via cron) |
 | `make restore SNAPSHOT=<id\|latest>` | restauration guidée d'un snapshot |
 | `make cron-install` | (ré)installe `scripts/crontab` comme crontab de l'hôte |
+| `make api-keys` | collecte les clés API générées au 1er démarrage vers `arr/.env` (voir étape 14) |
+| `make provision` | crée la config d'installation restante (bibliothèques Jellyfin, objets arr, Seerr) — additif et relançable, voir étape 17 |
 | `make clearr` | TUI de nettoyage torrents/bibliothèque (service `clearr`), voir ci-dessous |
 | `make dashboard-refresh` | régénère le dashboard immédiatement (aussi via cron 5 min) |
 | `make recyclarr-sync` | applique les guides TRaSH aux profils qualité arr (aussi via cron quotidien) |
