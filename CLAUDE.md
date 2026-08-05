@@ -190,6 +190,50 @@ explicitement :
   Le handler global `RuntimeError` de `webapp.py` teste désormais le préfixe
   `/api/` et répond en JSON : sinon un `transmission-vpn` arrêté renvoyait à
   l'addon le fragment Bootstrap destiné au navigateur, illisible pour lui.
+  **Repli par chemin pour les titres hors Sonarr/Radarr** (ajouté le 2026-08-06 à
+  la demande de l'utilisateur) : Jellyfin sert aussi `completed/` comme
+  bibliothèque (`jellyfin/docker-compose.override.yml`), donc Kodi affiche des
+  films/séries récupérés à la main qu'aucun id externe ne retrouve côté arr.
+  L'addon envoie désormais aussi le **chemin** (`file` de
+  `VideoLibrary.Get*Details`), et `_resolve_target` (`webapp.py`) essaie les ids
+  d'abord, le chemin ensuite. Le chemin est le seul identifiant commun à Kodi et
+  clearr pour ces titres — et il est plus discriminant que les ids : deux
+  dossiers peuvent porter le même `tvdbId` (les 2 saisons de Hell's Paradise,
+  téléchargées séparément, sont 2 séries pour Jellyfin) là où
+  `_find_by_external_ids` refuse — à raison — de trancher.
+  `core.resolve_media_path()` ne suppose **aucun** préfixe commun (Kodi voit
+  `/grosDur/...`, clearr `/data_root/...`, un client distant verrait un partage
+  réseau) : il cherche le plus long suffixe de composants qui existe réellement
+  sous `completed/` ou `library/`, **2 composants minimum** — sans ce plancher,
+  un chemin finissant par `film` résoudrait sur toute la catégorie. Introuvable
+  ou ambigu = rien de supprimé.
+  **Le repli s'interdit `library/`** (`is_arr_managed_path`) : un titre qui y vit
+  est presque toujours suivi par un arr, supprimer ses fichiers sans retirer son
+  entrée le ferait re-télécharger — et ça referme du même coup le cas « id
+  ambigu », dont les fichiers sont justement dans `library/`. Message renvoyant
+  vers l'UI web dans ce cas.
+  Supprime les torrents **et** les fichiers du dossier qu'aucun torrent ne couvre
+  (choix explicite de l'utilisateur) : cas réel rencontré le même jour,
+  `completed/anime/Noragami`, 2,6 Go, plus aucun torrent dans Transmission —
+  refuser aurait laissé ces titres insupprimables depuis Kodi. Aucun appel arr
+  dans ce mode, par construction.
+  **Routes `/api/preview/{film,series}`** ajoutées en même temps (demandées) :
+  l'addon les appelle avant sa boîte de confirmation, qui annonce donc
+  « 3 torrents — 15,6 Go » et plus seulement le titre. Elles servent aussi de
+  garde-fou — un titre non résolu est signalé *avant* la confirmation, pas après
+  un « Supprimer » qui n'aurait rien fait. Elles couvrent les deux modes (arr et
+  chemin), pas seulement le nouveau : deux comportements différents selon
+  l'origine du titre auraient été plus de code pour moins de cohérence.
+  Dépend de jellyfin-kodi en **chemins directs** (`useDirectPaths=1`, le cas
+  ici) : en mode addon Kodi ne connaît qu'une URL `plugin://`, inexploitable —
+  seuls les titres suivis par arr resteraient supprimables.
+  Vérifié le 2026-08-06 : prévisualisation correcte sur les 2 modes (séries et
+  films arr inchangés, titres manuels avec/sans torrent, les 2 Hell's Paradise
+  distingués par leur chemin, chemin à préfixe étranger résolu, racine de
+  catégorie et chemin inexistant refusés), suppression réelle exercée sur des
+  dossiers/fichiers jetables sous `completed/` (dossiers vides élagués jusqu'à
+  `completed/`, jamais au-delà) et branche « avec torrent » exercée avec un
+  client Transmission stubbé.
   Pas de jeton d'authentification sur ces routes, décidé explicitement : le
   service est LAN-only (`arr-lan-only`) et son UI web expose déjà les mêmes
   suppressions en POST sans jeton — à revoir pour les deux ensemble, jamais

@@ -1,9 +1,13 @@
 # Entrée de menu contextuel Kodi « Supprimer avec clearr » (cf. addon.xml).
 #
 # Ne supprime rien lui-même et ne touche PAS à la base vidéo de Kodi : il envoie
-# les ids externes du titre sélectionné à l'API de clearr (POST /api/delete/
-# {film,series}), qui supprime torrents + fichiers library/ + entrée Sonarr/
-# Radarr. C'est ensuite jellyfin-kodi qui retire l'item de la base Kodi, quand
+# les ids externes ET le chemin du titre sélectionné à l'API de clearr (POST
+# /api/preview/{film,series} pour annoncer ce qui va partir, puis /api/delete/…),
+# qui supprime torrents + fichiers + entrée Sonarr/Radarr le cas échéant. Le
+# chemin est ce qui permet de traiter aussi les titres récupérés à la main,
+# absents de Sonarr/Radarr : Jellyfin sert completed/ comme bibliothèque, Kodi
+# les affiche donc au même titre que le reste, mais aucun id externe ne les
+# retrouve côté arr. C'est ensuite jellyfin-kodi qui retire l'item de Kodi, quand
 # Jellyfin lui pousse l'événement de suppression — voir README.md de ce dossier
 # pour la chaîne complète (mesurée : ~1 min 38 s), pourquoi un retrait local
 # (VideoLibrary.RemoveMovie) a été écarté, et pourquoi il n'y a aucun
@@ -46,16 +50,22 @@ def jsonrpc(method, params):
 
 
 def library_details(dbtype, dbid):
-    """Titre + tous les ids externes connus de Kodi pour cet item.
+    """Titre + ids externes + chemin connus de Kodi pour cet item.
 
     Passe par JSON-RPC plutôt que par les InfoLabels ListItem.UniqueID(imdb)/
     ListItem.IMDBNumber : ceux-ci ne remontent que l'id désigné par défaut,
     alors que jellyfin-kodi en écrit plusieurs (les ProviderIds de Jellyfin) et
-    qu'on veut pouvoir retomber sur tvdb/tmdb quand imdb manque."""
+    qu'on veut pouvoir retomber sur tvdb/tmdb quand imdb manque.
+
+    `file` est le fichier du film / le dossier de la série. Il n'est exploitable
+    que parce que jellyfin-kodi est en chemins directs (useDirectPaths) : en
+    mode addon, Kodi ne connaîtrait qu'une URL plugin://, que clearr ne saurait
+    pas rattacher à un fichier. Le préfixe, lui, peut différer de celui du
+    serveur — clearr résout par suffixe, voir core.resolve_media_path."""
     _endpoint, method, id_param, result_key = KINDS[dbtype]
-    response = jsonrpc(method, {id_param: dbid, "properties": ["title", "uniqueid"]})
+    response = jsonrpc(method, {id_param: dbid, "properties": ["title", "uniqueid", "file"]})
     details = response.get("result", {}).get(result_key) or {}
-    return details.get("title", ""), details.get("uniqueid") or {}
+    return details.get("title", ""), details.get("uniqueid") or {}, details.get("file", "")
 
 
 def post_json(url, payload):
@@ -83,6 +93,23 @@ def error_message(exc):
     return "clearr a répondu HTTP {}.".format(exc.code)
 
 
+def fetch_preview(base_url, endpoint, payload):
+    """(prévisualisation, None) ou (None, message d'erreur). Rendu court
+    (quelques centaines de ms côté clearr, qui recalcule tout son état) mais pas
+    instantané : une boîte de progression évite l'impression d'un clic sans
+    effet sur le menu contextuel."""
+    progress = xbmcgui.DialogProgressBG()
+    progress.create(NAME, "Analyse…")
+    try:
+        return post_json("{}/api/preview/{}".format(base_url, endpoint), payload), None
+    except urllib.error.HTTPError as exc:
+        return None, error_message(exc)
+    except Exception as exc:
+        return None, "clearr injoignable : {}".format(exc)
+    finally:
+        progress.close()
+
+
 def notify(message, failed=False):
     xbmcgui.Dialog().notification(
         NAME, message,
@@ -106,26 +133,39 @@ def main():
         notify("Cet élément n'est pas un film ou une série de la bibliothèque.", failed=True)
         return
 
-    title, unique_ids = library_details(dbtype, int(dbid))
+    title, unique_ids, path = library_details(dbtype, int(dbid))
     label = title or xbmc.getInfoLabel("ListItem.Label") or "?"
-    # Mêmes clés que le corps attendu par clearr (ExternalIds dans webapp.py) —
+    # Mêmes clés que le corps attendu par clearr (DeleteTarget dans webapp.py) —
     # ce sont aussi les noms utilisés par Kodi dans son champ uniqueid.
     payload = {key: str(unique_ids.get(key, "")) for key in ("imdb", "tmdb", "tvdb")}
+    payload["path"] = path
     if not any(payload.values()):
-        xbmcgui.Dialog().ok(NAME, "Aucun identifiant IMDb, TMDB ou TVDB pour « {} » : "
-                                  "clearr ne peut pas retrouver ce titre côté Sonarr/Radarr.".format(label))
-        return
-
-    what = "ce film" if dbtype == "movie" else "cette série et toutes ses saisons"
-    if not xbmcgui.Dialog().yesno(
-            NAME,
-            "Supprimer {} ?\n\n[B]{}[/B]\n\n"
-            "Torrents, fichiers de la bibliothèque et entrée Sonarr/Radarr "
-            "seront supprimés.".format(what, label),
-            nolabel="Annuler", yeslabel="Supprimer"):
+        xbmcgui.Dialog().ok(NAME, "Ni identifiant IMDb/TMDB/TVDB ni chemin de fichier pour « {} » : "
+                                  "clearr ne peut pas retrouver ce titre.".format(label))
         return
 
     endpoint = KINDS[dbtype][0]
+    # Prévisualisation avant de demander confirmation : la boîte de dialogue
+    # annonce ce qui va réellement partir (nombre de torrents, taille) plutôt
+    # que le seul titre. Elle sert aussi de garde — un titre que clearr ne sait
+    # pas résoudre est signalé ICI, avant toute confirmation, plutôt qu'après un
+    # « Supprimer » qui n'aurait rien supprimé.
+    preview, error = fetch_preview(base_url, endpoint, payload)
+    if error:
+        xbmcgui.Dialog().ok(NAME, "{}\n\n[B]{}[/B]".format(error, label))
+        return
+
+    what = "ce film" if dbtype == "movie" else "cette série et toutes ses saisons"
+    scope = ("Torrents, fichiers de la bibliothèque et entrée Sonarr/Radarr seront supprimés."
+             if preview.get("managed_by_arr")
+             else "Titre absent de Sonarr/Radarr : torrents et fichiers seront supprimés.")
+    if not xbmcgui.Dialog().yesno(
+            NAME,
+            "Supprimer {} ?\n\n[B]{}[/B]\n{}\n\n{}".format(
+                what, label, preview.get("summary", ""), scope),
+            nolabel="Annuler", yeslabel="Supprimer"):
+        return
+
     progress = xbmcgui.DialogProgressBG()
     progress.create(NAME, "Suppression de {}…".format(label))
     try:

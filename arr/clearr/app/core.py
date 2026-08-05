@@ -42,6 +42,11 @@ import urllib.request
 DATA_ROOT = "/data_root"
 LIBRARY_ROOT = os.path.join(DATA_ROOT, "library")
 TRANSMISSION_DATA_ROOT = os.path.join(DATA_ROOT, ".transmission", "data")
+# Racine des téléchargements terminés. Aussi montée comme bibliothèque Jellyfin
+# (jellyfin/docker-compose.override.yml) : c'est là que vivent les films/séries
+# récupérés à la main, hors de tout suivi Sonarr/Radarr — voir la section
+# "Titres hors Sonarr/Radarr" plus bas.
+COMPLETED_ROOT = os.path.join(TRANSMISSION_DATA_ROOT, "completed")
 LOG_PATH = os.path.join(DATA_ROOT, ".clearr.log")
 
 RPC_URL = "http://transmission-vpn:9091/transmission/rpc"
@@ -719,25 +724,33 @@ def bulk_delete_torrents(client, matched, all_torrents, linked_ids, missing_ids,
     return all_torrents, freed, deleted, failed
 
 
-def cleanup_orphan_series_files(series_path):
-    """Supprime tout fichier restant sous le dossier de la série après le
-    passage de bulk_delete_torrents — un fichier sans torrent Transmission
-    correspondant (retiré par un autre moyen, ou jamais suivi) resterait
-    sinon orphelin malgré la promesse "tous les épisodes téléchargés"."""
+def cleanup_orphan_files(target_path, root=LIBRARY_ROOT):
+    """Supprime tout fichier restant sous un dossier après le passage de
+    bulk_delete_torrents — un fichier sans torrent Transmission correspondant
+    (retiré par un autre moyen, ou jamais suivi) resterait sinon orphelin
+    malgré la promesse "tout le titre est supprimé". `root` borne l'élagage des
+    dossiers devenus vides : library/ pour une série Sonarr, completed/ pour un
+    titre hors arr (voir execute_delete_media_path)."""
     removed = 0
-    if not os.path.isdir(series_path):
-        return removed
-    for root, _dirs, files in os.walk(series_path):
+    freed = 0
+    if not os.path.isdir(target_path):
+        return removed, freed
+    for walk_root, _dirs, files in os.walk(target_path):
         for name in files:
-            path = os.path.join(root, name)
+            path = os.path.join(walk_root, name)
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                size = 0
             try:
                 os.remove(path)
                 removed += 1
-                logger.info("fichier orphelin de série supprimé : %s", path)
-                prune_empty_dirs(path)
+                freed += size
+                logger.info("fichier orphelin supprimé : %s", path)
+                prune_empty_dirs(path, root)
             except OSError as e:
                 logger.warning("échec de suppression du fichier orphelin %s : %s", path, e)
-    return removed
+    return removed, freed
 
 
 def execute_delete_series(client, series, matched, all_torrents, cross_seed_groups, linked_ids, missing_ids):
@@ -751,7 +764,7 @@ def execute_delete_series(client, series, matched, all_torrents, cross_seed_grou
     host_path = series["path"]  # même mount /data_root que Sonarr, aucune traduction nécessaire
     all_torrents, freed, deleted, failed = bulk_delete_torrents(client, matched, all_torrents, linked_ids,
                                                                  missing_ids, cross_seed_groups)
-    orphan_removed = cleanup_orphan_series_files(host_path)
+    orphan_removed, _orphan_freed = cleanup_orphan_files(host_path)
     arr_api(SONARR_URL, SONARR_API_KEY, "DELETE", f"/api/v3/series/{series['id']}",
             params={"deleteFiles": "false", "addImportListExclusion": "true"})
     logger.info("Sonarr: série %r (id=%s) retirée complètement (+ exclusion) — %d torrent(s) supprimé(s), "
@@ -771,6 +784,149 @@ def execute_delete_movie_no_torrent(movie):
             params={"deleteFiles": "true" if movie.get("hasFile") else "false", "addImportExclusion": "true"})
     logger.info("Radarr: film %r (id=%s) retiré complètement (+ exclusion), sans torrent correspondant",
                 movie["title"], movie["id"])
+
+
+# --- Titres hors Sonarr/Radarr, résolus par leur chemin -----------------------
+#
+# Un film/une série récupéré à la main reste sous .transmission/data/completed/
+# (monté tel quel comme bibliothèque Jellyfin, cf. jellyfin/docker-compose.
+# override.yml) : il n'existe dans aucune des deux instances arr, donc ni
+# find_*_by_external_ids ni les vues Séries/Films ne peuvent le retrouver. Le
+# seul identifiant que Kodi et clearr ont en commun pour ces titres est alors le
+# CHEMIN — et il est même plus fiable que les ids externes, deux dossiers
+# distincts pouvant très bien porter le même tvdbId (constaté : les deux saisons
+# de Hell's Paradise, téléchargées séparément, sont deux séries pour Jellyfin).
+#
+# Kodi connaît ce chemin (jellyfin-kodi en chemins directs, useDirectPaths=1),
+# mais tel que le voit SA machine — pas tel que le voit ce conteneur
+# (/data_root/...). D'où resolve_media_path() : aucune hypothèse sur le préfixe
+# du client, on cherche le plus long suffixe de composants qui existe réellement
+# sous une racine connue. Fonctionne donc aussi bien pour un Kodi local que pour
+# un client qui monterait completed/ par un partage réseau.
+
+MEDIA_ROOTS = (COMPLETED_ROOT, LIBRARY_ROOT)
+
+# Deux composants minimum (catégorie + titre, ex. "anime/Noragami") : avec un
+# seul, un chemin se terminant par "film" résoudrait sur completed/film, donc
+# sur toute la catégorie.
+MIN_MEDIA_PATH_COMPONENTS = 2
+
+
+def resolve_media_path(client_path):
+    """Chemin réel sous /data_root correspondant au chemin vu par un client
+    (Kodi), ou None. Les composants vides sont ignorés — Kodi produit des
+    doubles slashes (".../completed/anime//Noragami") — et `..` est écarté
+    plutôt que résolu : c'est ce qui garantit qu'aucun chemin fourni de
+    l'extérieur ne puisse désigner quoi que ce soit hors des racines."""
+    parts = [c for c in client_path.replace("\\", "/").split("/") if c not in ("", ".", "..")]
+    for size in range(len(parts), MIN_MEDIA_PATH_COMPONENTS - 1, -1):
+        suffix = os.path.join(*parts[-size:])
+        hits = [os.path.join(root, suffix) for root in MEDIA_ROOTS
+                if os.path.exists(os.path.join(root, suffix))]
+        if len(hits) == 1:
+            logger.info("chemin client %r résolu en %s", client_path, hits[0])
+            return hits[0]
+        if len(hits) > 1:
+            logger.warning("chemin client %r ambigu : %s — abandon", client_path, ", ".join(hits))
+            return None
+    logger.warning("chemin client %r introuvable sous %s", client_path, " / ".join(MEDIA_ROOTS))
+    return None
+
+
+def is_arr_managed_path(path):
+    """True pour un chemin de library/, l'arborescence que Sonarr/Radarr
+    organisent. La suppression par chemin s'y interdit : le titre y est presque
+    toujours suivi par un arr, le supprimer sans retirer son entrée le ferait
+    simplement re-télécharger à la prochaine recherche."""
+    return os.path.commonpath([path, LIBRARY_ROOT]) == LIBRARY_ROOT
+
+
+def find_torrents_under_path(all_torrents, library_index, cross_seed_child_ids, target):
+    """Torrents top-level (hors enfants cross-seed, cascadés avec leur parent)
+    ayant au moins un fichier dans/sous `target`. Pendant de
+    find_series_torrents pour un titre hors arr : on compare aux chemins réels
+    des fichiers du torrent, pas à des correspondances library/ — un titre hors
+    arr n'a par définition aucun fichier dans library/."""
+    prefix = target.rstrip("/") + "/"
+    result = []
+    for t in all_torrents:
+        if t["id"] in cross_seed_child_ids:
+            continue
+        host_files = torrent_host_files(t)
+        if not any(p == target or p.startswith(prefix) for p, _s in host_files):
+            continue
+        result.append((t, host_files, find_library_matches(host_files, library_index)))
+    return result
+
+
+def plan_media_path_deletion(state, target):
+    """Ce qui serait supprimé pour un titre hors arr : ses torrents, et les
+    fichiers restants du dossier qu'aucun torrent ne couvre (cas réel : un
+    dossier dont les torrents ont été retirés de Transmission depuis longtemps,
+    les fichiers étant restés). Sert l'écran de confirmation de l'addon Kodi
+    avant d'exécuter quoi que ce soit."""
+    matched = find_torrents_under_path(state["all_torrents"], state["library_index"],
+                                        state["cross_seed_child_ids"], target)
+    covered = {p for _t, host_files, _lm in matched for p, _s in host_files}
+    torrent_files = len(covered)
+    torrent_bytes = sum(s for _t, host_files, _lm in matched for _p, s in host_files)
+
+    if os.path.isdir(target):
+        on_disk = [os.path.join(walk_root, name)
+                   for walk_root, _dirs, files in os.walk(target) for name in files]
+    else:
+        on_disk = [target] if os.path.exists(target) else []
+    orphan_files = 0
+    orphan_bytes = 0
+    for path in on_disk:
+        if path in covered:
+            continue
+        orphan_files += 1
+        try:
+            orphan_bytes += os.path.getsize(path)
+        except OSError:
+            pass
+
+    return {
+        "target": target,
+        "title": os.path.basename(target.rstrip("/")),
+        "matched": matched,
+        "torrents": len(matched),
+        "files": torrent_files + orphan_files,
+        "orphan_files": orphan_files,
+        "size_bytes": torrent_bytes + orphan_bytes,
+    }
+
+
+def execute_delete_media_path(client, plan, all_torrents, cross_seed_groups, linked_ids, missing_ids):
+    """Supprime un titre hors arr : ses torrents (avec leurs données, comme
+    partout ailleurs), puis les fichiers du dossier qu'aucun torrent ne couvrait
+    — sans quoi un dossier comme celui rencontré le 2026-08-06 (2,6 Go, plus
+    aucun torrent) resterait insupprimable depuis Kodi. Aucun appel Sonarr/
+    Radarr : par construction, ce titre n'y existe pas."""
+    target = plan["target"]
+    root = COMPLETED_ROOT if os.path.commonpath([target, COMPLETED_ROOT]) == COMPLETED_ROOT \
+        else os.path.dirname(target)
+    all_torrents, freed, deleted, failed = bulk_delete_torrents(client, plan["matched"], all_torrents,
+                                                                 linked_ids, missing_ids, cross_seed_groups)
+    orphan_removed, orphan_freed = cleanup_orphan_files(target, root)
+    if os.path.isdir(target):
+        prune_empty_dirs_from(target, root)
+    elif os.path.isfile(target):
+        # Fichier isolé (film posé directement dans completed/film/) qu'aucun
+        # torrent ne couvrait : cleanup_orphan_files ne descend que dans un
+        # dossier, il reste à le retirer lui-même.
+        try:
+            orphan_freed += os.path.getsize(target)
+            os.remove(target)
+            orphan_removed += 1
+            logger.info("fichier orphelin supprimé : %s", target)
+            prune_empty_dirs(target, root)
+        except OSError as e:
+            logger.warning("échec de suppression du fichier orphelin %s : %s", target, e)
+    logger.info("titre hors arr %r supprimé : %d torrent(s), %d échec(s), %d fichier(s) sans torrent",
+                plan["title"], deleted, failed, orphan_removed)
+    return all_torrents, freed + orphan_freed, deleted, failed
 
 
 # Champs de tri disponibles (vue Torrents). BIB/ABS (bibliothèque/absent)
@@ -1048,9 +1204,13 @@ def build_tree(top_level, cross_seed_groups, expanded_ids, filter_str):
     return rows
 
 
-def prune_empty_dirs(path):
-    d = os.path.dirname(path)
-    while d and os.path.commonpath([d, LIBRARY_ROOT]) == LIBRARY_ROOT and d != LIBRARY_ROOT:
+def prune_empty_dirs(path, root=LIBRARY_ROOT):
+    prune_empty_dirs_from(os.path.dirname(path), root)
+
+
+def prune_empty_dirs_from(directory, root=LIBRARY_ROOT):
+    d = directory
+    while d and os.path.commonpath([d, root]) == root and d != root:
         try:
             os.rmdir(d)
             logger.debug("dossier vide supprimé : %s", d)

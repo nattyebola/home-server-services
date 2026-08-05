@@ -488,13 +488,25 @@ def film_delete(mid: int, sort: str = Form(DEFAULT_SORT["films"]), reverse: str 
     return HTMLResponse(render_arr_tab("films", sort, reverse == "1", filter, message=message, message_kind=kind))
 
 
-# --- API JSON : suppression d'un titre par son id externe (IMDb/TVDB/TMDB) ----
+# --- API JSON : prévisualisation et suppression d'un titre --------------------
 #
 # Consommée par l'addon de menu contextuel Kodi (kodi/context.clearr, entrée
-# « Supprimer avec clearr ») — un client media ne connaît pas les ids Sonarr/
-# Radarr, seulement ceux des bases publiques, d'où core.find_*_by_external_ids.
-# Supprime exactement ce que suppriment les vues Séries/Films (mêmes helpers
-# _delete_series/_delete_movie), pas une variante allégée.
+# « Supprimer avec clearr »). Deux modes de résolution, essayés dans cet ordre :
+#
+# 1. Par id externe (IMDb/TVDB/TMDB) côté Sonarr/Radarr — un client media ne
+#    connaît pas les ids arr, seulement ceux des bases publiques, d'où
+#    core.find_*_by_external_ids. Supprime alors exactement ce que suppriment
+#    les vues Séries/Films (mêmes helpers _delete_series/_delete_movie), pas une
+#    variante allégée.
+# 2. Par chemin, pour un titre récupéré à la main qui n'est dans aucun arr
+#    (ajouté le 2026-08-06) : Jellyfin sert aussi completed/ comme bibliothèque,
+#    donc Kodi affiche des titres que l'étape 1 ne peut pas résoudre. Voir la
+#    section "Titres hors Sonarr/Radarr" de core.py pour le pourquoi du chemin
+#    plutôt que des ids, et pourquoi ce repli s'interdit library/.
+#
+# Chaque mode a sa route de prévisualisation (/api/preview/*), appelée par
+# l'addon avant sa demande de confirmation : sans elle, la boîte de dialogue
+# Kodi ne pourrait annoncer que le titre, jamais ce qui va réellement partir.
 #
 # Aucune authentification, comme le reste de clearr : le service est LAN-only
 # (middleware arr-lan-only, arr/docker-compose.yml) et son UI web expose déjà
@@ -508,38 +520,141 @@ def film_delete(mid: int, sort: str = Form(DEFAULT_SORT["films"]), reverse: str 
 # onMovieDelete activés le 2026-08-05). Voir kodi/README.md pour la chaîne
 # complète et pourquoi le retrait local a été écarté.
 
-class ExternalIds(BaseModel):
+class DeleteTarget(BaseModel):
     imdb: str = ""
     tvdb: str = ""
     tmdb: str = ""
+    # Chemin du fichier (film) ou du dossier (série) tel que le voit le client,
+    # facultatif : il ne sert que quand les ids ne résolvent rien côté arr.
+    path: str = ""
 
 
-def _api_delete(ids, find, delete, kind_label):
-    item = find(ids.model_dump())
-    if not item:
-        known = ", ".join(f"{k}={v}" for k, v in ids.model_dump().items() if v) or "aucun id fourni"
-        return JSONResponse(
-            {"deleted": False, "message": f"{kind_label} introuvable côté arr ({known})."},
-            status_code=404,
-        )
-    state = core.load_full_state()
+class _NotFound(Exception):
+    """Résolution impossible — porte le message destiné à l'utilisateur Kodi."""
+
+
+def _resolve_target(target, find, kind_label):
+    """(mode, objet) où mode vaut "arr" (objet = titre Sonarr/Radarr) ou
+    "media_path" (objet = chemin réel sous /data_root). Lève _NotFound sinon."""
+    item = find(target.model_dump())
+    if item:
+        return "arr", item
+
+    known = ", ".join(f"{k}={v}" for k, v in target.model_dump().items() if v and k != "path") \
+        or "aucun id fourni"
+    if not target.path:
+        raise _NotFound(f"{kind_label} introuvable côté arr ({known}).")
+
+    resolved = core.resolve_media_path(target.path)
+    if not resolved:
+        raise _NotFound(f"{kind_label} introuvable côté arr ({known}), et son chemin "
+                        f"n'a pas pu être retrouvé sur le disque du serveur.")
+    if core.is_arr_managed_path(resolved):
+        # Le titre vit dans library/ : soit Sonarr/Radarr le suit sous d'autres
+        # ids, soit ses ids sont ambigus (voir core._find_by_external_ids).
+        # Supprimer ses fichiers sans retirer son entrée arr le ferait
+        # re-télécharger — on renvoie donc l'utilisateur vers l'UI web.
+        raise _NotFound(f"{kind_label} géré par Sonarr/Radarr mais non résolu par ses "
+                        f"identifiants ({known}) : à supprimer depuis l'interface web de clearr.")
+    return "media_path", resolved
+
+
+def _preview_arr_series(series, state):
+    matched = core.find_series_torrents(state["all_torrents"], state["library_index"],
+                                         state["cross_seed_child_ids"], series["path"])
+    return {
+        "title": series["title"],
+        "torrents": len(matched),
+        "files": sum(len(host_files) for _t, host_files, _lm in matched),
+        "size_bytes": sum(s for _t, host_files, _lm in matched for _p, s in host_files),
+    }
+
+
+def _preview_arr_movie(movie, state):
+    movie_path = movie["movieFile"]["path"] if movie.get("hasFile") else None
+    torrent = core.find_movie_torrent(state["all_torrents"], state["cross_seed_child_ids"], movie_path) \
+        if movie_path else None
+    host_files = core.torrent_host_files(torrent) if torrent else []
+    return {
+        "title": movie["title"],
+        "torrents": 1 if torrent else 0,
+        "files": len(host_files) or (1 if movie.get("hasFile") else 0),
+        "size_bytes": sum(s for _p, s in host_files) or movie.get("sizeOnDisk", 0),
+    }
+
+
+def _summary(preview, managed_by_arr):
+    """Résumé d'une ligne affiché dans la boîte de confirmation de Kodi."""
+    parts = []
+    if preview["torrents"]:
+        parts.append(f"{preview['torrents']} torrent" + ("s" if preview["torrents"] > 1 else ""))
+    if preview.get("orphan_files"):
+        parts.append(f"{preview['orphan_files']} fichier"
+                     + ("s" if preview["orphan_files"] > 1 else "") + " sans torrent")
+    if not parts:
+        parts.append("aucun torrent" if managed_by_arr else "aucun fichier")
+    return ", ".join(parts) + f" — {core.human_size(preview['size_bytes'])}"
+
+
+def _api_preview(target, find, preview_arr, kind_label):
     try:
-        message = delete(item, state)
+        mode, resolved = _resolve_target(target, find, kind_label)
+    except _NotFound as e:
+        return JSONResponse({"found": False, "message": str(e)}, status_code=404)
+    state = core.load_full_state()
+    if mode == "arr":
+        preview = preview_arr(resolved, state)
+    else:
+        preview = core.plan_media_path_deletion(state, resolved)
+        preview.pop("matched")  # non sérialisable, et sans intérêt pour l'appelant
+        preview.pop("target")
+    return {"found": True, "managed_by_arr": mode == "arr", "summary": _summary(preview, mode == "arr"),
+            **preview}
+
+
+def _delete_media_path(resolved, state):
+    plan = core.plan_media_path_deletion(state, resolved)
+    _remaining, freed, deleted, failed = core.execute_delete_media_path(
+        state["client"], plan, state["all_torrents"], state["cross_seed_groups"],
+        state["linked_ids"], state["missing_ids"])
+    suffix = f", {failed} échec(s)" if failed else ""
+    return f"Supprimé : {plan['title']} ({deleted} torrent(s){suffix}, {core.human_size(freed)} libéré(s))"
+
+
+def _api_delete(target, find, delete_arr, kind_label):
+    try:
+        mode, resolved = _resolve_target(target, find, kind_label)
+    except _NotFound as e:
+        return JSONResponse({"deleted": False, "message": str(e)}, status_code=404)
+    state = core.load_full_state()
+    title = resolved["title"] if mode == "arr" else os.path.basename(resolved.rstrip("/"))
+    try:
+        message = delete_arr(resolved, state) if mode == "arr" else _delete_media_path(resolved, state)
     except Exception as e:
-        core.logger.error("API : échec de la suppression de %r : %s", item["title"], e)
+        core.logger.error("API : échec de la suppression de %r : %s", title, e)
         return JSONResponse(
-            {"deleted": False, "title": item["title"], "message": f"ÉCHEC (voir {core.LOG_PATH}) : {e}"},
+            {"deleted": False, "title": title, "message": f"ÉCHEC (voir {core.LOG_PATH}) : {e}"},
             status_code=500,
         )
     core.logger.info("API : %s", message)
-    return {"deleted": True, "title": item["title"], "message": message}
+    return {"deleted": True, "title": title, "message": message}
+
+
+@app.post("/api/preview/series")
+def api_preview_series(target: DeleteTarget):
+    return _api_preview(target, core.find_series_by_external_ids, _preview_arr_series, "Série")
+
+
+@app.post("/api/preview/film")
+def api_preview_film(target: DeleteTarget):
+    return _api_preview(target, core.find_movie_by_external_ids, _preview_arr_movie, "Film")
 
 
 @app.post("/api/delete/series")
-def api_delete_series(ids: ExternalIds):
-    return _api_delete(ids, core.find_series_by_external_ids, _delete_series, "Série")
+def api_delete_series(target: DeleteTarget):
+    return _api_delete(target, core.find_series_by_external_ids, _delete_series, "Série")
 
 
 @app.post("/api/delete/film")
-def api_delete_film(ids: ExternalIds):
-    return _api_delete(ids, core.find_movie_by_external_ids, _delete_movie, "Film")
+def api_delete_film(target: DeleteTarget):
+    return _api_delete(target, core.find_movie_by_external_ids, _delete_movie, "Film")

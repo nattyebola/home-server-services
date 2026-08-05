@@ -30,14 +30,54 @@ l'extension, et `make kodi-install` ne l'écrase jamais si elle existe déjà.
 ## Ce qui se passe quand on clique
 
 1. L'addon lit le type (`movie`/`tvshow`) et le `DBID` de l'élément sélectionné,
-   puis récupère ses identifiants externes (IMDb / TMDB / TVDB) par JSON-RPC
-   (`VideoLibrary.GetMovieDetails`/`GetTVShowDetails`, propriété `uniqueid`).
-   Ce sont les `ProviderIds` que jellyfin-kodi a recopiés depuis Jellyfin.
-2. Confirmation obligatoire (boîte de dialogue « Supprimer / Annuler »).
-3. `POST https://clearr.${DOMAIN}/api/delete/{film,series}` avec ces ids.
-   clearr les résout en id Sonarr/Radarr puis supprime le titre.
-4. Une notification Kodi affiche le message renvoyé par clearr (titre supprimé et
+   puis récupère par JSON-RPC (`VideoLibrary.GetMovieDetails`/
+   `GetTVShowDetails`) ses identifiants externes (propriété `uniqueid` : IMDb /
+   TMDB / TVDB, les `ProviderIds` que jellyfin-kodi a recopiés depuis Jellyfin)
+   **et son chemin** (propriété `file` : le fichier pour un film, le dossier
+   pour une série).
+2. `POST https://clearr.${DOMAIN}/api/preview/{film,series}` : clearr résout le
+   titre et répond ce qui serait supprimé (nombre de torrents, fichiers sans
+   torrent, taille totale).
+3. Confirmation obligatoire, annonçant ce résumé (« 3 torrents — 15,6 Go »).
+4. `POST https://clearr.${DOMAIN}/api/delete/{film,series}`, même corps.
+5. Une notification Kodi affiche le message renvoyé par clearr (titre supprimé et
    espace libéré, ou la raison de l'échec), et l'addon s'arrête là.
+
+## Titres hors Sonarr/Radarr
+
+Jellyfin sert aussi le dossier des téléchargements terminés comme bibliothèque
+(`.transmission/data/completed`, cf. `jellyfin/docker-compose.override.yml`) :
+Kodi affiche donc des films et des séries récupérés à la main, qui n'existent
+dans aucune des deux instances arr. L'addon les gère aussi.
+
+clearr essaie d'abord les identifiants externes côté Sonarr/Radarr ; s'ils ne
+donnent rien, il retombe sur le **chemin**, et supprime alors les torrents
+correspondants (avec leurs données) plus les fichiers du dossier qu'aucun
+torrent ne couvre — cas réel : un dossier de 2,6 Go dont les torrents avaient
+été retirés de Transmission depuis longtemps, jusqu'ici insupprimable autrement
+qu'à la main. Aucun appel Sonarr/Radarr dans ce mode, le titre n'y étant pas.
+
+Le chemin est même plus fiable que les identifiants pour ces titres : deux
+dossiers distincts peuvent porter le même `tvdbId` (les deux saisons de Hell's
+Paradise, téléchargées séparément, sont deux séries pour Jellyfin), alors que la
+résolution par id refuse — à juste titre — de trancher entre deux titres.
+
+Deux garde-fous :
+
+- **Le repli par chemin s'interdit `library/`**, l'arborescence de
+  Sonarr/Radarr. Un titre qui y vit est presque toujours suivi par un arr :
+  supprimer ses fichiers sans retirer son entrée le ferait simplement
+  re-télécharger. L'addon renvoie alors vers l'interface web de clearr.
+- **Le préfixe du chemin n'est pas supposé identique** des deux côtés (Kodi voit
+  `/grosDur/…`, clearr voit `/data_root/…`, un autre client verrait un partage
+  réseau) : clearr cherche le plus long suffixe de composants qui existe
+  réellement sous une racine connue, deux composants minimum. Un chemin
+  introuvable ou ambigu ne supprime rien.
+
+Ceci suppose que jellyfin-kodi est en **chemins directs** (`useDirectPaths`) :
+en mode addon, Kodi ne connaîtrait qu'une URL `plugin://`, que clearr ne saurait
+rattacher à aucun fichier. Les titres suivis par Sonarr/Radarr continueraient
+d'être supprimables (résolution par id), pas les autres.
 
 L'addon **ne rafraîchit pas la vue** : la ligne ne peut pas disparaître dans la
 foulée, la propagation prend plus d'une minute (chiffres plus bas). Elle part
@@ -80,11 +120,12 @@ notification.
   n'expose la suppression que d'un titre complet (une série supprimée l'est avec
   toutes ses saisons, y compris celles encore en diffusion). Le `<visible>` de
   `addon.xml` masque l'entrée sur les autres types.
-- **Un titre sans identifiant externe** dans la base Kodi ne peut pas être
-  résolu : l'addon le dit et n'envoie rien.
+- **Un titre sans identifiant externe ni chemin** dans la base Kodi ne peut pas
+  être résolu : l'addon le dit et n'envoie rien.
 - **Un identifiant qui correspond à plusieurs titres** côté Sonarr/Radarr fait
   refuser la suppression (voir `_find_by_external_ids` dans
-  `arr/clearr/app/core.py`) — à traiter dans l'interface web de clearr.
+  `arr/clearr/app/core.py`) — à traiter dans l'interface web de clearr. Le repli
+  par chemin ne rattrape pas ce cas : il s'interdit `library/` (voir plus haut).
 - **Aucune authentification**, comme le reste de clearr : le service est
   LAN-only (middleware Traefik `arr-lan-only`) et son interface web expose déjà
   les mêmes suppressions sans jeton.
