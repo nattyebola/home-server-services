@@ -337,13 +337,27 @@ explicitement :
   revanche qu'une **clé API suffit pour créer une bibliothèque** (test d'une
   bibliothèque jetable créée puis supprimée), donc `make provision` ne dépend
   que de `arr/.env` — ne pas y réintroduire une dépendance aux identifiants.
-  Chemins de création testés le 2026-08-05 contre des **conteneurs jetables**
-  (Sonarr et Prowlarr neufs, config vide, rejoignant les mêmes réseaux) plutôt
-  qu'en cassant la config en service : root folders, client de téléchargement,
-  Connection cross-seed et application Prowlarr créés puis relus conformes aux
-  objets réels, 2e passage sans changement. **La config Seerr (`provision_seerr`)
-  reste le seul chemin de création non exercé** : il faut les identifiants admin
-  Jellyfin, que seul l'utilisateur possède.
+  Chemins de création **tous testés** le 2026-08-05 contre des **conteneurs
+  jetables** (Sonarr, Prowlarr et Seerr neufs, config vide, rejoignant les mêmes
+  réseaux) plutôt qu'en cassant la config en service : root folders, client de
+  téléchargement, Connection cross-seed et application Prowlarr créés puis relus
+  conformes aux objets réels, 2e passage sans changement. La config Seerr, seul
+  chemin resté non exercé jusqu'à ce que l'utilisateur renseigne
+  `jellyfin/.env`, a été validée sur une instance vierge
+  (`public.initialized: false`) : les 7 étapes passent du premier coup et les
+  26 champs des serveurs Sonarr/Radarr obtenus sont **identiques** à ceux de
+  l'instance configurée à la main (dont `activeProfileId` 7/8/11 et les 3
+  dossiers), compte propriétaire importé depuis Jellyfin compris ; 2 relances
+  laissent le `settings.json` bit-à-bit identique. Création de clé API Jellyfin
+  idem (créée, réutilisée au 2e appel, fonctionnelle) — la clé de test a été
+  supprimée après coup pour ne pas laisser de clé orpheline.
+  Détail relevé au passage, sans conséquence : après suppression d'une
+  bibliothèque Jellyfin, celle-ci reste un moment listée par l'endpoint que
+  Seerr interroge pour sa synchronisation (cache côté Jellyfin) — elle arrive
+  simplement désactivée côté Seerr, `provision.py` n'activant que les 3
+  bibliothèques de `JELLYFIN_LIBRARIES`. Corollaire voulu : une bibliothèque
+  personnelle (ex. "Kids") n'est pas activée dans Seerr par le script, à faire à
+  la main si désiré.
 
 - **Rootless par container**, pas de daemon Docker rootless. `cap_drop:
   ALL` + `security_opt: no-new-privileges:true` partout ; `cap_add` ciblé
