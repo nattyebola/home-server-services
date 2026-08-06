@@ -9,11 +9,17 @@
     <input type="search" class="form-control form-control-sm" name="filter" value="{{ filter_str }}"
            placeholder="Filtrer par nom…" data-live autocomplete="off">
   </form>
-  {% if missing_count %}
-  <a href="#" class="btn btn-outline-danger btn-sm" data-get="/torrents/purge-abs/confirm?{{ qs }}" data-target="#modal-body">
-    Purger les {{ missing_count }} ABS
-  </a>
-  {% endif %}
+  <div class="d-flex gap-2">
+    {% if missing_count %}
+    <a href="#" class="btn btn-outline-danger btn-sm" data-get="/torrents/purge-abs/confirm?{{ qs }}" data-target="#modal-body">
+      Purger les {{ missing_count }} ABS
+    </a>
+    {% endif %}
+    <a href="#" class="btn btn-outline-secondary btn-sm" data-get="/library/orphans/confirm?{{ qs }}" data-target="#modal-body"
+       title="Chercher les fichiers de library/ qu'aucun torrent ne couvre et qu'aucun arr ne connaît">
+      Orphelins library/
+    </a>
+  </div>
 </div>
 
 <p class="text-body-secondary small mb-2">

@@ -362,6 +362,56 @@ explicitement :
   fichier), donc en annoncer serait promettre plus que ce qui est fait — l'écart
   inverse de celui corrigé ici.
 
+- **Bouton « Orphelins library/ » dans la vue Torrents de `clearr`, à côté de
+  la purge des ABS** (ajouté le 2026-08-06, demandé) : `core.
+  library_orphan_files()`/`delete_library_orphans()` + routes
+  `/library/orphans{,/confirm}` + `templates/confirm_orphans.html`. Comble un
+  trou structurel constaté le même jour : les 3 vues partent des torrents
+  Transmission (`list_torrents`) ou des objets arr (`fetch_series_list`/
+  `fetch_movies_list`), et `build_library_index()` ne walke `library/` que pour
+  du *matching* par inode — un fichier ni lié à un torrent ni connu d'un arr
+  n'apparaissait donc nulle part, et n'était même pas supprimable depuis Kodi
+  (le repli par chemin s'interdit `library/`, cf. `is_arr_managed_path`).
+  **Un bouton et pas une 4e vue** (demandé explicitement) : le calcul coûte
+  `2 + N` appels arr (N = séries, un `/api/v3/episodefile?seriesId=` chacun —
+  l'objet série ne porte que des compteurs agrégés, même raison que la fiche
+  détail), mesuré à ~170 ms contre ~50 ms pour l'onglet Torrents. À la demande,
+  jamais au rendu d'un onglet. Modale unique pour les deux cas : liste +
+  confirmation s'il y a des orphelins, message explicatif + bouton Fermer sinon
+  — pas de bouton grisé ni de compteur dans l'onglet, qui aurait exigé ce calcul
+  à chaque rendu.
+  Couverture d'un fichier : un **torrent** le couvre s'il partage son inode
+  (hardlink, la seule relation existante entre `.transmission/data` et
+  `library/`) ; un **arr** le couvre si c'est un de ses `episodefile`/`movieFile`
+  **ou** un sidecar (`SIDECAR_EXTENSIONS`) sous le dossier d'un titre qu'il
+  connaît encore. Ce 2e volet est indispensable depuis l'activation du metadata
+  writer (241 `.nfo` + jaquettes, voir plus haut) : sans lui ils ressortaient
+  tous orphelins. Corollaire voulu — une vidéo posée dans le dossier d'une série
+  suivie mais jamais importée par Sonarr **est** un orphelin (c'est le cas qui a
+  motivé la demande), là où un `.nfo` au même endroit ne l'est pas ; dans un
+  dossier qu'aucun arr ne revendique, sidecars compris, tout est orphelin.
+  Couverture par **chemin de fichier exact**, pas par préfixe de dossier de
+  titre : un préfixe aurait rendu invisible exactement le cas cherché.
+  **`_arr_covered_paths()` n'est PAS best-effort**, seule exception du module :
+  elle lève `RuntimeError` si un appel arr échoue, plutôt que de dégrader comme
+  `arr_api` partout ailleurs. Sans la liste des fichiers d'un arr, tout ce qu'il
+  gère passerait pour orphelin — proposer de supprimer la moitié de `library/`
+  sur un timeout serait le pire échec possible de cette fonction. Le handler
+  global `RuntimeError` de `webapp.py` le rend déjà en bandeau lisible, aucun
+  code d'erreur à ajouter.
+  Le POST **recalcule** la liste au lieu de reprendre les chemins de la modale :
+  aucun chemin à supprimer ne vient du client.
+  Vérifié le 2026-08-06 : 0 orphelin sur la bibliothèque réelle (466 fichiers
+  indexés, 223 couverts par un torrent/arr, 242 sidecars — donc aucun `.nfo`
+  compté à tort) ; puis chemin positif exercé sur des fichiers jetables — vidéo
+  dans `Season 1` d'une série suivie **détectée**, `.nfo` dans le dossier de la
+  même série **non** détecté, dossier de film inconnu des arr détecté avec son
+  `.nfo`, suppression réelle (3 fichiers) suivie de l'élagage du dossier vide
+  jusqu'à `library/` sans toucher à la série témoin, et garde-fou vérifié en
+  passant une `SONARR_API_KEY` invalide (RuntimeError, 0 fichier proposé).
+  Web seulement, pas d'équivalent dans la TUI (comme le reste des ajouts
+  récents).
+
 - **Tag `pour-les-enfants` sur les deux arr, créé par `scripts/provision.py`**
   (`ARR_TAGS`, ajouté le 2026-08-06, demandé) : posé depuis Seerr au moment de
   la requête (Seerr a un override `tags` par requête — colonne `tags` de sa

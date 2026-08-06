@@ -49,6 +49,16 @@ TRANSMISSION_DATA_ROOT = os.path.join(DATA_ROOT, ".transmission", "data")
 COMPLETED_ROOT = os.path.join(TRANSMISSION_DATA_ROOT, "completed")
 LOG_PATH = os.path.join(DATA_ROOT, ".clearr.log")
 
+# Fichiers que Sonarr/Radarr écrivent À CÔTÉ d'un média qu'ils gèrent
+# (metadata writer .nfo activé le 2026-08-06, jaquettes, sous-titres) : ils
+# n'apparaissent dans aucun episodefile/movieFile et aucun torrent ne les
+# couvre par un hardlink, donc un balayage de library/ les compterait tous
+# orphelins (241 .nfo au moment de l'ajout). Sous le dossier d'un titre encore
+# connu d'un arr, ils sont considérés couverts par lui — ailleurs ils restent
+# des résidus à part entière (voir library_orphan_files).
+SIDECAR_EXTENSIONS = (".nfo", ".srt", ".sub", ".idx", ".ass", ".ssa", ".vtt",
+                      ".jpg", ".jpeg", ".png", ".webp", ".tbn")
+
 # Statuts RPC Transmission correspondant à un torrent qui partage encore
 # (5 = en attente de seed, 6 = seed). Tout le reste (0 arrêté, 1-2 vérification,
 # 3-4 téléchargement) ne partage pas — distinction affichée dans les écrans de
@@ -801,6 +811,108 @@ def series_orphan_files(matched, series_path):
     fichiers Transmission : c'est le dossier de la série qu'on inspecte."""
     covered = {p for _t, _hf, lib_matches in matched for p, _s in lib_matches}
     return orphan_files_under(series_path, covered)
+
+
+def _arr_covered_paths():
+    """(fichiers, dossiers) que Sonarr/Radarr revendiquent dans library/ :
+    chemins exacts des episodefile/movieFile importés, et dossiers des titres
+    qu'ils connaissent encore (pour leurs sidecars, voir SIDECAR_EXTENSIONS).
+    Pas de traduction de chemin à faire, arr et clearr partagent /data_root.
+
+    Contrairement au reste du module, PAS best-effort : lève RuntimeError si un
+    appel échoue. Sans la liste des fichiers d'un arr, tout ce qu'il gère
+    passerait pour orphelin — proposer de supprimer la moitié de library/ sur un
+    timeout serait le pire échec possible de ce balayage. Le handler global de
+    webapp.py rend déjà un RuntimeError en bandeau lisible."""
+    series = arr_api(SONARR_URL, SONARR_API_KEY, "GET", "/api/v3/series")
+    movies = arr_api(RADARR_URL, RADARR_API_KEY, "GET", "/api/v3/movie")
+    if series is None or movies is None:
+        unreachable = "Sonarr" if series is None else "Radarr"
+        raise RuntimeError(f"{unreachable} est injoignable : impossible de distinguer un fichier "
+                           "orphelin d'un fichier géré par un arr, balayage abandonné.")
+    files, dirs = set(), []
+    for m in movies:
+        movie_file = m.get("movieFile") or {}
+        if movie_file.get("path"):
+            files.add(movie_file["path"])
+        if m.get("path"):
+            dirs.append(m["path"].rstrip("/") + "/")
+    for s in series:
+        if not s.get("path"):
+            continue
+        dirs.append(s["path"].rstrip("/") + "/")
+        episode_files = arr_api(SONARR_URL, SONARR_API_KEY, "GET", "/api/v3/episodefile",
+                                params={"seriesId": s["id"]})
+        if episode_files is None:
+            raise RuntimeError(f"Sonarr n'a pas renvoyé les fichiers de {s.get('title')!r} : "
+                               "balayage abandonné plutôt que de compter ses épisodes orphelins.")
+        for episode_file in episode_files:
+            if episode_file.get("path"):
+                files.add(episode_file["path"])
+    logger.debug("couverture arr de library/ : %d fichier(s), %d dossier(s) de titre",
+                 len(files), len(dirs))
+    return files, dirs
+
+
+def library_orphan_files(state):
+    """[(chemin, taille), ...] des fichiers de library/ qu'aucun torrent ne
+    couvre ET qu'aucun arr ne connaît. Comble un trou constaté le 2026-08-06 :
+    les 3 vues de clearr partent des torrents Transmission ou des objets arr,
+    donc un résidu qui n'est ni l'un ni l'autre n'apparaît nulle part — et n'est
+    même pas supprimable depuis Kodi, dont le repli par chemin s'interdit
+    library/ (voir is_arr_managed_path).
+
+    Un torrent couvre un fichier s'il partage son inode (hardlink, la seule
+    relation qui existe entre .transmission/data et library/) ; un arr le couvre
+    si c'est un de ses episodefile/movieFile, ou un sidecar sous le dossier d'un
+    titre qu'il connaît encore. Un fichier vidéo posé dans le dossier d'une
+    série suivie mais jamais importé par Sonarr est donc bien un orphelin.
+
+    Calculé à la demande (2 + N appels arr, N = nombre de séries), jamais au
+    rendu d'un onglet — c'est ce qui justifie un bouton plutôt qu'une 4e vue.
+    Repart de l'index de load_full_state() plutôt que de re-walker library/ :
+    c'est le même parcours, et son inode est nécessaire au test de couverture
+    torrent (un fichier que l'indexation n'a pas pu stat est donc hors
+    périmètre, il ressort dans les warnings de build_library_index)."""
+    library_index = state["library_index"]
+    covered = {library_index[inode]
+               for t in state["all_torrents"]
+               for inode in (t.get("_inodes") or ())
+               if inode in library_index}
+    arr_files, arr_dirs = _arr_covered_paths()
+    covered |= arr_files
+
+    orphans = []
+    for path in sorted(library_index.values()):
+        if path in covered:
+            continue
+        if path.lower().endswith(SIDECAR_EXTENSIONS) and any(path.startswith(d) for d in arr_dirs):
+            continue
+        try:
+            orphans.append((path, os.path.getsize(path)))
+        except OSError:
+            orphans.append((path, 0))
+    logger.info("balayage library/ : %d fichier(s) indexé(s), %d couvert(s), %d orphelin(s)",
+                len(library_index), len(covered), len(orphans))
+    return orphans
+
+
+def delete_library_orphans(orphans):
+    """Supprime les fichiers rendus par library_orphan_files() et élague les
+    dossiers devenus vides jusqu'à library/. Aucun appel Transmission ni arr :
+    par construction ces fichiers ne sont connus ni de l'un ni de l'autre."""
+    removed, freed, failed = 0, 0, 0
+    for path, size in orphans:
+        try:
+            os.remove(path)
+            removed += 1
+            freed += size
+            logger.info("orphelin de library/ supprimé : %s", path)
+            prune_empty_dirs(path, LIBRARY_ROOT)
+        except OSError as e:
+            logger.warning("échec de suppression de l'orphelin %s : %s", path, e)
+            failed += 1
+    return removed, freed, failed
 
 
 def cleanup_orphan_files(target_path, root=LIBRARY_ROOT):

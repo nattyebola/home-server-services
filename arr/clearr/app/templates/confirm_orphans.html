@@ -1,0 +1,37 @@
+<div class="modal-header">
+  <h5 class="modal-title">
+    {% if orphans %}Supprimer {{ orphans|length }} fichier(s) orphelin(s) de library/{% else %}Aucun orphelin dans library/{% endif %}
+  </h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+</div>
+<div class="modal-body">
+{% if orphans %}
+<ul class="small text-body-secondary" style="max-height:260px; overflow-y:auto;">
+  {% for o in orphans[:40] %}<li class="text-truncate" title="{{ o.path }}">{{ o.path }} <span class="text-body-tertiary">— {{ o.size }}</span></li>{% endfor %}
+  {% if orphans|length > 40 %}<li>... et {{ orphans|length - 40 }} de plus</li>{% endif %}
+</ul>
+<div class="alert alert-warning py-2 small mb-0">
+  {{ total_size }} au total. Ces fichiers ne sont couverts par aucun torrent Transmission
+  et ne sont connus ni de Sonarr ni de Radarr — ils n'apparaissent donc dans aucun des
+  trois onglets. Rien d'autre n'est touché : aucun torrent retiré, aucun titre modifié
+  côté arr. Les dossiers devenus vides sont élagués jusqu'à library/.
+</div>
+{% else %}
+<p class="small text-body-secondary mb-0">
+  Chaque fichier de library/ est couvert soit par un torrent (hardlink), soit par un
+  episodefile Sonarr / movieFile Radarr, soit par un titre arr dont il est un sidecar
+  (.nfo, jaquette, sous-titres). Rien à supprimer.
+</p>
+{% endif %}
+</div>
+<form class="modal-footer">
+  <input type="hidden" name="sort" value="{{ sort }}">
+  <input type="hidden" name="reverse" value="{{ '1' if reverse else '0' }}">
+  <input type="hidden" name="filter" value="{{ filter_str }}">
+  {% if orphans %}
+  <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
+  <button type="button" class="btn btn-danger btn-sm" data-post="/library/orphans" data-target="#tab-content">Supprimer les {{ orphans|length }} fichier(s)</button>
+  {% else %}
+  <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Fermer</button>
+  {% endif %}
+</form>

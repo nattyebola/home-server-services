@@ -320,6 +320,39 @@ def purge_execute(sort: str = Form(DEFAULT_SORT["torrents"]), reverse: str = For
     return HTMLResponse(render_torrents_tab(sort, reverse == "1", filter, message=message, message_kind=kind))
 
 
+# --- balayage des orphelins de library/ (fichiers qu'aucun torrent ne couvre
+# et qu'aucun arr ne connaît, donc invisibles des 3 onglets). Un bouton qui
+# ouvre une modale, pas une 4e vue : le calcul demande 2 + N appels arr (N =
+# nombre de séries), trop cher pour chaque rendu d'onglet. ---
+
+@app.get("/library/orphans/confirm", response_class=HTMLResponse)
+def library_orphans_confirm(sort: str = DEFAULT_SORT["torrents"], reverse: str = "0", filter: str = ""):
+    state = core.load_full_state()
+    orphans = core.library_orphan_files(state)
+    return HTMLResponse(render(
+        "confirm_orphans.html",
+        orphans=[{"path": os.path.relpath(p, core.LIBRARY_ROOT), "size": core.human_size(s)}
+                 for p, s in orphans],
+        total_size=core.human_size(sum(s for _p, s in orphans)),
+        sort=sort, reverse=reverse == "1", filter_str=filter,
+    ))
+
+
+@app.post("/library/orphans", response_class=HTMLResponse)
+def library_orphans_delete(sort: str = Form(DEFAULT_SORT["torrents"]), reverse: str = Form("0"),
+                           filter: str = Form("")):
+    # Recalculé ici plutôt que repris du POST : la liste des chemins à supprimer
+    # ne doit jamais venir du client.
+    state = core.load_full_state()
+    orphans = core.library_orphan_files(state)
+    removed, freed, failed = core.delete_library_orphans(orphans)
+    message = f"library/ : {removed} fichier(s) orphelin(s) supprimé(s), {core.human_size(freed)} libéré(s)"
+    if failed:
+        message += f", {failed} échec(s) (voir {core.LOG_PATH})"
+    return HTMLResponse(render_torrents_tab(sort, reverse == "1", filter, message=message,
+                                            message_kind="danger" if failed else "success"))
+
+
 # --- suppression d'un torrent (vue Torrents, et vue Films quand un torrent
 # correspondant est trouvé — même gabarit confirm_torrent.html, réutilisé
 # comme confirm_delete() l'est par les deux vues côté TUI) ---
