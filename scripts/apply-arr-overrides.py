@@ -110,6 +110,35 @@ JELLYFIN_COMMON_TRIGGERS = ("onDownload", "onUpgrade", "onRename")
 SONARR_JELLYFIN_TRIGGERS = JELLYFIN_COMMON_TRIGGERS + ("onSeriesDelete", "onEpisodeFileDelete")
 RADARR_JELLYFIN_TRIGGERS = JELLYFIN_COMMON_TRIGGERS + ("onMovieDelete", "onMovieFileDelete")
 
+# Metadata writer "Kodi (XBMC) / Emby" (XbmcMetadata) activé sur les deux arr,
+# ajouté le 2026-08-06 : Jellyfin n'apprend JAMAIS les ids externes de
+# Sonarr/Radarr (la connexion ci-dessus ne signale qu'un dossier à rescanner),
+# il réidentifie chaque titre lui-même à partir du nom de dossier + année via
+# une recherche TMDB — et se trompe quand un autre titre de la même année est
+# plus populaire. Deux cas réels constatés ce jour-là : "Dead Man (1995)"
+# (Jarmusch) identifié comme "Dead Man Walking" (Tim Robbins, même année), et
+# "One Piece" (dossier sans année) comme la série live-action Netflix de 2023 au
+# lieu de l'anime de 1999. Le .nfo écrit à côté du fichier porte les uniqueid
+# imdb/tmdb/tvdb, et les bibliothèques Jellyfin ont "Nfo" en tête de leur
+# LocalMetadataReaderOrder : l'identification devient déterministe.
+# Conséquence collatérale, c'est aussi ce qui rendait un tel titre
+# insupprimable depuis Kodi (kodi/context.clearr envoie les ids externes vus
+# par Jellyfin — un id faux ne matche aucun titre arr, et le repli par chemin
+# s'interdit library/, voir CLAUDE.md).
+# Images volontairement désactivées (jaquettes/fanarts déjà téléchargés par
+# Jellyfin dans son propre cache) : on ne veut que les identifiants dans
+# library/, pas des fichiers image dupliqués à côté de chaque vidéo.
+# Déclaratif comme les profils anime : le writer est activé et ses champs
+# alignés, tout champ image est remis à False.
+# Les .nfo ne sont écrits qu'à l'import (ou sur rescan) — après un premier
+# passage, rattraper la bibliothèque existante avec les commandes
+# `RescanMovie`/`RescanSeries` (sans argument = tous les titres).
+XBMC_METADATA_IMPLEMENTATION = "XbmcMetadata"
+XBMC_METADATA_IMAGE_FIELDS = ("movieImages", "seriesImages", "seasonImages",
+                              "episodeImages", "episodeImageThumb")
+SONARR_XBMC_METADATA_FIELDS = {"seriesMetadata": True, "episodeMetadata": True}
+RADARR_XBMC_METADATA_FIELDS = {"movieMetadata": True}
+
 SONARR_SIZE_OVERRIDES = {
     "WEBRip-2160p": {"maxSize": 100, "preferredSize": 85},
     "WEBDL-2160p": {"maxSize": 100, "preferredSize": 85},
@@ -292,6 +321,36 @@ def apply_jellyfin_connection(label, container, base_url, api_key, jellyfin_key,
         return []
     api_put(container, base_url, api_key, f"/notification/{target['id']}", body)
     return [f"{label} connexion {target['name']!r} réalignée"]
+
+
+def metadata_signature(metadata):
+    return (metadata["enable"],
+            {f["name"]: f.get("value") for f in metadata["fields"]})
+
+
+def apply_xbmc_metadata(label, container, base_url, api_key, wanted_fields):
+    """Active le metadata writer Kodi/Emby et aligne ses champs (voir
+    XBMC_METADATA_IMPLEMENTATION). Le writer est toujours présent dans la liste
+    des metadata consumers d'un Servarr — pas besoin de passer par un schéma de
+    création, contrairement à la connexion Jellyfin."""
+    consumers = api_get(container, base_url, api_key, "/metadata")
+    target = next((m for m in consumers
+                   if m["implementation"] == XBMC_METADATA_IMPLEMENTATION), None)
+    if target is None:
+        raise RuntimeError(
+            f"{label} : implémentation {XBMC_METADATA_IMPLEMENTATION} absente de "
+            "/metadata — nom changé côté Servarr ?")
+    body = copy.deepcopy(target)
+    body["enable"] = True
+    for name, value in wanted_fields.items():
+        set_field(body, name, value)
+    for name in XBMC_METADATA_IMAGE_FIELDS:
+        if any(f["name"] == name for f in body["fields"]):
+            set_field(body, name, False)
+    if metadata_signature(target) == metadata_signature(body):
+        return []
+    api_put(container, base_url, api_key, f"/metadata/{target['id']}", body)
+    return [f"{label} metadata {target['name']!r} réaligné"]
 
 
 def prowlarr_public_ids(prowlarr_api_key):
@@ -521,6 +580,14 @@ def main():
         notes.append(str(e))
     except Exception as e:
         errors.append(f"Sonarr (Jellyfin): {e}")
+    # Bloc à part pour la même raison que les deux précédents. Ne dépend
+    # d'aucun service tiers : le writer est local à l'arr, contrairement à la
+    # connexion Jellyfin qui a besoin d'une clé.
+    try:
+        changed += apply_xbmc_metadata("Sonarr", SONARR_CONTAINER, SONARR_URL,
+                                       sonarr_api_key, SONARR_XBMC_METADATA_FIELDS)
+    except Exception as e:
+        errors.append(f"Sonarr (metadata): {e}")
     try:
         changed += apply_quality_sizes("Radarr", RADARR_CONTAINER, RADARR_URL,
                                         radarr_api_key, RADARR_SIZE_OVERRIDES)
@@ -538,6 +605,11 @@ def main():
         notes.append(str(e))
     except Exception as e:
         errors.append(f"Radarr (Jellyfin): {e}")
+    try:
+        changed += apply_xbmc_metadata("Radarr", RADARR_CONTAINER, RADARR_URL,
+                                       radarr_api_key, RADARR_XBMC_METADATA_FIELDS)
+    except Exception as e:
+        errors.append(f"Radarr (metadata): {e}")
     # Bloc à part, et par arr : le PUT d'un indexeur est le seul de ce script à
     # dépendre d'un service tiers joignable (le tracker lui-même, testé par
     # Sonarr/Radarr au moment de l'écriture même avec forceSave).

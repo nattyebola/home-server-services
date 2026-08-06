@@ -362,6 +362,46 @@ explicitement :
   fichier), donc en annoncer serait promettre plus que ce qui est fait — l'écart
   inverse de celui corrigé ici.
 
+- **Metadata writer « Kodi (XBMC) / Emby » activé sur Sonarr et Radarr, porté
+  par `scripts/apply-arr-overrides.py`** (`XBMC_METADATA_*`, ajouté le
+  2026-08-06) : **Jellyfin n'apprend jamais les ids externes des arr** — la
+  connexion Emby/Jellyfin (ci-dessous) ne signale qu'un dossier à rescanner,
+  aucun identifiant ne circule, donc Jellyfin réidentifie chaque titre lui-même
+  par une recherche TMDB sur le nom de dossier + année. Deux erreurs réelles
+  constatées ce jour-là, toutes deux dues à un homonyme plus populaire :
+  `library/film/Dead Man (1995)` (Jarmusch) identifié comme *Dead Man Walking*
+  (Tim Robbins, même année, `tt0112818` vs `tt0112817`), et
+  `library/anime/One Piece` (dossier sans année) comme la série live-action
+  Netflix de 2023 au lieu de l'anime de 1999. Les `.nfo` écrits à côté des
+  fichiers portent les `uniqueid` imdb/tmdb/tvdb, et les 6 bibliothèques
+  Jellyfin ont déjà `Nfo` en tête de leur `LocalMetadataReaderOrder` :
+  l'identification devient déterministe. Vérifié par le test qui discrimine —
+  un `POST /Items/{id}/Refresh?replaceAllMetadata=true` (qui repart de zéro et
+  aurait re-cherché sur TMDB) laisse les bons ids en place.
+  **Ce n'est pas qu'un problème d'affichage** : c'est aussi ce qui rendait un
+  tel titre insupprimable depuis Kodi (`kodi/context.clearr` envoie les ids
+  externes vus par Jellyfin — un id faux ne matche aucun titre arr, et le repli
+  par chemin s'interdit `library/`, voir plus haut).
+  Images désactivées (`movieImages`/`seriesImages`/`seasonImages`/
+  `episodeImages`/`episodeImageThumb`), volontairement : Jellyfin télécharge
+  déjà ses jaquettes dans son propre cache, on ne veut que les identifiants
+  dans `library/`, pas des images dupliquées à côté de chaque vidéo. Vérifié
+  après coup : 241 `.nfo`, 0 image écrite.
+  Les `.nfo` ne sont écrits qu'à l'import ou sur rescan — la bibliothèque
+  existante a été rattrapée une fois par les commandes `RescanMovie`/
+  `RescanSeries` sans argument (tous les titres) ; à refaire de la même façon
+  si un jour des `.nfo` manquent en masse.
+  Correction des deux titres déjà mal identifiés : `POST
+  /Items/RemoteSearch/{Movie,Series}` pour trouver le bon résultat puis `POST
+  /Items/RemoteSearch/Apply/{id}` (équivalent API du bouton « Identifier » de
+  l'UI Jellyfin) — le rescan arr seul ne suffit pas, Jellyfin ne relit un
+  `.nfo` que lors d'un rafraîchissement de métadonnées.
+  Audit fait à cette occasion (à refaire de la même façon si un doute
+  revient) : comparer `imdbId`/`tmdbId`/`tvdbId` des objets arr aux
+  `ProviderIds` des items Jellyfin appariés **par chemin** (`/library/...` côté
+  Jellyfin ↔ `/data_root/library/...` côté arr) — 17 films et 19 séries
+  appariables, ces 2 décalages et aucun autre.
+
 - **Déclencheurs de suppression activés sur les connexions Jellyfin de
   Sonarr/Radarr** (2026-08-05), et **maintenus par
   `scripts/apply-arr-overrides.py`** (`JELLYFIN_TRIGGERS`, élargi le même jour à
@@ -1826,7 +1866,7 @@ server/
 │   ├── generate-dashboard.py       # régénère dashboard/html/ — `make dashboard-refresh`
 │   ├── transmission-stats.py       # JSON ratios/débits pour generate-dashboard.py
 │   ├── provision.py                # config d'installation : clés API, biblios Jellyfin, objets arr, Seerr — `make api-keys` / `make provision`
-│   ├── apply-arr-overrides.py      # réapplique tailles/language des 2 profils qualité principaux + provisionne la config anime et les connexions Jellyfin de Sonarr/Radarr — `make arr-overrides`
+│   ├── apply-arr-overrides.py      # réapplique tailles/language des 2 profils qualité principaux + provisionne la config anime, les connexions Jellyfin et le metadata writer nfo de Sonarr/Radarr — `make arr-overrides`
 │   └── require-running.sh          # exit 0 si les services <project>/<service> donnés tournent — guard cron + backup.sh
 ├── sauvegarde/                # non versionné — dépôt restic + mot de passe + staging
 ├── traefik/                  # socket-proxy + traefik + dashboard (page statique de liens) ; .env(ACME_EMAIL)/.example
