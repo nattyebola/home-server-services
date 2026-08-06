@@ -410,6 +410,26 @@ explicitement :
   déjà ses jaquettes dans son propre cache, on ne veut que les identifiants
   dans `library/`, pas des images dupliquées à côté de chaque vidéo. Vérifié
   après coup : 241 `.nfo`, 0 image écrite.
+  **Contrepartie : le `.nfo` fait autorité sur le titre affiché**, Jellyfin
+  n'utilise donc plus la traduction TMDB (« Les Simpson » devenu « The
+  Simpsons » au premier rafraîchissement, 2026-08-06). D'où
+  `movieMetadataLanguage: 2` (French) côté Radarr — bibliothèque regardée en
+  français. Sonarr n'a **aucun champ équivalent** (vérifié champ par champ ;
+  son `uiLanguage=2` ne concerne que son interface), donc **les titres de
+  séries s'affichent en anglais/original** : 5 séries y sont passées
+  (Étincelles de demain → Sparks of Tomorrow, Villageois LVL 999 → The Villager
+  of Level 999, Les Simpson → The Simpsons, + 2 autres), écart **accepté
+  explicitement** le 2026-08-06 après avoir écarté les deux parades proposées —
+  renommer et verrouiller le champ titre dans Jellyfin (manuel), ou un script
+  reprenant le titre français depuis les `alternateTitles` de Sonarr (qui les
+  connaît, mais sans étiquette de langue : deviner lequel est le français est
+  exactement le genre d'heuristique qui a produit le bug d'identification
+  corrigé ici). Ne pas reproposer sans redemande.
+  Jellyfin **relit un `.nfo` modifié tout seul** (il en suit la date à son scan
+  de bibliothèque) : après un changement de réglage + rescan arr, les titres se
+  sont mis à jour sans qu'aucun `/Items/{id}/Refresh` soit nécessaire. Ce
+  refresh explicite ne sert qu'à ne pas attendre, ou à réidentifier un titre
+  déjà faux.
   Les `.nfo` ne sont écrits qu'à l'import ou sur rescan — la bibliothèque
   existante a été rattrapée une fois par les commandes `RescanMovie`/
   `RescanSeries` sans argument (tous les titres) ; à refaire de la même façon

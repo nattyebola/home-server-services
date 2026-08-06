@@ -125,6 +125,15 @@ RADARR_JELLYFIN_TRIGGERS = JELLYFIN_COMMON_TRIGGERS + ("onMovieDelete", "onMovie
 # insupprimable depuis Kodi (kodi/context.clearr envoie les ids externes vus
 # par Jellyfin — un id faux ne matche aucun titre arr, et le repli par chemin
 # s'interdit library/, voir CLAUDE.md).
+# Contrepartie du .nfo, à connaître : il fait autorité sur le TITRE AFFICHÉ par
+# Jellyfin, qui n'utilise donc plus la traduction TMDB (constaté le 2026-08-06,
+# "Les Simpson" devenu "The Simpsons" au premier rafraîchissement). D'où
+# movieMetadataLanguage=2 (French) sur Radarr — bibliothèque regardée en
+# français. Sonarr n'a AUCUN champ équivalent : ses tvshow.nfo restent au titre
+# TVDB, donc les séries s'affichent en anglais, écart accepté explicitement (le
+# seul autre moyen serait de renoncer aux .nfo, donc au correctif
+# d'identification ci-dessus — Jellyfin n'offre pas d'ignorer le seul champ
+# <title> d'un .nfo).
 # Images volontairement désactivées (jaquettes/fanarts déjà téléchargés par
 # Jellyfin dans son propre cache) : on ne veut que les identifiants dans
 # library/, pas des fichiers image dupliqués à côté de chaque vidéo.
@@ -137,7 +146,7 @@ XBMC_METADATA_IMPLEMENTATION = "XbmcMetadata"
 XBMC_METADATA_IMAGE_FIELDS = ("movieImages", "seriesImages", "seasonImages",
                               "episodeImages", "episodeImageThumb")
 SONARR_XBMC_METADATA_FIELDS = {"seriesMetadata": True, "episodeMetadata": True}
-RADARR_XBMC_METADATA_FIELDS = {"movieMetadata": True}
+RADARR_XBMC_METADATA_FIELDS = {"movieMetadata": True, "movieMetadataLanguage": 2}
 
 SONARR_SIZE_OVERRIDES = {
     "WEBRip-2160p": {"maxSize": 100, "preferredSize": 85},
