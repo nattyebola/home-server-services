@@ -117,8 +117,15 @@ def render(template_name, **kwargs):
     return string.Template(path.read_text()).substitute(**kwargs)
 
 
+# Les conteneurs one-off (`docker compose run`, ex. `make clearr` qui lance la
+# TUI) portent les mêmes labels project/service que le service lui-même mais
+# héritent aussi de son healthcheck, qu'ils ne peuvent pas satisfaire (la TUI
+# ne fait tourner aucun serveur HTTP sur :8000). Sans ce filtre, une session
+# `make clearr` faisait passer la carte du service web en "healthcheck en
+# échec" — et un one-off d'un service arrêté l'aurait fait passer pour démarré.
 def docker_ps_set(extra_filters=()):
-    args = ["docker", "ps", "--filter", "status=running"]
+    args = ["docker", "ps", "--filter", "status=running",
+            "--filter", "label=com.docker.compose.oneoff=False"]
     for f in extra_filters:
         args += ["--filter", f]
     args += ["--format", '{{.Label "com.docker.compose.project"}}/{{.Label "com.docker.compose.service"}}']
