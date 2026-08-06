@@ -125,48 +125,58 @@ def base_domain(hostname):
 
 
 def build_prowlarr_tracker_map():
-    """domaine de base -> nom d'indexeur Prowlarr. Best-effort : une erreur
-    ici ne doit jamais faire échouer tout le script, juste faire retomber
-    l'affichage sur le hostname brut (voir resolve_tracker_name)."""
+    """Renvoie (domaine de base -> nom d'indexeur Prowlarr, nom -> privé?).
+    `privacy` ne vit que côté Prowlarr (les hosts d'annonce vus par
+    Transmission n'en savent rien) : tout ce qui n'est pas explicitement
+    "public" est compté comme privé (Prowlarr a aussi "semiPrivate", où le
+    ratio compte). Best-effort : une erreur ici ne doit jamais faire échouer
+    tout le script, juste faire retomber l'affichage sur le hostname brut
+    (voir resolve_tracker_name)."""
     if not PROWLARR_API_KEY:
-        return {}
+        return {}, {}
     cmd = ["docker", "exec", PROWLARR_CONTAINER, "curl", "-s",
            "-H", f"X-Api-Key: {PROWLARR_API_KEY}", PROWLARR_URL]
     try:
         res = subprocess.run(cmd, capture_output=True, timeout=15)
     except subprocess.TimeoutExpired:
-        return {}
+        return {}, {}
     if res.returncode != 0:
-        return {}
+        return {}, {}
     try:
         indexers = json.loads(res.stdout)
     except json.JSONDecodeError:
-        return {}
+        return {}, {}
     domain_map = {}
+    private_map = {}
     for idx in indexers:
         name = idx.get("name")
         if not name:
             continue
+        private_map[name] = (idx.get("privacy") or "").lower() != "public"
         for url in (idx.get("indexerUrls") or []) + (idx.get("legacyUrls") or []):
             host = urllib.parse.urlparse(url).hostname
             if host:
                 domain_map[base_domain(host.lower())] = name
-    return domain_map
+    return domain_map, private_map
 
 
-def resolve_tracker_name(hostname, tracker_map):
-    """Renvoie (nom, officiel) — officiel=True si hostname a été résolu vers
-    un indexeur réellement configuré dans Prowlarr (TRACKER_ALIASES ou
+def resolve_tracker_name(hostname, tracker_map, private_map=None):
+    """Renvoie (nom, officiel, privé) — officiel=True si hostname a été résolu
+    vers un indexeur réellement configuré dans Prowlarr (TRACKER_ALIASES ou
     build_prowlarr_tracker_map()), False s'il retombe sur le hostname brut
     (tracker public embarqué dans le .torrent, pas un indexeur qu'on
-    interroge nous-mêmes) — sert au filtre par défaut de la carte "Ratio
-    par tracker" (voir CLAUDE.md)."""
+    interroge nous-mêmes). privé=True seulement pour un indexeur officiel dont
+    Prowlarr annonce une privacy autre que "public" — les deux servent au
+    filtre par défaut de la carte "Ratio par tracker", qui ne montre que les
+    trackers privés (voir CLAUDE.md)."""
+    private_map = private_map or {}
     if hostname in TRACKER_ALIASES:
-        return TRACKER_ALIASES[hostname], True
+        name = TRACKER_ALIASES[hostname]
+        return name, True, private_map.get(name, False)
     name = tracker_map.get(base_domain(hostname))
     if name:
-        return name, True
-    return hostname, False
+        return name, True, private_map.get(name, False)
+    return hostname, False, False
 
 
 def tracker_hosts(torrent):
@@ -376,7 +386,7 @@ def main():
         if missing:
             torrents_missing += 1
 
-    tracker_map = build_prowlarr_tracker_map()
+    tracker_map, private_map = build_prowlarr_tracker_map()
     per_tracker = {}
     for t in torrents:
         # Un torrent multi-tracker (fréquent : releases postées à la fois sur
@@ -393,11 +403,15 @@ def main():
         # coïncidence — numérateur et dénominateur gonflés pareil).
         seen_names = set()
         for host in tracker_hosts(t) or ["?"]:
-            name, official = resolve_tracker_name(host, tracker_map) if host != "?" else ("?", False)
+            if host != "?":
+                name, official, private = resolve_tracker_name(host, tracker_map, private_map)
+            else:
+                name, official, private = "?", False, False
             if name in seen_names:
                 continue
             seen_names.add(name)
-            entry = per_tracker.setdefault(name, {"uploaded": 0, "downloaded": 0, "official": official})
+            entry = per_tracker.setdefault(
+                name, {"uploaded": 0, "downloaded": 0, "official": official, "private": private})
             entry["uploaded"] += t.get("uploadedEver", 0)
             entry["downloaded"] += t.get("downloadedEver", 0)
 
@@ -407,7 +421,7 @@ def main():
              "uploaded_human": human_size(v["uploaded"]), "downloaded_human": human_size(v["downloaded"]),
              "ratio": ratio(v["uploaded"], v["downloaded"]),
              "ratio_display": ratio_display(ratio(v["uploaded"], v["downloaded"])),
-             "official": v["official"]}
+             "official": v["official"], "private": v["private"]}
             for name, v in per_tracker.items()
         ),
         key=lambda e: e["uploaded"], reverse=True,

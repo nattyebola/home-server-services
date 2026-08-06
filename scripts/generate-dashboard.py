@@ -595,13 +595,16 @@ def render_tracker_row(tracker):
         "mini-meter.html", value=tracker["ratio_display"],
         fill_class=f"meter-fill-{ratio_zone(tracker['ratio'])}", pct=ratio_pct(tracker["ratio"]),
     )
-    # "official" (transmission-stats.py) distingue un indexeur réellement
-    # configuré dans Prowlarr d'un tracker public brut embarqué dans un
-    # .torrent (ex. tracker.p2p-world.net, ou les ~20 trackers d'une seule
-    # release multi-tracker) — masqué par défaut, révélé par le switch "Tous
-    # les trackers" (voir tracker-card.html/dashboard.js), pas de filtrage
-    # côté Python : la ligne existe toujours dans le HTML généré.
-    row_class = "" if tracker.get("official") else "tracker-row-other"
+    # Vue par défaut : seulement les trackers privés, c'est-à-dire un indexeur
+    # réellement configuré dans Prowlarr ("official") ET annoncé par lui comme
+    # non public ("private") — le ratio n'y est une monnaie que là. Sont donc
+    # masqués aussi bien les trackers publics bruts embarqués dans un .torrent
+    # (ex. tracker.p2p-world.net, ou les ~20 trackers d'une seule release
+    # multi-tracker) que les indexeurs publics qu'on interroge nous-mêmes
+    # (Nyaa.si). Révélés par le switch (voir tracker-card.html/dashboard.js),
+    # pas de filtrage côté Python : la ligne existe toujours dans le HTML.
+    is_private = tracker.get("official") and tracker.get("private")
+    row_class = "" if is_private else "tracker-row-other"
     return render(
         "tracker-row.html", name=tracker["name"], meter=meter,
         uploaded=tracker["uploaded_human"], downloaded=tracker["downloaded_human"],

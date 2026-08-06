@@ -34,11 +34,12 @@ document.querySelectorAll('.card[data-probe]').forEach(function (card) {
   });
 })();
 
-// Table "Ratio par tracker" : masque par défaut les trackers publics bruts
-// embarqués dans un .torrent (pas un indexeur réellement configuré dans
-// Prowlarr — voir render_tracker_row() dans generate-dashboard.py), pour
-// qu'un torrent multi-tracker (ex. ~20 trackers publics sur une seule
-// release) ne noie pas les quelques trackers officiels dans la table. Switch
+// Table "Ratio par tracker" : n'affiche par défaut que les trackers privés
+// (indexeur configuré dans Prowlarr et annoncé non public — voir
+// render_tracker_row() dans generate-dashboard.py), les seuls où le ratio
+// compte ; masque donc aussi bien les trackers publics bruts embarqués dans
+// un .torrent (un torrent multi-tracker en aligne ~20 à lui seul) que les
+// indexeurs publics type Nyaa.si. Switch
 // pour tout afficher, état retenu en localStorage (même raison que le switch
 // Monitoring ci-dessus : la page est régénérée par cron toutes les 5 min).
 (function () {
