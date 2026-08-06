@@ -362,6 +362,29 @@ explicitement :
   fichier), donc en annoncer serait promettre plus que ce qui est fait — l'écart
   inverse de celui corrigé ici.
 
+- **Tag `pour-les-enfants` sur les deux arr, créé par `scripts/provision.py`**
+  (`ARR_TAGS`, ajouté le 2026-08-06, demandé) : posé depuis Seerr au moment de
+  la requête (Seerr a un override `tags` par requête — colonne `tags` de sa
+  table `media_request`, vérifié sur la 3.4.1), il ressort dans le `<tag>` du
+  `.nfo` écrit par l'arr, donc dans les `Tags` de l'item Jellyfin, donc dans la
+  table `tag` de Kodi, où il sert de filtre — chaîne décrite à l'entrée
+  suivante. `provision.py` et pas `apply-arr-overrides.py` : un tag est un
+  objet que l'utilisateur peut légitimement renommer/supprimer ensuite dans
+  l'UI, donc créé-si-absent et jamais réécrit.
+  **Libellé en tirets, pas en underscores** : Radarr valide `^[a-z0-9-]+$` et
+  refuse `pour_les_enfants` (demandé sous cette forme), là où Sonarr l'accepte
+  — divergence de validation entre les deux, à ne pas re-découvrir. Le même
+  libellé des deux côtés est ce qui permet de n'écrire qu'un seul filtre en
+  aval. Chemin de création exercé le 2026-08-06 en supprimant les deux tags
+  pour de vrai puis en relançant `make provision` (recréés, 2e passage sans
+  changement) ; les ids diffèrent d'un arr à l'autre, d'où le rattachement par
+  libellé.
+  Trou connu repéré à cette occasion, non traité : le tag **`fr-priority`**
+  (Sonarr, 3 séries) est la cible d'un **delay profile** (id 2 : 360 min de
+  délai, `bypassIfAboveCustomFormatScore` à 100) qui ne vit que dans la base
+  Sonarr — ni le tag ni le profil ne sont reproductibles depuis le repo, même
+  motif que le `seedRatio` Nyaa.si disparu tout seul.
+
 - **Metadata writer « Kodi (XBMC) / Emby » activé sur Sonarr et Radarr, porté
   par `scripts/apply-arr-overrides.py`** (`XBMC_METADATA_*`, ajouté le
   2026-08-06) : **Jellyfin n'apprend jamais les ids externes des arr** — la

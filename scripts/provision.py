@@ -97,6 +97,19 @@ ARR_DOWNLOAD_CLIENT = {
     "radarr": {"movieCategory": "radarr"},
 }
 
+# 12f — tags créés sur les deux arr. Libellé en tirets et pas en underscores :
+# Radarr valide `^[a-z0-9-]+$` et refuse un underscore, que Sonarr accepte
+# pourtant — le même libellé des deux côtés est nécessaire pour n'avoir qu'un
+# seul filtre à écrire en aval.
+# `pour-les-enfants` (2026-08-06, demandé) : posé depuis Seerr au moment de la
+# requête (override "tags" par requête, colonne `tags` de sa table
+# media_request), il ressort dans le `<tag>` du .nfo écrit par l'arr, puis dans
+# les Tags de l'item Jellyfin, puis dans la table `tag` de Kodi — voir
+# l'entrée metadata writer de CLAUDE.md pour cette chaîne. Un tag arr sert
+# aussi de cible à des règles côté arr (release profiles, restrictions), d'où
+# sa création ici plutôt que dans les seuls .nfo.
+ARR_TAGS = ["pour-les-enfants"]
+
 # 12g — Connection "Custom Script" pour cross-seed. Custom Script et pas
 # Webhook : le type Webhook envoie un payload de test factice que cross-seed
 # rejette, ce qui empêche d'enregistrer la connexion (voir ISSUES.md). Le chemin
@@ -338,6 +351,15 @@ def provision_root_folders(name, api_key, data_root, done, skipped):
         os.makedirs(host_path, exist_ok=True)
         arr_request(name, "/rootfolder", "POST", {"path": path}, api_key)
         done.append(f"{name} : root folder {path} ajouté")
+
+
+def provision_tags(name, api_key, done, skipped):
+    existing = {t["label"] for t in arr_request(name, "/tag", api_key=api_key)}
+    for label in ARR_TAGS:
+        if label in existing:
+            continue
+        arr_request(name, "/tag", "POST", {"label": label}, api_key)
+        done.append(f"{name} : tag {label} ajouté")
 
 
 def provision_download_client(name, api_key, done, skipped):
@@ -590,6 +612,7 @@ def command_services(shared, done, skipped, errors):
             continue
         run_step(f"{name} root folders", provision_root_folders, done, skipped, errors,
                  name, api_key, shared["DATA_ROOT"])
+        run_step(f"{name} tags", provision_tags, done, skipped, errors, name, api_key)
         run_step(f"{name} client de téléchargement", provision_download_client,
                  done, skipped, errors, name, api_key)
         run_step(f"{name} Connection cross-seed", provision_cross_seed_script,
