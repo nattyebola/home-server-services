@@ -110,6 +110,29 @@ def fetch_preview(base_url, endpoint, payload):
         progress.close()
 
 
+# Nombre de fichiers sans torrent nommés dans la boîte de confirmation. La
+# boîte yesno de Kodi ne défile pas : au-delà, le texte déborderait sous les
+# boutons et le résumé lui-même deviendrait illisible.
+MAX_ORPHANS_LISTED = 5
+
+
+def orphan_lines(preview):
+    """Fichiers que clearr supprimera sans qu'aucun torrent ne les couvre —
+    typiquement des épisodes dont Sonarr a retiré le torrent du client une fois
+    son ratio atteint. Le résumé n'en donne que le compte ; les nommer ici évite
+    une taille annoncée qu'on ne saurait rattacher à rien. Rien n'est affiché
+    quand il n'y en a pas, le cas courant."""
+    orphans = preview.get("orphans") or []
+    if not orphans:
+        return ""
+    shown = orphans[:MAX_ORPHANS_LISTED]
+    lines = ["", "Sans torrent (supprimés aussi) :"]
+    lines += ["  {} ({})".format(f.get("name", "?"), f.get("size", "?")) for f in shown]
+    if len(orphans) > len(shown):
+        lines.append("  … et {} de plus".format(len(orphans) - len(shown)))
+    return "\n".join(lines)
+
+
 def notify(message, failed=False):
     xbmcgui.Dialog().notification(
         NAME, message,
@@ -161,8 +184,8 @@ def main():
              else "Titre absent de Sonarr/Radarr : torrents et fichiers seront supprimés.")
     if not xbmcgui.Dialog().yesno(
             NAME,
-            "Supprimer {} ?\n\n[B]{}[/B]\n{}\n\n{}".format(
-                what, label, preview.get("summary", ""), scope),
+            "Supprimer {} ?\n\n[B]{}[/B]\n{}{}\n\n{}".format(
+                what, label, preview.get("summary", ""), orphan_lines(preview), scope),
             nolabel="Annuler", yeslabel="Supprimer"):
         return
 

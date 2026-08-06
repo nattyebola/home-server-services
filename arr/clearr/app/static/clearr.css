@@ -104,6 +104,67 @@ tr.collapsing {
   border-color: var(--bs-secondary-color);
 }
 
+/* Lien Sonarr/Radarr : mêmes couleurs que le badge "N cross-seeds" de la vue
+   Torrents (demandé le 2026-08-06) — il pointe vers notre propre infra, pas
+   vers une base publique comme IMDb/TVDB/TMDB, et se distingue donc d'un badge
+   plein plutôt que d'une pastille bordée. Les couleurs viennent de la classe
+   Bootstrap .text-bg-secondary posée à côté dans le template (elle est en
+   !important, donc elle l'emporte sur .meta-link malgré l'ordre de chargement
+   des feuilles) ; il ne reste ici que la bordure à neutraliser, un contour
+   par-dessus un fond plein faisant tache. */
+.meta-link-arr {
+  border-color: transparent;
+}
+
+.meta-link-arr:hover {
+  border-color: transparent;
+  filter: brightness(1.15);
+}
+
+/* Titre/nom cliquable ouvrant la fiche détail. Souligné seulement au survol :
+   dans la vue Torrents il y a une ligne par torrent, un soulignement permanent
+   ferait un tableau entièrement souligné. Garde la couleur du texte courant —
+   la cellule peut déjà être colorée (rouge pour un fichier absent). */
+.title-link {
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+/* Redéclaré : .title-link est plus bas dans la feuille que .has-poster et son
+   text-decoration:none effaçait sinon le souligné pointillé qui signale une
+   jaquette au survol. Le curseur, lui, doit bien rester `pointer` (hérité de
+   .title-link) et non le `help` de .has-poster — la cellule est cliquable. */
+.title-link.has-poster {
+  text-decoration: underline dotted var(--bs-border-color);
+  text-underline-offset: 3px;
+}
+
+.title-link:hover,
+.title-link.has-poster:hover {
+  color: inherit;
+  text-decoration: underline;
+}
+
+/* Fiche détail : libellés en colonne fixe pour que les valeurs s'alignent,
+   sans passer par une <table> (le contenu est une liste de paires, pas un
+   tableau de données). */
+.details-grid {
+  display: grid;
+  grid-template-columns: minmax(7rem, auto) 1fr;
+  gap: .15rem .75rem;
+}
+
+.details-grid dt {
+  font-weight: 400;
+  color: var(--bs-secondary-color);
+}
+
+.details-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 /* Noms de torrent/release ("Some.Show.S01E01.1080p.WEB-DL.x265-GROUP.mkv")
    sont un seul "mot" sans espace pour le navigateur — un retour à la ligne
    forcé (overflow-wrap) coupait le mot n'importe où, moche (essayé et

@@ -18,6 +18,10 @@
 # ils ne vivaient nulle part dans le repo, donc rien ne les recréait sur une
 # installation neuve ni ne rattrapait une modification par mégarde dans l'UI.
 #
+# Provisionne AUSSI la limite de ratio des indexeurs publics (voir
+# PUBLIC_INDEXER_SEED_RATIO) : même motif que la connexion Jellyfin, ce réglage
+# ne vivait que dans la base Sonarr et en avait silencieusement disparu.
+#
 # Provisionne AUSSI la config anime (arr/profiles/sonarr-anime.json) : les
 # custom formats qui nous appartiennent et les 3 profils Anime (Fansub)*.
 # recyclarr ne les gère pas (aucun trash_id ne les couvre), donc rien ne les
@@ -39,8 +43,32 @@ SONARR_CONTAINER = "arr-sonarr-1"
 SONARR_URL = "http://localhost:8989/api/v3"
 RADARR_CONTAINER = "arr-radarr-1"
 RADARR_URL = "http://localhost:7878/api/v3"
+PROWLARR_CONTAINER = "arr-prowlarr-1"
+PROWLARR_URL = "http://localhost:9696/api/v1"
 
 RADARR_PROFILE_NAME = "[SQP] SQP-1 WEB (2160p)"
+
+# --- limite de ratio sur les indexeurs publics -------------------------------
+#
+# Un tracker public ne tient aucun compte de ratio : seeder au-delà de ce qu'il
+# faut pour rendre la release disponible n'apporte rien et immobilise la copie
+# Transmission (le fichier library/ n'en est qu'un hardlink) indéfiniment. Sur
+# un tracker privé au contraire, le ratio EST la monnaie du compte — d'où une
+# limite posée sur les seuls indexeurs que Prowlarr marque `privacy: public`,
+# jamais sur les autres, qui restent en seed sans limite propre.
+#
+# Sonarr/Radarr poussent cette valeur au client au moment du grab
+# (seedCriteria.seedRatio), puis retirent le torrent du client une fois le seuil
+# atteint (removeCompletedDownloads) — le fichier de la bibliothèque survit,
+# c'est le hardlink qui le protège.
+#
+# Valeur portée ici et non dans l'UI parce que c'est exactement le réglage qui
+# avait disparu : posé à la main sur Nyaa.si le 2026-07-28, il était revenu à
+# None au 2026-08-06 (resynchronisation Prowlarr -> Sonarr), sans que rien ne le
+# signale — trois épisodes seedaient donc sans limite, dont un à 13,25 de ratio.
+# 1,5 (au lieu des 2 d'origine) : choix de l'utilisateur le 2026-08-06.
+PUBLIC_INDEXER_SEED_RATIO = 1.5
+PROWLARR_PUBLIC_PRIVACY = "public"
 
 # --- connexion "Emby/Jellyfin" de Sonarr/Radarr (refresh ciblé de Jellyfin) ---
 #
@@ -266,6 +294,59 @@ def apply_jellyfin_connection(label, container, base_url, api_key, jellyfin_key,
     return [f"{label} connexion {target['name']!r} réalignée"]
 
 
+def prowlarr_public_ids(prowlarr_api_key):
+    """Ids Prowlarr des indexeurs marqués publics. C'est Prowlarr qui porte
+    l'information (`privacy`), pas Sonarr/Radarr : leurs indexeurs synchronisés
+    n'en gardent que l'URL Torznab, dont le dernier segment est justement cet
+    id (voir sonarr_indexer_prowlarr_id)."""
+    if not prowlarr_api_key:
+        raise MissingIntegration(
+            "PROWLARR_API_KEY absente de arr/.env — impossible de savoir quels indexeurs "
+            "sont publics, limite de ratio non gérée (voir arr/.env.example)")
+    indexers = api_get(PROWLARR_CONTAINER, PROWLARR_URL, prowlarr_api_key, "/indexer")
+    return {i["id"] for i in indexers if i.get("privacy") == PROWLARR_PUBLIC_PRIVACY}
+
+
+def indexer_prowlarr_id(indexer):
+    """Id Prowlarr derrière un indexeur synchronisé côté Sonarr/Radarr, lu dans
+    son baseUrl (`http://prowlarr:9696/<id>/`). None pour un indexeur ajouté
+    directement dans l'arr, sans Prowlarr derrière : on n'y touche pas, faute de
+    savoir s'il est public."""
+    base_url = next((f.get("value") for f in indexer["fields"] if f["name"] == "baseUrl"), None)
+    if not base_url:
+        return None
+    segments = [s for s in str(base_url).split("/") if s]
+    return int(segments[-1]) if segments and segments[-1].isdigit() else None
+
+
+def apply_public_indexer_seed_ratio(label, container, base_url, api_key, public_ids):
+    """Pose PUBLIC_INDEXER_SEED_RATIO sur chaque indexeur adossé à un indexeur
+    Prowlarr public. Ne touche à rien d'autre : un indexeur privé garde ses
+    critères de seed tels quels (généralement aucun, donc seed sans fin, ce qui
+    est le comportement voulu là où le ratio compte).
+
+    `forceSave=true` : Sonarr/Radarr testent la connexion à l'indexeur au moment
+    du PUT, et ces trackers répondent régulièrement 520/530 (voir les rafales
+    d'échecs Cloudflare dans les logs) — sans ce paramètre, une panne passagère
+    du tracker suffirait à faire échouer un réalignement qui ne touche pourtant
+    qu'un champ local. Le champ apiKey revient masqué en "********" du GET et est
+    préservé tel quel à l'écriture, même mécanique que la connexion Jellyfin."""
+    changed = []
+    for indexer in api_get(container, base_url, api_key, "/indexer"):
+        if indexer_prowlarr_id(indexer) not in public_ids:
+            continue
+        current = next((f.get("value") for f in indexer["fields"]
+                        if f["name"] == "seedCriteria.seedRatio"), None)
+        if current == PUBLIC_INDEXER_SEED_RATIO:
+            continue
+        set_field(indexer, "seedCriteria.seedRatio", PUBLIC_INDEXER_SEED_RATIO)
+        api_put(container, base_url, api_key,
+                f"/indexer/{indexer['id']}?forceSave=true", indexer)
+        changed.append(f"{label} indexeur public {indexer['name']!r}: "
+                       f"seedRatio {current} -> {PUBLIC_INDEXER_SEED_RATIO}")
+    return changed
+
+
 def spec_body(spec):
     """Un champ `fields` complet est inutile à l'écriture : Sonarr ne lit que
     `name`/`value`, et tout stocker (label/helpText traduits par l'UI, ordre,
@@ -402,10 +483,24 @@ def main():
     # Facultative (voir arr/.env.example) : sans elle la connexion Jellyfin
     # existante est quand même maintenue, mais pas créée si elle manque.
     jellyfin_api_key = arr_env.get("JELLYFIN_API_KEY")
+    prowlarr_api_key = arr_env.get("PROWLARR_API_KEY")
 
     changed = []
     notes = []
     errors = []
+    # Résolu une seule fois pour les deux arr : c'est la même liste d'indexeurs
+    # Prowlarr derrière l'un comme l'autre. public_ids à None = liste inconnue
+    # (Prowlarr injoignable ou clé absente), les deux passes sont alors sautées
+    # plutôt que d'agir sur une liste vide, ce qui ne ferait rien mais laisserait
+    # croire que tout est en ordre.
+    public_ids = None
+    try:
+        public_ids = prowlarr_public_ids(prowlarr_api_key)
+    except MissingIntegration as e:
+        notes.append(str(e))
+    except Exception as e:
+        errors.append(f"Prowlarr: {e}")
+
     try:
         changed += apply_quality_sizes("Sonarr", SONARR_CONTAINER, SONARR_URL,
                                         sonarr_api_key, SONARR_SIZE_OVERRIDES)
@@ -443,6 +538,16 @@ def main():
         notes.append(str(e))
     except Exception as e:
         errors.append(f"Radarr (Jellyfin): {e}")
+    # Bloc à part, et par arr : le PUT d'un indexeur est le seul de ce script à
+    # dépendre d'un service tiers joignable (le tracker lui-même, testé par
+    # Sonarr/Radarr au moment de l'écriture même avec forceSave).
+    if public_ids:
+        for label, container, url, key in (("Sonarr", SONARR_CONTAINER, SONARR_URL, sonarr_api_key),
+                                           ("Radarr", RADARR_CONTAINER, RADARR_URL, radarr_api_key)):
+            try:
+                changed += apply_public_indexer_seed_ratio(label, container, url, key, public_ids)
+            except Exception as e:
+                errors.append(f"{label} (indexeurs publics): {e}")
 
     for line in changed:
         print(f"corrigé: {line}")

@@ -45,7 +45,7 @@
       <td class="ratio-{{ g.parent.ratio_class }}">{{ g.parent.ratio }}</td>
       <td class="text-body-secondary"{% if g.parent.tracker_others %} title="{{ g.parent.tracker_others }}"{% endif %}>{{ g.parent.tracker }}</td>
       <td class="{{ 'text-danger' if g.parent.abs_danger else '' }}">
-        {{ title_cell(g.parent.name, g.parent.meta) }}
+        {{ title_cell(g.parent.name, g.parent.meta, details_url='/torrents/' ~ g.parent.id ~ '/details') }}
         {% if g.children %}
         <button type="button" class="btn btn-sm btn-link p-0 ms-1 align-baseline"
                 data-bs-toggle="collapse" data-bs-target=".xseed-{{ g.parent.id }}"
@@ -66,7 +66,7 @@
       <td>{{ c.size }}</td>
       <td class="ratio-{{ c.ratio_class }}">{{ c.ratio }}</td>
       <td class="text-body-secondary"{% if c.tracker_others %} title="{{ c.tracker_others }}"{% endif %}>{{ c.tracker }}</td>
-      <td class="text-body-secondary ps-4">└ {{ title_cell(c.name, c.meta, links=False) }}</td>
+      <td class="text-body-secondary ps-4">└ {{ title_cell(c.name, c.meta, links=False, details_url='/torrents/' ~ c.id ~ '/details') }}</td>
       <td></td>
     </tr>
     {% endfor %}

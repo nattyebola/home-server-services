@@ -271,6 +271,97 @@ explicitement :
   réécrivant lui-même ce fichier. Addon **copié** et non symlinké (Kodi refuse
   de charger un addon dont le dossier est un lien sortant de son `addons/`).
 
+- **Nom cliquable dans les 3 vues → fiche « toutes les informations connues »
+  en modale, et tag Sonarr/Radarr rendu comme le badge cross-seed** (ajouté le
+  2026-08-06, demandé) : `templates/details.html`, un seul gabarit alimenté par
+  des sections de paires libellé/valeur + des listes de fichiers, chaque vue ne
+  décidant que de SON contenu — même principe que `_meta.html` pour la cellule
+  titre, et pour la même raison (3 vues, un seul comportement à maintenir).
+  Routes `/{torrents,series,films}/{id}/details`, ouvertes par la mécanique
+  `data-get`/`#modal-body` déjà utilisée par les écrans de confirmation :
+  **aucun ajout dans `clearr.js`**. Purement descriptive, aucun bouton d'action
+  — la suppression reste sur la croix de la ligne, avec sa propre confirmation.
+  Les enfants cross-seed ont leur fiche eux aussi (vrais torrents, avec leur
+  tracker, leur ratio et leurs fichiers propres), contrairement aux liens
+  externes que leur ligne n'affiche toujours pas.
+  Contrainte habituelle respectée : zéro appel WAN, tout vient de l'état déjà
+  chargé — seule exception, `core.quality_profile_names()` (les objets arr ne
+  portent que `qualityProfileId`), sur le réseau interne. Coût mesuré : fiche
+  série/film ~10 ms, fiche torrent ~40 ms (elle refait
+  `build_arr_meta_index()`).
+  `seedRatioLimit`/`seedRatioMode` ajoutés aux champs demandés à `torrent-get`
+  pour cette fiche : afficher la limite sans le mode induirait en erreur, un
+  torrent en mode 0 traînant souvent un `seedRatioLimit` résiduel qui ne
+  s'applique pas (constaté le 2026-08-06) — d'où `_seed_limit_label()`.
+  La jaquette est un vrai `<img>` dans la fiche, à l'inverse des lignes de
+  tableau (`data-poster` + chargement au survol, voir plus haut) : une seule
+  fiche est ouverte à la fois, il n'y a rien à économiser.
+  **Informations de fichier incluses** (ajouté le 2026-08-06 dans la foulée,
+  demandé) — et traitées différemment selon le nombre de fichiers, seul choix
+  de fond de cette partie :
+  - Série : `core.fetch_episode_files()` (`/api/v3/episodefile?seriesId=`,
+    l'objet série ne portant que des compteurs agrégés dans `statistics`), puis
+    section **agrégée** — nombre, taille, puis valeurs *distinctes* de qualité /
+    groupe / langue / codec / résolution — plus la liste des fichiers
+    (chemin + taille + qualité). Empiler le `mediaInfo` des 12 épisodes aurait
+    noyé la fiche ; les valeurs distinctes disent en une ligne ce qu'on veut
+    vraiment savoir, c'est-à-dire s'il y a un mélange (vérifié : la série 21
+    ressort « Tsundere-Raws, GL0P » / « French, Japanese » / « h264, h265 »).
+    `_distinct()` préserve l'ordre de première apparition, pas l'ordre
+    alphabétique d'un `sorted(set(...))`. Fichiers triés par `relativePath`
+    (= ordre saison/épisode) et non par l'ordre de l'API, qui est celui des ids
+    donc des imports (E03 avant E01 sur cette bibliothèque).
+  - Film : un seul fichier, donc **détail complet** sans rien agréger (nom,
+    taille, qualité, édition, groupe, langues, date d'import, nom de release) +
+    une section Média issue de `mediaInfo` (durée, résolution, vidéo, audio,
+    sous-titres). Pas de custom formats côté film : contrairement à
+    l'`episodefile` de Sonarr, le `movieFile` imbriqué dans l'objet film de
+    Radarr ne porte ni `customFormats` ni `customFormatScore` (vérifié le
+    2026-08-06) — les afficher n'aurait donné que des tirets.
+  Une section sans lignes n'est pas rendue (`details.html`), donc un film sans
+  fichier ou une série sans épisode importé n'affiche simplement ni Fichier(s)
+  ni Média, sans cas particulier dans le code.
+  Le lien Sonarr/Radarr porte `arr: True` (`core.arr_link`) et se rend en badge
+  plein aux couleurs du badge « N cross-seeds » (`.text-bg-secondary` +
+  `.meta-link-arr`), là où IMDb/TVDB/TMDB restent des pastilles bordées : il
+  pointe vers notre propre infra, pas vers une base publique. Les couleurs
+  viennent de la classe Bootstrap elle-même (elle est en `!important`, donc elle
+  passe devant `.meta-link` malgré l'ordre de chargement des feuilles) ;
+  `.meta-link-arr` ne fait que neutraliser la bordure.
+  Piège CSS rencontré : `.title-link` (déclaré après `.has-poster`) effaçait
+  avec son `text-decoration: none` le souligné pointillé qui signale une
+  jaquette au survol — d'où la redéclaration explicite `.title-link.has-poster`.
+
+- **Les écrans de confirmation de suppression annoncent les fichiers sans
+  torrent, et marquent les torrents encore en seed** (ajouté le 2026-08-06,
+  demandé) : `execute_delete_series` supprime les torrents **puis** balaie le
+  dossier de la série (`cleanup_orphan_files`), mais la modale ne listait que
+  les torrents — elle promettait donc moins que ce qu'elle faisait. Déclencheur :
+  2 épisodes d'une série affichés comme téléchargés côté Sonarr n'apparaissaient
+  ni dans la vue Torrents ni dans la modale, Sonarr ayant retiré leur torrent du
+  client une fois le ratio atteint (voir l'entrée ratio ci-dessus) — le fichier
+  `library/` restait, seul son hardlink Transmission avait disparu.
+  `core.orphan_files_under()` factorise le calcul, déjà fait par
+  `plan_media_path_deletion` pour les titres hors arr ; `series_orphan_files()`
+  l'applique au dossier d'une série. Attention à la différence d'espace de
+  chemins entre les deux appelants : un titre hors arr a ses **données** sous le
+  dossier visé (les couverts sont les `host_files` du torrent), une série n'y a
+  que des **hardlinks** (les couverts sont les `lib_matches`, les données vivant
+  sous `.transmission/data`). Comparer les mauvais chemins ferait passer tous
+  les fichiers pour orphelins.
+  Les 3 consommateurs sont servis par le même calcul : modale web
+  (`confirm_series.html`, liste + tailles), résumé une-ligne de l'API
+  (`_summary`, déjà prévu pour `orphan_files`) et boîte de confirmation Kodi
+  (`orphan_lines()` dans `kodi/context.clearr/context.py`, plafonnée à 5 noms —
+  la boîte `yesno` de Kodi ne défile pas, au-delà le texte passe sous les
+  boutons). `status` a été ajouté aux champs demandés à `torrent-get` pour ça :
+  🌱 marque un torrent encore en seed, ⏸ un torrent arrêté (`SEEDING_STATUSES`)
+  — la distinction dit ce qui va réellement cesser d'être partagé.
+  Les films n'ont volontairement pas d'orphelins : `_delete_movie` ne balaie pas
+  le dossier du film (soit un torrent le couvre, soit Radarr supprime son propre
+  fichier), donc en annoncer serait promettre plus que ce qui est fait — l'écart
+  inverse de celui corrigé ici.
+
 - **Déclencheurs de suppression activés sur les connexions Jellyfin de
   Sonarr/Radarr** (2026-08-05), et **maintenus par
   `scripts/apply-arr-overrides.py`** (`JELLYFIN_TRIGGERS`, élargi le même jour à
@@ -402,6 +493,40 @@ explicitement :
   bibliothèques de `JELLYFIN_LIBRARIES`. Corollaire voulu : une bibliothèque
   personnelle (ex. "Kids") n'est pas activée dans Seerr par le script, à faire à
   la main si désiré.
+
+- **Limite de ratio 1.5 sur les indexeurs marqués publics, portée par
+  `scripts/apply-arr-overrides.py`** (`PUBLIC_INDEXER_SEED_RATIO`, ajouté le
+  2026-08-06) : `seedCriteria.seedRatio` posé sur tout indexeur Sonarr/Radarr
+  dont l'indexeur Prowlarr correspondant a `privacy: public`, jamais sur les
+  autres — un tracker privé compte le ratio comme une monnaie, un public n'en
+  tient aucun compte, donc y seeder au-delà du nécessaire n'immobilise que la
+  copie Transmission. Le rattachement se fait par le dernier segment du
+  `baseUrl` de l'indexeur synchronisé (`http://prowlarr:9696/<id>/`) : seul
+  Prowlarr porte l'information `privacy`, les arr n'en gardent que l'URL.
+  Remplace le `seedRatio=2` posé à la main sur Nyaa.si le 2026-07-28 (valeur
+  changée en 1.5 le 2026-08-06, demandé) — ce réglage n'avait jamais été
+  reproductible et **avait silencieusement disparu** (revenu à `None`,
+  probablement une resynchronisation Prowlarr → Sonarr), constaté le
+  2026-08-06 : 3 torrents seedaient sans limite propre, dont un à 13,25 de
+  ratio. C'est exactement le motif de la connexion Jellyfin — un réglage qui ne
+  vit que dans la base Sonarr n'est ni reproductible ni rattrapable.
+  `forceSave=true` sur le PUT : Sonarr/Radarr testent la connexion à l'indexeur
+  au moment de l'écriture, et ces trackers répondent régulièrement 520/530 —
+  sans ça une panne passagère ferait échouer un réalignement purement local.
+  Ne pas confondre avec la limite globale de Transmission
+  (`ratio-limit-enabled: false`, laissée telle quelle) : c'est bien une limite
+  **par torrent** (`seedRatioMode=1`) que les arr poussent au grab.
+  **Rétroactivité** : `seedCriteria.seedRatio` ne s'applique qu'au moment du
+  grab, jamais aux torrents déjà présents. Les 66 torrents Nyaa.si existants ont
+  donc été repris une fois à la main (`torrent-set` en masse, 2026-08-06) — 14
+  d'entre eux, déjà au-dessus de 1.5, se sont arrêtés aussitôt puis ont été
+  retirés du client par Sonarr (`removeCompletedDownloads`), les fichiers
+  `library/` survivant par leur hardlink (vérifié : 7/7 fichiers intacts sur la
+  série témoin, ~5,8 Go de copies Transmission libérés). Un torrent annonçant
+  **aussi** à un tracker privé est exclu de ce traitement (1 cas, cross-seed
+  Nyaa.si + YggReborn) : lui couper le seed coûterait du ratio là où il compte.
+  Refaire ce rattrapage à la main si un jour un indexeur public est ajouté avec
+  des torrents déjà en place — le script ne gère que le réglage côté arr.
 
 - **Rootless par container**, pas de daemon Docker rootless. `cap_drop:
   ALL` + `security_opt: no-new-privileges:true` partout ; `cap_add` ciblé

@@ -33,7 +33,7 @@
       <td>{{ s.seasons }}</td>
       <td>{{ s.episodes }}</td>
       <td>{{ s.size }}</td>
-      <td>{{ title_cell(s.title, s.meta) }}</td>
+      <td>{{ title_cell(s.title, s.meta, details_url='/series/' ~ s.id ~ '/details') }}</td>
       <td class="text-end">
         <a href="#" class="btn btn-sm btn-outline-danger btn-delete" data-get="/series/{{ s.id }}/confirm?{{ qs }}"
            data-target="#modal-body" title="Supprimer la série entière (torrents, fichiers, Sonarr)"

@@ -324,6 +324,268 @@ def purge_execute(sort: str = Form(DEFAULT_SORT["torrents"]), reverse: str = For
 # correspondant est trouvé — même gabarit confirm_torrent.html, réutilisé
 # comme confirm_delete() l'est par les deux vues côté TUI) ---
 
+# --- fiches détail ------------------------------------------------------------
+#
+# Ouvertes en cliquant le nom dans n'importe laquelle des 3 vues (voir le macro
+# title_cell de templates/_meta.html). Un seul gabarit (details.html) alimenté
+# par des paires libellé/valeur : chaque vue décide de SES sections, mais aucune
+# ne redéclare la mise en forme. Toutes les valeurs sont déjà connues de clearr,
+# aucune n'entraîne d'appel WAN — même contrainte que les jaquettes et les liens
+# (voir CLAUDE.md), la seule requête ajoutée étant le nom du profil qualité,
+# demandé à Sonarr/Radarr sur le réseau interne.
+
+TORRENT_STATUS_LABELS = {
+    0: "arrêté", 1: "en attente de vérification", 2: "vérification",
+    3: "en attente de téléchargement", 4: "téléchargement",
+    5: "en attente de seed", 6: "en seed 🌱",
+}
+
+
+def _yes_no(value):
+    return "oui" if value else "non"
+
+
+def _joined(values):
+    return ", ".join(str(v) for v in values) if values else "—"
+
+
+def _seed_limit_label(torrent):
+    """Le mode décide LAQUELLE des limites s'applique — afficher la valeur seule
+    induirait en erreur, un torrent en mode 0 portant souvent un seedRatioLimit
+    résiduel qui ne sert à rien (constaté le 2026-08-06)."""
+    mode = torrent.get("seedRatioMode")
+    if mode == 1:
+        return f"{torrent.get('seedRatioLimit')} (propre au torrent)"
+    if mode == 2:
+        return "aucune (seed sans fin)"
+    return "limite globale de Transmission"
+
+
+def _file_quality(arr_file):
+    return ((arr_file.get("quality") or {}).get("quality") or {}).get("name") or "?"
+
+
+def _file_languages(arr_file):
+    return _joined([lang.get("name") for lang in arr_file.get("languages") or []])
+
+
+def _distinct(values):
+    """Valeurs distinctes en préservant l'ordre de première apparition —
+    `sorted(set(...))` réordonnerait alphabétiquement des qualités/groupes qu'on
+    lit plus naturellement dans l'ordre des fichiers."""
+    return _joined(list(dict.fromkeys(v for v in values if v)))
+
+
+def _media_rows(arr_file):
+    """Section « Média » d'un fichier : ce que Sonarr/Radarr ont extrait du
+    conteneur (mediaInfo). Absente si l'analyse n'a jamais tourné sur ce
+    fichier — auquel cas la fiche saute simplement la section (voir
+    details.html, qui n'affiche pas une section sans lignes)."""
+    info = arr_file.get("mediaInfo") or {}
+    if not info:
+        return []
+    video = " ".join(str(p) for p in (
+        info.get("videoCodec"), f"{info['videoBitDepth']} bits" if info.get("videoBitDepth") else None,
+        info.get("videoDynamicRangeType") or info.get("videoDynamicRange"),
+        f"{info['videoFps']} fps" if info.get("videoFps") else None) if p)
+    audio = " ".join(str(p) for p in (
+        info.get("audioCodec"), info.get("audioChannels"),
+        f"({info['audioLanguages']})" if info.get("audioLanguages") else None) if p)
+    return [
+        ("Durée", info.get("runTime") or "—"),
+        ("Résolution", info.get("resolution") or "—"),
+        ("Vidéo", video or "—"),
+        ("Audio", audio or "—"),
+        ("Sous-titres", info.get("subtitles") or "aucun"),
+    ]
+
+
+def _torrent_details_context(torrent, state):
+    host_files = core.torrent_host_files(torrent)
+    lib_matches = core.find_library_matches(host_files, state["library_index"])
+    meta = core.torrent_meta(torrent, state["library_index"], core.build_arr_meta_index())
+    children = state["cross_seed_groups"].get(torrent["id"], [])
+    trackers = core.tracker_host(torrent)
+    return dict(
+        title=torrent["name"],
+        poster=meta["poster"] if meta else None,
+        links=meta["links"] if meta else [],
+        overview=None,
+        sections=[
+            {"title": "Torrent", "rows": [
+                ("Statut", TORRENT_STATUS_LABELS.get(torrent.get("status"), "?")),
+                ("Taille", core.human_size(torrent["totalSize"])),
+                ("Avancement", f"{torrent.get('percentDone', 0) * 100:.1f} %"),
+                ("Ajouté", f"il y a {core.human_age(torrent['addedDate'])}"),
+                ("Dossier", torrent.get("downloadDir", "—")),
+            ]},
+            {"title": "Partage", "rows": [
+                ("Ratio", f"{torrent['uploadRatio']:.2f}"),
+                ("Limite de ratio", _seed_limit_label(torrent)),
+                ("Tracker", torrent.get("_tracker_name", "?")),
+                ("Hôtes d'annonce", trackers.replace(",", ", ") if trackers != "?" else "—"),
+            ]},
+            {"title": "Rattachement", "rows": [
+                ("Titre arr", meta["title"] if meta else "aucun (jamais importé)"),
+                ("Cross-seed", f"{len(children)} torrent(s) rattaché(s)" if children
+                               else ("injecté par cross-seed" if core.is_cross_seed_entry(torrent) else "non")),
+            ]},
+        ],
+        lists=[
+            {"title": "Fichiers Transmission",
+             "items": [{"name": os.path.basename(p), "size": core.human_size(s)} for p, s in host_files]},
+            {"title": "Fichiers bibliothèque",
+             "items": [{"name": p.replace(core.LIBRARY_ROOT, "library"), "size": core.human_size(s)}
+                       for p, s in lib_matches]},
+            {"title": "Torrents cross-seedés",
+             "items": [{"name": c["name"], "size": c.get("_tracker_name", "")} for c in children]},
+        ],
+    )
+
+
+def _series_details_context(series):
+    stats = series.get("statistics", {})
+    seasons = series.get("seasons", [])
+    profiles = core.quality_profile_names("series")
+    # Trié par chemin : c'est l'ordre saison/épisode, celui dans lequel on les
+    # cherche des yeux — l'ordre de l'API est celui des ids, donc celui des
+    # imports (E03 avant E01 sur cette bibliothèque).
+    files = sorted(core.fetch_episode_files(series["id"]), key=lambda f: f.get("relativePath", ""))
+    return dict(
+        title=series["title"],
+        poster=f"/poster/series/{series['id']}" if core.poster_file("series", series["id"]) else None,
+        links=core.item_meta("series", series)["links"],
+        overview=series.get("overview"),
+        sections=[
+            {"title": "Série", "rows": [
+                ("Année", series.get("year", "—")),
+                ("Statut", series.get("status", "—") + (" (terminée)" if series.get("ended") else "")),
+                ("Diffuseur", series.get("network") or "—"),
+                ("Type", series.get("seriesType", "—")),
+                ("Durée", f"{series['runtime']} min" if series.get("runtime") else "—"),
+                ("Genres", _joined(series.get("genres"))),
+                ("Langue d'origine", (series.get("originalLanguage") or {}).get("name", "—")),
+            ]},
+            {"title": "Bibliothèque", "rows": [
+                ("Chemin", series.get("path", "—")),
+                ("Suivie", _yes_no(series.get("monitored"))),
+                ("Profil qualité", profiles.get(series.get("qualityProfileId"), series.get("qualityProfileId", "—"))),
+                ("Saisons", f"{sum(1 for s in seasons if s.get('monitored'))} suivie(s) / {len(seasons)}"),
+                ("Épisodes", f"{stats.get('episodeFileCount', 0)} sur disque / "
+                             f"{stats.get('totalEpisodeCount', 0)} au total"),
+                ("Taille", core.human_size(stats.get("sizeOnDisk", 0))),
+                ("Prochaine diffusion", (series.get("nextAiring") or "—")[:10]),
+            ]},
+            # Agrégé plutôt que détaillé par fichier : une série a autant de
+            # mediaInfo que d'épisodes, les empiler rendrait la fiche
+            # illisible. Les valeurs distinctes suffisent à repérer un
+            # mélange (deux groupes, deux qualités, une VF au milieu de VO).
+            {"title": "Fichiers", "rows": [
+                ("Nombre", len(files)),
+                ("Taille totale", core.human_size(sum(f.get("size", 0) for f in files))),
+                ("Qualités", _distinct(_file_quality(f) for f in files)),
+                ("Groupes", _distinct(f.get("releaseGroup") for f in files)),
+                ("Langues", _distinct(lang.get("name") for f in files
+                                      for lang in f.get("languages") or [])),
+                ("Codecs vidéo", _distinct((f.get("mediaInfo") or {}).get("videoCodec") for f in files)),
+                ("Résolutions", _distinct((f.get("mediaInfo") or {}).get("resolution") for f in files)),
+            ] if files else []},
+            {"title": "Identifiants", "rows": [
+                ("IMDb", series.get("imdbId") or "—"),
+                ("TVDB", series.get("tvdbId") or "—"),
+                ("TMDB", series.get("tmdbId") or "—"),
+            ]},
+        ],
+        lists=[
+            {"title": "Saisons",
+             "items": [{"name": f"Saison {s['seasonNumber']}"
+                                + ("" if s.get("monitored") else " (non suivie)"),
+                        "size": core.human_size((s.get("statistics") or {}).get("sizeOnDisk", 0))}
+                       for s in seasons]},
+            {"title": "Fichiers",
+             "items": [{"name": f.get("relativePath", "?"),
+                        "size": f"{core.human_size(f.get('size', 0))} — {_file_quality(f)}"}
+                       for f in files]},
+        ],
+    )
+
+
+def _film_details_context(movie):
+    movie_file = movie.get("movieFile") or {}
+    quality = ((movie_file.get("quality") or {}).get("quality") or {}).get("name")
+    profiles = core.quality_profile_names("film")
+    return dict(
+        title=movie["title"],
+        poster=f"/poster/film/{movie['id']}" if core.poster_file("film", movie["id"]) else None,
+        links=core.item_meta("film", movie)["links"],
+        overview=movie.get("overview"),
+        sections=[
+            {"title": "Film", "rows": [
+                ("Année", movie.get("year", "—")),
+                ("Titre original", movie.get("originalTitle") or "—"),
+                ("Statut", movie.get("status", "—")),
+                ("Studio", movie.get("studio") or "—"),
+                ("Durée", f"{movie['runtime']} min" if movie.get("runtime") else "—"),
+                ("Genres", _joined(movie.get("genres"))),
+                ("Collection", (movie.get("collection") or {}).get("title", "—")),
+            ]},
+            {"title": "Bibliothèque", "rows": [
+                ("Chemin", movie.get("path", "—")),
+                ("Suivi", _yes_no(movie.get("monitored"))),
+                ("Fichier présent", _yes_no(movie.get("hasFile"))),
+                ("Profil qualité", profiles.get(movie.get("qualityProfileId"), movie.get("qualityProfileId", "—"))),
+            ]},
+            # Un film n'a qu'un fichier : contrairement à une série, son détail
+            # tient dans la fiche sans rien agréger.
+            {"title": "Fichier", "rows": [
+                ("Nom", movie_file.get("relativePath", "—")),
+                ("Taille", core.human_size(movie.get("sizeOnDisk", 0))),
+                ("Qualité", quality or "—"),
+                ("Édition", movie_file.get("edition") or "—"),
+                ("Groupe", movie_file.get("releaseGroup") or "—"),
+                ("Langues", _file_languages(movie_file)),
+                ("Importé le", (movie_file.get("dateAdded") or "—")[:10]),
+                # Pas de custom formats ici : contrairement à l'episodefile de
+                # Sonarr, le movieFile imbriqué dans l'objet film de Radarr ne
+                # porte ni customFormats ni customFormatScore (vérifié le
+                # 2026-08-06) — les afficher ne donnerait que des tirets.
+                ("Nom de release", movie_file.get("sceneName") or "—"),
+            ] if movie_file else []},
+            {"title": "Média", "rows": _media_rows(movie_file)},
+            {"title": "Identifiants", "rows": [
+                ("IMDb", movie.get("imdbId") or "—"),
+                ("TMDB", movie.get("tmdbId") or "—"),
+            ]},
+        ],
+        lists=[],
+    )
+
+
+@app.get("/torrents/{tid}/details", response_class=HTMLResponse)
+def torrent_details(tid: int):
+    state = core.load_full_state()
+    torrent = next((t for t in state["all_torrents"] if t["id"] == tid), None)
+    if not torrent:
+        return HTMLResponse("<p>Torrent introuvable (déjà supprimé ?). Fermez et rafraîchissez.</p>")
+    return HTMLResponse(render("details.html", **_torrent_details_context(torrent, state)))
+
+
+@app.get("/series/{sid}/details", response_class=HTMLResponse)
+def series_details(sid: int):
+    series = core.find_series_by_id(sid)
+    if not series:
+        return HTMLResponse("<p>Série introuvable. Fermez et rafraîchissez.</p>")
+    return HTMLResponse(render("details.html", **_series_details_context(series)))
+
+
+@app.get("/films/{mid}/details", response_class=HTMLResponse)
+def film_details(mid: int):
+    movie = core.find_movie_by_id(mid)
+    if not movie:
+        return HTMLResponse("<p>Film introuvable. Fermez et rafraîchissez.</p>")
+    return HTMLResponse(render("details.html", **_film_details_context(movie)))
+
+
 def _torrent_confirm_context(torrent, state, sort, reverse, filter_str, post_url):
     host_files = core.torrent_host_files(torrent)
     lib_matches = core.find_library_matches(host_files, state["library_index"])
@@ -424,11 +686,17 @@ def series_confirm(sid: int, sort: str = DEFAULT_SORT["series"], reverse: str = 
                                          state["cross_seed_child_ids"], series["path"])
     total_files = sum(len(hf) for _t, hf, _lm in matched)
     total_size = sum(s for _t, hf, _lm in matched for _p, s in hf)
+    # Fichiers du dossier qu'aucun torrent ne couvre : execute_delete_series les
+    # supprime (cleanup_orphan_files) mais l'écran de confirmation ne les
+    # annonçait pas, donc promettait moins que ce qu'il fait.
+    orphans = core.series_orphan_files(matched, series["path"])
     return HTMLResponse(render(
         "confirm_series.html",
         series_id=sid, series_title=series["title"],
-        torrents=[t["name"] for t, _hf, _lm in matched],
+        torrents=[{"name": t["name"], "seeding": core.is_seeding(t)} for t, _hf, _lm in matched],
         total_files=total_files, total_size=core.human_size(total_size),
+        orphans=[{"name": os.path.basename(p), "size": core.human_size(s)} for p, s in orphans],
+        orphans_size=core.human_size(sum(s for _p, s in orphans)),
         sort=sort, reverse=reverse == "1", filter_str=filter,
     ))
 
@@ -562,11 +830,19 @@ def _resolve_target(target, find, kind_label):
 def _preview_arr_series(series, state):
     matched = core.find_series_torrents(state["all_torrents"], state["library_index"],
                                          state["cross_seed_child_ids"], series["path"])
+    # Mêmes fichiers résiduels que ceux annoncés par l'écran web (voir
+    # series_confirm) : execute_delete_series les supprime aussi, l'addon Kodi
+    # doit donc pouvoir les nommer avant de demander confirmation.
+    orphans = core.series_orphan_files(matched, series["path"])
     return {
         "title": series["title"],
         "torrents": len(matched),
-        "files": sum(len(host_files) for _t, host_files, _lm in matched),
-        "size_bytes": sum(s for _t, host_files, _lm in matched for _p, s in host_files),
+        "seeding": sum(1 for t, _hf, _lm in matched if core.is_seeding(t)),
+        "files": sum(len(host_files) for _t, host_files, _lm in matched) + len(orphans),
+        "orphan_files": len(orphans),
+        "orphans": [{"name": os.path.basename(p), "size": core.human_size(s)} for p, s in orphans],
+        "size_bytes": sum(s for _t, host_files, _lm in matched for _p, s in host_files)
+                      + sum(s for _p, s in orphans),
     }
 
 
@@ -578,7 +854,13 @@ def _preview_arr_movie(movie, state):
     return {
         "title": movie["title"],
         "torrents": 1 if torrent else 0,
+        "seeding": 1 if torrent and core.is_seeding(torrent) else 0,
         "files": len(host_files) or (1 if movie.get("hasFile") else 0),
+        # Pas d'orphelins ici : contrairement à une série, la suppression d'un
+        # film ne balaie pas son dossier (voir _delete_movie) — soit un torrent
+        # le couvre, soit c'est Radarr qui supprime son propre fichier.
+        "orphan_files": 0,
+        "orphans": [],
         "size_bytes": sum(s for _p, s in host_files) or movie.get("sizeOnDisk", 0),
     }
 
@@ -587,7 +869,12 @@ def _summary(preview, managed_by_arr):
     """Résumé d'une ligne affiché dans la boîte de confirmation de Kodi."""
     parts = []
     if preview["torrents"]:
-        parts.append(f"{preview['torrents']} torrent" + ("s" if preview["torrents"] > 1 else ""))
+        # 🌱 : combien de ces torrents partagent encore. Un torrent arrêté part
+        # aussi, mais son retrait ne coûte rien au ratio — d'où la distinction.
+        seeding = preview.get("seeding", 0)
+        suffix = f" ({seeding} 🌱)" if seeding else ""
+        parts.append(f"{preview['torrents']} torrent"
+                     + ("s" if preview["torrents"] > 1 else "") + suffix)
     if preview.get("orphan_files"):
         parts.append(f"{preview['orphan_files']} fichier"
                      + ("s" if preview["orphan_files"] > 1 else "") + " sans torrent")

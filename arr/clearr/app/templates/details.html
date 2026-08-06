@@ -1,0 +1,65 @@
+{# Fiche « toutes les informations connues » d'un torrent / d'une série / d'un
+   film, ouverte en cliquant son nom dans n'importe laquelle des 3 vues.
+
+   Purement descriptive : aucun bouton d'action, la suppression restant sur la
+   croix de la ligne (et sa propre modale de confirmation). Générique par
+   construction — webapp.py fournit `sections` (paires libellé/valeur) et
+   `lists` (listes de fichiers) — pour que les 3 vues partagent un seul gabarit,
+   comme _meta.html le fait déjà pour la cellule titre. #}
+<div class="modal-header">
+  <h5 class="modal-title text-truncate" title="{{ title }}">{{ title }}</h5>
+  <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+</div>
+<div class="modal-body">
+
+<div class="d-flex gap-3 align-items-start">
+  {% if poster %}
+  {# Ici l'image est bien dans le HTML, contrairement aux lignes des tableaux
+     (voir _meta.html) : une seule fiche est ouverte à la fois, donc une seule
+     jaquette à charger — le report au survol n'aurait rien à économiser. #}
+  <img src="{{ poster }}" alt="" class="rounded flex-shrink-0"
+       style="width:110px" loading="lazy">
+  {% endif %}
+  <div class="flex-grow-1" style="min-width:0">
+    {% if links %}
+    <p class="mb-2">
+      {% for l in links %}
+      <a class="meta-link{% if l.arr %} text-bg-secondary meta-link-arr{% endif %}"
+         href="{{ l.url }}" target="_blank" rel="noopener noreferrer"
+         title="Ouvrir dans {{ l.label }}">{{ l.label }}</a>
+      {%- endfor %}
+    </p>
+    {% endif %}
+    {% for section in sections %}
+    {% if section.rows %}
+    <p class="text-body-secondary text-uppercase mb-1 mt-2" style="font-size:.7rem;">{{ section.title }}</p>
+    <dl class="details-grid small mb-0">
+      {% for label, value in section.rows %}
+      <dt>{{ label }}</dt><dd>{{ value }}</dd>
+      {% endfor %}
+    </dl>
+    {% endif %}
+    {% endfor %}
+  </div>
+</div>
+
+{% if overview %}
+<p class="text-body-secondary text-uppercase mb-1 mt-3" style="font-size:.7rem;">Résumé</p>
+<p class="small mb-0">{{ overview }}</p>
+{% endif %}
+
+{% for list in lists %}
+{% if list["items"] %}
+<p class="text-body-secondary text-uppercase mb-1 mt-3" style="font-size:.7rem;">{{ list.title }} ({{ list["items"]|length }})</p>
+<ul class="small text-body-secondary mb-0" style="max-height:180px; overflow-y:auto;">
+  {% for f in list["items"] %}
+  <li class="text-truncate" title="{{ f.name }}{% if f.size %} ({{ f.size }}){% endif %}">{{ f.name }}{% if f.size %} ({{ f.size }}){% endif %}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endfor %}
+
+</div>
+<div class="modal-footer">
+  <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Fermer</button>
+</div>

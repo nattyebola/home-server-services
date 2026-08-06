@@ -49,6 +49,12 @@ TRANSMISSION_DATA_ROOT = os.path.join(DATA_ROOT, ".transmission", "data")
 COMPLETED_ROOT = os.path.join(TRANSMISSION_DATA_ROOT, "completed")
 LOG_PATH = os.path.join(DATA_ROOT, ".clearr.log")
 
+# Statuts RPC Transmission correspondant à un torrent qui partage encore
+# (5 = en attente de seed, 6 = seed). Tout le reste (0 arrêté, 1-2 vérification,
+# 3-4 téléchargement) ne partage pas — distinction affichée dans les écrans de
+# confirmation, un torrent arrêté n'apportant plus rien à personne.
+SEEDING_STATUSES = (5, 6)
+
 RPC_URL = "http://transmission-vpn:9091/transmission/rpc"
 
 PROWLARR_URL = "http://prowlarr:9696"
@@ -154,8 +160,16 @@ class TransmissionClient:
         return data["arguments"]
 
     def list_torrents(self):
+        # `status` sert uniquement aux écrans de confirmation, pour distinguer un
+        # torrent encore en seed d'un torrent arrêté (voir SEEDING_STATUSES) —
+        # sans lui, la modale ne saurait pas dire ce qui va cesser d'être partagé.
+        # seedRatioLimit/Mode : posés par Sonarr/Radarr au grab sur les indexeurs
+        # publics (voir PUBLIC_INDEXER_SEED_RATIO dans apply-arr-overrides.py),
+        # donc ce qui décide quand un torrent cessera de partager — affiché dans
+        # la fiche détail, où « ratio 1.90 » seul ne dit pas s'il reste du chemin.
         fields = ["id", "name", "addedDate", "downloadDir", "totalSize",
-                  "files", "trackerStats", "percentDone", "uploadRatio"]
+                  "files", "trackerStats", "percentDone", "uploadRatio", "status",
+                  "seedRatioLimit", "seedRatioMode"]
         torrents = self.call("torrent-get", {"fields": fields})["torrents"]
         logger.info("liste torrents récupérée : %d torrents", len(torrents))
         return torrents
@@ -467,6 +481,25 @@ def fetch_movies_list():
     return movies
 
 
+def fetch_episode_files(series_id):
+    """Fichiers importés d'une série (chemin, taille, qualité, groupe, langues,
+    mediaInfo). L'objet série ne porte que des compteurs agrégés dans
+    `statistics` — le détail par fichier demande cet appel séparé, fait
+    seulement à l'ouverture d'une fiche détail, jamais au rendu d'un onglet."""
+    return arr_api(SONARR_URL, SONARR_API_KEY, "GET", "/api/v3/episodefile",
+                   params={"seriesId": series_id}) or []
+
+
+def quality_profile_names(kind):
+    """id de profil qualité -> nom. Les objets série/film ne portent que
+    `qualityProfileId` ; la fiche détail veut le nom, d'où cet appel séparé.
+    Best-effort comme tout arr_api : un dict vide fait juste retomber la fiche
+    sur l'id brut."""
+    url, key = (SONARR_URL, SONARR_API_KEY) if kind == "series" else (RADARR_URL, RADARR_API_KEY)
+    profiles = arr_api(url, key, "GET", "/api/v3/qualityprofile") or []
+    return {p["id"]: p["name"] for p in profiles}
+
+
 def find_series_by_id(series_id):
     return next((s for s in fetch_series_list() if s["id"] == series_id), None)
 
@@ -594,11 +627,16 @@ def arr_link(kind, item):
     le tmdbId)."""
     if not DOMAIN:
         return None
+    # `arr: True` distingue ce lien des liens vers les bases publiques : il
+    # pointe vers NOTRE infra, et les vues le rendent en badge plein (voir
+    # .meta-link-arr) plutôt qu'en pastille bordée.
     if kind == "series":
         slug = item.get("titleSlug")
-        return {"label": "Sonarr", "url": f"https://sonarr.{DOMAIN}/series/{slug}"} if slug else None
+        return {"label": "Sonarr", "arr": True,
+                "url": f"https://sonarr.{DOMAIN}/series/{slug}"} if slug else None
     tmdb = item.get("tmdbId")
-    return {"label": "Radarr", "url": f"https://radarr.{DOMAIN}/movie/{tmdb}"} if tmdb else None
+    return {"label": "Radarr", "arr": True,
+            "url": f"https://radarr.{DOMAIN}/movie/{tmdb}"} if tmdb else None
 
 
 def item_meta(kind, item):
@@ -722,6 +760,47 @@ def bulk_delete_torrents(client, matched, all_torrents, linked_ids, missing_ids,
         freed += f
         deleted += 1
     return all_torrents, freed, deleted, failed
+
+
+def is_seeding(torrent):
+    return torrent.get("status") in SEEDING_STATUSES
+
+
+def orphan_files_under(target_path, covered):
+    """[(chemin, taille), ...] des fichiers présents sous `target_path` qu'aucun
+    torrent ne couvre — exactement ce que cleanup_orphan_files() supprimera en
+    plus des torrents. `covered` est l'ensemble des chemins déjà pris en charge
+    par un torrent : ses fichiers Transmission pour un titre hors arr (leurs
+    données SONT sous target_path), ses correspondances library/ pour une série
+    Sonarr (les données du torrent vivent ailleurs, sous .transmission/data, et
+    library/ n'en tient que des hardlinks).
+
+    Sert les écrans de confirmation : sans ça la modale annonçait les seuls
+    torrents, donc moins que ce qui allait réellement partir (cas rencontré le
+    2026-08-06 sur une série dont 2 épisodes n'avaient plus de torrent, Sonarr
+    les ayant retirés du client une fois leur ratio atteint)."""
+    if os.path.isdir(target_path):
+        on_disk = [os.path.join(walk_root, name)
+                   for walk_root, _dirs, files in os.walk(target_path) for name in files]
+    else:
+        on_disk = [target_path] if os.path.exists(target_path) else []
+    orphans = []
+    for path in sorted(on_disk):
+        if path in covered:
+            continue
+        try:
+            orphans.append((path, os.path.getsize(path)))
+        except OSError:
+            orphans.append((path, 0))
+    return orphans
+
+
+def series_orphan_files(matched, series_path):
+    """Fichiers du dossier d'une série qu'aucun de ses torrents ne couvre. Les
+    chemins couverts sont les correspondances library/ (lib_matches), pas les
+    fichiers Transmission : c'est le dossier de la série qu'on inspecte."""
+    covered = {p for _t, _hf, lib_matches in matched for p, _s in lib_matches}
+    return orphan_files_under(series_path, covered)
 
 
 def cleanup_orphan_files(target_path, root=LIBRARY_ROOT):
@@ -871,29 +950,21 @@ def plan_media_path_deletion(state, target):
     torrent_files = len(covered)
     torrent_bytes = sum(s for _t, host_files, _lm in matched for _p, s in host_files)
 
-    if os.path.isdir(target):
-        on_disk = [os.path.join(walk_root, name)
-                   for walk_root, _dirs, files in os.walk(target) for name in files]
-    else:
-        on_disk = [target] if os.path.exists(target) else []
-    orphan_files = 0
-    orphan_bytes = 0
-    for path in on_disk:
-        if path in covered:
-            continue
-        orphan_files += 1
-        try:
-            orphan_bytes += os.path.getsize(path)
-        except OSError:
-            pass
+    orphans = orphan_files_under(target, covered)
+    orphan_bytes = sum(s for _p, s in orphans)
 
     return {
         "target": target,
         "title": os.path.basename(target.rstrip("/")),
         "matched": matched,
         "torrents": len(matched),
-        "files": torrent_files + orphan_files,
-        "orphan_files": orphan_files,
+        "seeding": sum(1 for t, _hf, _lm in matched if is_seeding(t)),
+        "files": torrent_files + len(orphans),
+        "orphan_files": len(orphans),
+        # Liste détaillée en plus du compte : la modale Kodi comme celle du web
+        # nomment les fichiers sans torrent, sinon leur taille apparaît dans le
+        # total sans qu'on puisse voir à quoi elle correspond.
+        "orphans": [{"name": os.path.basename(p), "size": human_size(s)} for p, s in orphans],
         "size_bytes": torrent_bytes + orphan_bytes,
     }
 

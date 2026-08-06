@@ -33,7 +33,7 @@
       <td class="{{ 'text-success' if m.has_file else '' }}">{{ '✓' if m.has_file else '' }}</td>
       <td>{{ m.year }}</td>
       <td>{{ m.size }}</td>
-      <td>{{ title_cell(m.title, m.meta) }}</td>
+      <td>{{ title_cell(m.title, m.meta, details_url='/films/' ~ m.id ~ '/details') }}</td>
       <td class="text-end">
         <a href="#" class="btn btn-sm btn-outline-danger btn-delete" data-get="/films/{{ m.id }}/confirm?{{ qs }}"
            data-target="#modal-body" title="Supprimer ce film" aria-label="Supprimer ce film">✕</a>

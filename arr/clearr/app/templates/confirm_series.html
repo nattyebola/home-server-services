@@ -5,16 +5,24 @@
 <div class="modal-body">
 
 {% if torrents %}
-<p class="mb-1 small">{{ torrents|length }} torrent(s) Transmission ({{ total_files }} fichier(s), {{ total_size }}) :</p>
+<p class="mb-1 small">{{ torrents|length }} torrent(s) Transmission ({{ total_files }} fichier(s), {{ total_size }}) — 🌱 = encore en seed :</p>
 <ul class="small text-body-secondary" style="max-height:200px; overflow-y:auto;">
-  {% for t in torrents[:10] %}<li class="text-truncate" title="{{ t }}">{{ t }}</li>{% endfor %}
+  {% for t in torrents[:10] %}<li class="text-truncate" title="{{ t.name }}">{{ '🌱' if t.seeding else '⏸' }} {{ t.name }}</li>{% endfor %}
   {% if torrents|length > 10 %}<li>... et {{ torrents|length - 10 }} de plus</li>{% endif %}
 </ul>
 {% else %}
 <div class="alert alert-warning py-2 small">Aucun torrent Transmission trouvé pour cette série.</div>
 {% endif %}
 
-<p class="small mb-2">Tout fichier résiduel dans le dossier de la série (sans torrent correspondant) sera aussi supprimé.</p>
+{% if orphans %}
+<p class="mb-1 small">{{ orphans|length }} fichier(s) sans torrent ({{ orphans_size }}), supprimé(s) aussi :</p>
+<ul class="small text-warning-emphasis" style="max-height:160px; overflow-y:auto;">
+  {% for f in orphans[:10] %}<li class="text-truncate" title="{{ f.name }} ({{ f.size }})">{{ f.name }} ({{ f.size }})</li>{% endfor %}
+  {% if orphans|length > 10 %}<li>... et {{ orphans|length - 10 }} de plus</li>{% endif %}
+</ul>
+{% else %}
+<p class="small mb-2">Aucun fichier résiduel : tout le dossier de la série est couvert par les torrents ci-dessus.</p>
+{% endif %}
 
 <div class="alert alert-danger py-2 small mb-0">Sonarr : « {{ series_title }} » sera retirée complètement (+ exclusion de liste).</div>
 </div>
