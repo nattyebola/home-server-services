@@ -75,6 +75,11 @@ PROBE_PATH = {
 RULE_KEY_RE = re.compile(r"^traefik\.http\.routers\.([^.]+)\.rule$")
 HOST_RE = re.compile(r"Host\(`([^`]+)`\)")
 
+# Configuration dynamique de Traefik où vivent les middlewares LAN-only, et de
+# quoi y relever leur nom — voir lan_middleware_names().
+LAN_DYNAMIC_FILE = REPO_ROOT / "traefik" / "dynamic" / "lan-only.yml"
+LAN_MIDDLEWARE_RE = re.compile(r"^ {4}([A-Za-z0-9_-]+):[ \t]*\n {6}ipAllowList:", re.MULTILINE)
+
 PROWLARR_CONTAINER = "arr-prowlarr-1"
 PROWLARR_URL = "http://localhost:9696/api/v1"
 
@@ -115,6 +120,27 @@ def load_env_file(path):
 def render(template_name, **kwargs):
     path = TEMPLATES_DIR / template_name
     return string.Template(path.read_text()).substitute(**kwargs)
+
+
+def render_lan_only_banner(data_root):
+    """Bandeau affiché tant que `make switch-lan-only-middleware` a ouvert les
+    services LAN-only au WAN. C'est la seule trace visible de cet état : les
+    cartes de service, elles, sont grisées côté client par une sonde `<img>`
+    (voir PROBE_PATH), qui verrait justement ces services répondre — donc un
+    visiteur WAN ne pourrait pas distinguer « ouvert exprès » de « toujours
+    restreint ». L'échéance est affichée parce que l'oubli est le vrai risque
+    de cette bascule.
+
+    Lit le même fichier d'état que scripts/lan-only-middleware.sh, sans jamais
+    l'écrire : absent (ou DATA_ROOT inconnu) = fermé, le cas normal."""
+    if not data_root:
+        return ""
+    try:
+        deadline = int(Path(data_root, ".lan-only-open-until").read_text().strip())
+    except (FileNotFoundError, ValueError, OSError):
+        return ""
+    return render("lan-only-banner.html",
+                  until=datetime.fromtimestamp(deadline).strftime("%H:%M"))
 
 
 # Les conteneurs one-off (`docker compose run`, ex. `make clearr` qui lance la
@@ -189,10 +215,44 @@ def prowlarr_indexer_health():
     )
 
 
-def extract_traefik_services(config):
+def lan_middleware_names():
+    """Noms des middlewares qui portent un `ipAllowList` dans la configuration
+    dynamique de Traefik (traefik/dynamic/lan-only.yml, généré par
+    scripts/lan-only-middleware.sh).
+
+    Nécessaire depuis le 2026-08-07 : ces middlewares ne sont plus déclarés par
+    labels Docker mais dans ce fichier, pour pouvoir être ouverts au WAN sans
+    recréer de conteneur. Les chercher dans les labels du service ne donnait donc
+    plus rien et TOUS les services LAN-only ressortaient dans « Public ».
+
+    Lu au parseur maison plutôt qu'avec PyYAML : ce script n'a aucune dépendance
+    hors stdlib (c'est ce qui a motivé sa réécriture depuis bash+jq, voir
+    CLAUDE.md), et le fichier est produit par nous, à forme fixe. Exiger
+    `ipAllowList` sur la ligne suivante plutôt que de ramasser tout nom de
+    middleware : un futur middleware d'un autre type dans ce fichier ne doit pas
+    faire passer un service pour LAN-only.
+
+    Fichier absent = aucun nom. C'est l'état où Traefik ne résout plus ces
+    middlewares et où les routeurs concernés répondent 404 de toute façon ;
+    `make up` (via `lan-only-middleware.sh ensure`) le recrée."""
+    try:
+        text = LAN_DYNAMIC_FILE.read_text()
+    except OSError:
+        return set()
+    return set(LAN_MIDDLEWARE_RE.findall(text))
+
+
+def extract_traefik_services(config, lan_names):
     """Reproduit la logique du JQ_PROGRAM d'origine : premier router (par
     ordre alphabétique de clé de label, comme jq `keys`) exposant une règle
-    Host(`...`), LAN si un de ses middlewares porte un ipallowlist."""
+    Host(`...`), LAN si un de ses middlewares porte un ipallowlist.
+
+    Un service reste classé LAN dès qu'un `ipAllowList` est branché sur son
+    routeur, **quelle que soit la plage du moment** : après un
+    `make switch-lan-only-middleware` la plage laisse tout passer, mais faire
+    basculer les 5 cartes dans « Public » à chaque aller-retour ferait perdre
+    l'information utile (« normalement restreint »). C'est le bandeau rouge en
+    haut de page qui dit que la restriction est levée, et jusqu'à quand."""
     for name, svc in (config.get("services") or {}).items():
         labels = svc.get("labels") or {}
         if labels.get("traefik.enable") != "true":
@@ -210,8 +270,12 @@ def extract_traefik_services(config):
             continue
         middlewares = labels.get(f"traefik.http.routers.{router}.middlewares", "")
         mw_list = [m.split("@")[0] for m in middlewares.split(",") if m]
+        # Les deux sources possibles : le fichier dynamique (cas des middlewares
+        # LAN-only depuis 2026-08-07) et un label frère sur le même service
+        # (forme d'origine, conservée pour tout futur ipallowlist déclaré ainsi).
         lan = any(
-            labels.get(f"traefik.http.middlewares.{mw}.ipallowlist.sourcerange") is not None
+            mw in lan_names
+            or labels.get(f"traefik.http.middlewares.{mw}.ipallowlist.sourcerange") is not None
             for mw in mw_list
         )
         yield name, host_match.group(1), lan
@@ -236,9 +300,10 @@ def render_down_card(key):
 
 def build_cards(running, unhealthy):
     public_cards, local_cards, down_cards = [], [], []
+    lan_names = lan_middleware_names()
     for stack in STACKS:
         config = docker_compose_config(stack)
-        for service, host, lan in extract_traefik_services(config):
+        for service, host, lan in extract_traefik_services(config, lan_names):
             key = f"{stack}/{service}"
             is_unhealthy = key in unhealthy
             if key in running:
@@ -774,6 +839,7 @@ def main():
         "page.html",
         domain=domain,
         updated=datetime.now().strftime("%Y-%m-%d %H:%M"),
+        lan_banner=render_lan_only_banner(env_shared.get("DATA_ROOT")),
         sections="\n".join(sections),
     )
     out_file = OUT_DIR / "index.html"

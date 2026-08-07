@@ -6,14 +6,32 @@ STACKS := traefik jellyfin nextcloud vpn arr seerr
 
 UPDATE_STACKS := nextcloud vpn jellyfin arr seerr
 
-.PHONY: network up down config logs update update-all backup restore cron-install dashboard-refresh clearr arr-overrides recyclarr-sync kodi-install api-keys provision
+.PHONY: help network up down config logs update update-all backup restore cron-install dashboard-refresh clearr arr-overrides recyclarr-sync kodi-install api-keys provision switch-lan-only-middleware
+
+# `make` sans argument affiche l'aide plutôt que de lancer la première cible
+# (c'était `network`, qui ne dit rien de ce que le reste sait faire).
+.DEFAULT_GOAL := help
+
+# Aide générée depuis les annotations `##` des cibles elles-mêmes, pas depuis une
+# liste séparée : une liste à part diverge dès qu'on ajoute une cible sans y
+# penser. Format d'une annotation : `cible: ## <ARGS> — description`, ARGS entre
+# chevrons quand la cible en attend.
+help: ## — liste les cibles disponibles et leurs arguments
+	@echo "usage: make <cible> [ARG=valeur]"
+	@echo ""
+	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
+		| sort \
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[1m%-28s\033[0m %s\n", $$1, $$2}'
+	@echo ""
+	@echo "  STACK  : $(STACKS)"
+	@echo "  autres : SNAPSHOT=<id|latest> (restore), KODI_HOME=<chemin> (kodi-install)"
 
 # Kodi profile of the user running make (a media client, not a stack) — see the
 # kodi-install target and kodi/README.md. Overridable for a Kodi running under
 # another user or a non-default profile path: make kodi-install KODI_HOME=...
 KODI_HOME ?= $(HOME)/.kodi
 
-network:
+network: ## — crée le réseau traefik-public s'il manque (prérequis de tout `up`)
 	@docker network inspect $(NETWORK) >/dev/null 2>&1 || docker network create $(NETWORK)
 
 # .env.shared is the single source of truth for PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT,
@@ -24,7 +42,7 @@ network:
 # compose files stay free of any one deployment's folder layout.
 compose = docker compose --env-file .env.shared $(if $(wildcard $(STACK)/.env),--env-file $(STACK)/.env,) -f $(STACK)/docker-compose.yml $(if $(wildcard $(STACK)/docker-compose.override.yml),-f $(STACK)/docker-compose.override.yml,)
 
-up: network
+up: network ## STACK=<nom> — démarre (ou met à jour) les conteneurs de la stack
 	@test -n "$(STACK)" || (echo "usage: make up STACK=<$(STACKS)>" >&2 && exit 1)
 	@# seerr tourne nativement en UID 1000 sans étape root-puis-drop et ne chown
 	@# pas son volume : si ${DATA_ROOT}/.seerr/config n'existe pas, c'est Docker
@@ -36,17 +54,23 @@ up: network
 		test -n "$$root" || (echo "DATA_ROOT not set in .env.shared" >&2 && exit 1); \
 		mkdir -p "$$root/.seerr/config"; \
 	fi
+	@# Les routeurs arr/transmission référencent `<nom>@file` : sans
+	@# traefik/dynamic/lan-only.yml, Traefik ne sait pas résoudre leur middleware
+	@# et répond 404. Écrit ici (en mode fermé) plutôt que laissé au premier
+	@# `make switch-lan-only-middleware`, pour qu'aucun démarrage ne puisse partir
+	@# sans lui — et pour le monter côté traefik dès le premier up.
+	@scripts/lan-only-middleware.sh ensure
 	$(compose) up -d
 
-down:
+down: ## STACK=<nom> — arrête et supprime les conteneurs de la stack
 	@test -n "$(STACK)" || (echo "usage: make down STACK=<$(STACKS)>" >&2 && exit 1)
 	$(compose) down
 
-config:
+config: ## STACK=<nom> — affiche le compose résolu (labels, env, montages)
 	@test -n "$(STACK)" || (echo "usage: make config STACK=<$(STACKS)>" >&2 && exit 1)
 	$(compose) config
 
-logs:
+logs: ## STACK=<nom> — suit les logs de la stack (Ctrl-C pour sortir)
 	@test -n "$(STACK)" || (echo "usage: make logs STACK=<$(STACKS)>" >&2 && exit 1)
 	$(compose) logs -f
 
@@ -54,7 +78,7 @@ logs:
 # Dockerfile (nextcloud app/web ; arr/clearr), then recreate. nextcloud
 # additionally needs its post-upgrade occ maintenance run every time app:
 # gets a new image.
-update: network
+update: network ## STACK=<nom> — pull/rebuild puis recrée la stack
 	@test -n "$(STACK)" || (echo "usage: make update STACK=<$(STACKS)>" >&2 && exit 1)
 	$(compose) pull
 	@if [ "$(STACK)" = "nextcloud" ] || [ "$(STACK)" = "arr" ]; then $(compose) build -q; fi
@@ -77,7 +101,7 @@ update: network
 # previous digest orphaned, see CLAUDE.md image-tag decision) and refreshes
 # the dashboard so it reflects the new containers without waiting for the
 # next 5-min cron tick.
-update-all:
+update-all: ## — `update` sur toutes les stacks, prune les images orphelines, régénère le dashboard
 	@failed=""; \
 	for s in $(UPDATE_STACKS); do \
 		echo "\n======================== update $$s ========================\n"; \
@@ -97,7 +121,7 @@ update-all:
 # voir scripts/generate-dashboard.py (vues dans dashboard/templates/).
 # Servi par le service dashboard de traefik/docker-compose.yml (make up
 # STACK=traefik), pas besoin qu'il tourne pour régénérer le contenu.
-dashboard-refresh:
+dashboard-refresh: ## — régénère dashboard/html/ (aussi fait par cron toutes les 5 min)
 	@python3 scripts/generate-dashboard.py
 
 # TUI de nettoyage manuel (même nom que le sous-domaine LAN-only clearr.${DOMAIN},
@@ -112,14 +136,14 @@ dashboard-refresh:
 # s'y ajoutent — les répéter faisait voir `python` à argparse comme
 # sous-commande (`invalid choice: 'python'`).
 clearr: STACK := arr
-clearr: network
+clearr: network ## — TUI de nettoyage torrents/bibliothèque (équivalent console de clearr.<domaine>)
 	@$(compose) run --rm -it clearr tui
 
 # collecte les secrets générés au premier démarrage et les écrit dans arr/.env
 # (clés API Prowlarr/Sonarr/Radarr lues dans leur config.xml, clé cross-seed,
 # clé API Jellyfin créée au besoin) — voir scripts/provision.py. À lancer AVANT
 # recyclarr-sync/arr-overrides, qui ont besoin de ces clés.
-api-keys:
+api-keys: ## — collecte les clés API générées au 1er démarrage dans arr/.env (avant arr-overrides)
 	@python3 scripts/provision.py keys
 
 # crée les objets de configuration qui se faisaient à la main dans les UI :
@@ -128,7 +152,7 @@ api-keys:
 # voir scripts/provision.py. À lancer APRÈS arr-overrides : la config Seerr
 # référence par nom les profils qualité que celui-ci provisionne. Idempotent et
 # strictement additif (ne réécrit jamais un objet existant), donc relançable.
-provision:
+provision: ## — crée les objets de config des UI (biblios Jellyfin, objets arr, Seerr) — après arr-overrides
 	@python3 scripts/provision.py services
 
 # réapplique les tailles de quality definition + le champ language Radarr
@@ -136,7 +160,7 @@ provision:
 # `recyclarr sync` — voir arr/recyclarr/recyclarr.yml et
 # scripts/apply-arr-overrides.py. Aussi enchaîné par cron juste après
 # `recyclarr-sync`, voir scripts/crontab.
-arr-overrides:
+arr-overrides: ## — réapplique les réglages arr que recyclarr écrase (aussi enchaîné par cron)
 	@python3 scripts/apply-arr-overrides.py
 
 # lance `recyclarr sync` en one-shot — le service recyclarr (arr/docker-compose.yml)
@@ -144,17 +168,29 @@ arr-overrides:
 # absent de `make up STACK=arr` ; seul ce target le démarre. Enchaîné par
 # cron avec `arr-overrides` juste après, voir scripts/crontab.
 recyclarr-sync: STACK := arr
-recyclarr-sync: network
+recyclarr-sync: network ## — lance `recyclarr sync` en one-shot (aussi enchaîné par cron)
 	@$(compose) run --rm recyclarr sync
+
+# ouvre/referme au WAN les services normalement restreints au LAN
+# (transmission + prowlarr/sonarr/radarr/clearr) en réécrivant la plage
+# d'adresses de leur middleware ipAllowList, chargée à chaud par Traefik depuis
+# traefik/dynamic/lan-only.yml — aucun conteneur n'est recréé, ce qui est tout
+# l'intérêt par rapport à commenter un label par service. Refermeture
+# automatique une heure après l'ouverture, assurée par le garde `rearm` de
+# scripts/crontab (donc résistante à une déconnexion SSH et à un redémarrage).
+# Régénère le dashboard à la fin dans les deux sens : c'est lui qui porte le
+# bandeau d'avertissement tant que l'ouverture est active.
+switch-lan-only-middleware: ## — ouvre/referme les services LAN-only au WAN (referme seul au bout d'1 h)
+	@scripts/lan-only-middleware.sh toggle
 
 # weekly restic backup (nextcloud DB dump + data + .env secrets + image
 # digest manifest) — see scripts/backup.sh. Also run by cron, see CLAUDE.md.
-backup:
+backup: ## — sauvegarde restic (aussi faite par cron le dimanche à 3 h)
 	@scripts/backup.sh
 
 # restore a restic snapshot to sauvegarde/restore-<snapshot>/ and print the
 # manual steps to bring it back — see scripts/restore.sh.
-restore:
+restore: ## SNAPSHOT=<id|latest> — restaure un snapshot dans sauvegarde/ sans toucher au live
 	@scripts/restore.sh $(if $(SNAPSHOT),$(SNAPSHOT),latest)
 
 # installs scripts/crontab as this host's crontab (nextcloud cron.php +
@@ -174,7 +210,7 @@ restore:
 # every other line of the crontab (jobs the user added by hand, unrelated to
 # this repo) is preserved — piping into `crontab -` replaced the whole crontab
 # and dropped them silently.
-cron-install:
+cron-install: ## — installe les crons du repo dans le crontab, en préservant les jobs perso
 	@test -f .env.shared || (echo ".env.shared missing — see .env.shared.example" >&2 && exit 1)
 	$(eval PUID := $(shell grep '^PUID=' .env.shared | cut -d= -f2))
 	$(eval DATA_ROOT := $(shell grep '^DATA_ROOT=' .env.shared | cut -d= -f2))
@@ -194,7 +230,7 @@ cron-install:
 # from .env.shared — same reason the crontab placeholders are substituted above.
 # Never overwrites an existing settings.xml: Kodi rewrites that file itself, and
 # the URL may have been adjusted by hand since.
-kodi-install:
+kodi-install: ## [KODI_HOME=<chemin>] — installe l'addon de menu contextuel clearr dans Kodi
 	@test -f .env.shared || (echo ".env.shared missing — see .env.shared.example" >&2 && exit 1)
 	$(eval DOMAIN := $(shell grep '^DOMAIN=' .env.shared | cut -d= -f2))
 	@test -n "$(DOMAIN)" || (echo "DOMAIN not set in .env.shared" >&2 && exit 1)

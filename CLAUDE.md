@@ -850,6 +850,97 @@ explicitement :
   à jour via `occ config:system:set` dans le container `app` (pas en
   éditant le fichier à la main), sinon Nextcloud rejette le nouveau nom
   d'hôte avec une erreur "domaine non fiable".
+- **Les deux middlewares LAN-only vivent dans le provider `file` de Traefik, pas
+  dans des labels Docker — pour pouvoir être ouverts au WAN et refermés sans
+  recréer un seul conteneur** (`make switch-lan-only-middleware`, ajouté le
+  2026-08-07 à la demande de l'utilisateur : « tester/corriger vite fait si je ne
+  suis pas chez moi mais que j'ai un accès SSH »). `arr-lan-only` (prowlarr,
+  sonarr, radarr, clearr) et `transmission-lan-only` (transmission-proxy) étaient
+  déclarés par labels, la même définition répétée 5 fois ; **un label ne peut
+  changer qu'en recréant le conteneur qui le porte**, donc basculer aurait voulu
+  dire redémarrer les 4 arr + le proxy à chaque aller-retour. Ils sont désormais
+  définis dans `traefik/dynamic/lan-only.yml` (provider `file`, `watch: true`) et
+  référencés en `arr-lan-only@file`/`transmission-lan-only@file` ; réécrire le
+  fichier suffit, Traefik recharge à chaud. Vérifié le 2026-08-07 : bascule
+  403 → 200 sur les 5 services, `StartedAt` des 6 conteneurs concernés
+  (traefik inclus) **inchangé**.
+  **Le middleware est rendu inopérant, pas retiré des routeurs** (c'est la
+  demande explicite) : il reste référencé, seule sa plage change — `LAN_CIDR` ↔
+  `0.0.0.0/0` + `::/0`. `::/0` n'est pas décoratif : sans lui un client IPv6
+  resterait bloqué et l'ouverture serait silencieusement partielle. Le retirer
+  des routeurs aurait demandé d'éditer 5 déclarations et de les recréer, soit
+  exactement ce qu'on voulait éviter.
+  **Un dossier monté, pas un fichier** : un bind-mount de *fichier* garde l'inode
+  qu'il avait au démarrage du conteneur, donc un remplacement côté hôte
+  passerait inaperçu dedans (piège déjà rencontré sur `recyclarr.yml`, voir plus
+  bas). Le script écrit d'ailleurs par `mktemp` + `mv` atomique, pour que Traefik
+  — qui surveille le dossier — ne puisse pas lire un fichier à moitié écrit.
+  **Refermeture automatique après 1 h, par un garde cron** (`rearm`, toutes les
+  5 min) et non par un `sleep 3600` détaché : le cron survit à la déconnexion SSH
+  qui a servi à ouvrir et à un redémarrage de la machine, ce qu'un processus en
+  arrière-plan ne fait pas — et l'oubli est le vrai risque de cette commande, pas
+  l'ouverture. Contrepartie assumée : la refermeture tombe entre 60 et 65 min.
+  L'échéance vit dans `${DATA_ROOT}/.lan-only-open-until` (même convention de
+  dotfile que `.cron-status/`), son absence = fermé.
+  **Pas de marqueur `.cron-status` ni d'entrée « Tâches planifiées »** pour ce
+  garde : muet en permanence, il ne serait jamais que vert. C'est le **bandeau
+  rouge du dashboard** (`render_lan_only_banner()`, avec l'heure de refermeture)
+  qui porte la visibilité, et c'est pour lui que la bascule régénère le dashboard
+  dans les deux sens. Il fallait un signal serveur : les cartes de service sont
+  grisées côté client par une sonde `<img>` (voir `PROBE_PATH`), qui verrait
+  justement ces services répondre — un visiteur WAN ne pourrait donc pas
+  distinguer « ouvert exprès » de « toujours restreint ».
+  **Le mode de défaillance est fermé, pas ouvert** : sans
+  `traefik/dynamic/lan-only.yml`, Traefik ne résout plus le middleware et les
+  5 routeurs répondent **404** (vérifié en supprimant le fichier pour de vrai —
+  le dashboard, qui ne le référence pas, restait à 200). D'où le
+  `scripts/lan-only-middleware.sh ensure` appelé par `make up` : il recrée le
+  fichier en mode fermé s'il manque, pour qu'aucun démarrage ne puisse partir
+  sans lui. `traefik/dynamic/` est versionné par un `.gitkeep` — si Docker devait
+  créer le dossier lui-même, il le ferait en root sur l'hôte (piège déjà
+  rencontré, voir plus bas) ; son contenu est gitignoré, il porte `LAN_CIDR`.
+  Vérifié aussi le 2026-08-07, et c'est la non-régression qui compte : un client
+  **du LAN** (requête émise depuis une adresse de `LAN_CIDR`, pas depuis la
+  loopback) passe toujours (200) LAN-only actif, un client hors
+  LAN est toujours bloqué (403), et la refermeture par le **vrai** daemon cron a
+  été exercée (pas seulement à la main — leçon du `%` non échappé plus bas).
+  **Piège du déplacement, corrigé le 2026-08-07 même jour, signalé par
+  l'utilisateur : le dashboard classait tous les services en « Public ».**
+  `extract_traefik_services()` déduisait « LAN » de la présence d'un label frère
+  `traefik.http.middlewares.<mw>.ipallowlist.sourcerange` sur le même service —
+  exactement les labels que ce déplacement supprime. Plus de label, plus de
+  détection, et les 5 cartes remontaient dans Public. Sortir une déclaration des
+  labels casse donc tout code qui la cherchait là : penser à `grep` la clé de
+  label retirée avant de conclure. Corrigé par `lan_middleware_names()`, qui
+  relève les middlewares porteurs d'un `ipAllowList` dans
+  `traefik/dynamic/lan-only.yml`, la voie par label restant acceptée pour tout
+  futur ipallowlist déclaré ainsi. Parseur maison (regex sur nom + `ipAllowList`
+  ligne suivante) et **pas PyYAML** : ce script n'a aucune dépendance hors
+  stdlib, c'est ce qui a motivé sa réécriture depuis bash+jq (voir plus bas) —
+  PyYAML est installé sur cette machine mais ne le serait pas forcément sur une
+  installation neuve.
+  Choix de fond au passage : **un service reste classé « Local (LAN) » même
+  fenêtre ouverte.** Faire basculer les 5 cartes dans « Public » à chaque
+  aller-retour ferait perdre l'information utile (« normalement restreint »), et
+  c'est le bandeau qui dit que la restriction est levée et jusqu'à quand.
+  Vérifié dans les deux états. Cas dégradé assumé : fichier dynamique absent =
+  aucun nom relevé = tout en Public — c'est l'état où ces routeurs répondent 404
+  de toute façon.
+  **`ensure` suit le fichier d'état, il ne referme pas aveuglément** (corrigé
+  dans la même passe, incohérence trouvée en testant le cas précédent) : un
+  `make up` pendant une fenêtre ouverte recréait le fichier en mode fermé alors
+  que `status` et le bandeau continuaient d'annoncer « ouvert jusqu'à HH:MM » —
+  on se croit joignable de l'extérieur alors qu'on ne l'est plus, le pire des
+  deux mondes. Il rend donc l'état décrit par l'échéance : fenêtre en cours →
+  ouvert, pas d'échéance ou échéance périmée → fermé, en nettoyant au passage une
+  échéance morte pour que `rearm` et le bandeau ne vivent pas dessus. Les deux
+  cas exercés.
+  Note sans rapport avec ce changement mais visible en le testant : à chaque
+  redémarrage de Traefik, une quinzaine de `middleware "hsts@docker" does not
+  exist` sortent pendant ~5 s, le temps que le provider docker livre les labels
+  du conteneur traefik lui-même. Transitoire, se résorbe seul, antérieur à ce
+  changement.
+
 - **`hsts` et `security-headers` : deux middlewares Traefik partagés,
   définis une seule fois sur le container `traefik` lui-même**
   (`traefik/docker-compose.yml`, labels sans routeur associé — Traefik ne
@@ -2056,13 +2147,14 @@ explicitement :
 ```
 server/
 ├── .env.shared(.example)     # PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT — réel gitignoré, .example versionné
-├── Makefile                  # network/up/down/config/logs/update/update-all/backup/restore/cron-install STACK=<nom> ; dashboard-refresh/clearr/arr-overrides/kodi-install (sans STACK)
+├── Makefile                  # `make help` (cible par défaut) liste tout — voir plus bas
 ├── README.md                  # doc humaine : services, install
 ├── ARCHITECTURE.md            # doc humaine : architecture, choix structurants
 ├── ISSUES.md                  # doc humaine : problèmes rencontrés
 ├── scripts/
 │   ├── crontab                    # source de vérité des crons DU REPO — `make cron-install`
 │   ├── install-crontab.sh          # fusionne scripts/crontab dans un bloc marqué, préserve les jobs perso
+│   ├── lan-only-middleware.sh      # ouvre/referme les services LAN-only au WAN — `make switch-lan-only-middleware` + garde cron `rearm`
 │   ├── backup.sh                   # sauvegarde restic hebdomadaire
 │   ├── restore.sh                  # restauration guidée d'un snapshot restic
 │   ├── generate-dashboard.py       # régénère dashboard/html/ — `make dashboard-refresh`
@@ -2084,6 +2176,19 @@ server/
 ```
 
 `make network` (crée `traefik-public` si absent) avant tout `make up`.
+
+**`make help` est la cible par défaut** (ajouté le 2026-08-07, demandé) : `make`
+seul affiche la liste des cibles et leurs arguments au lieu de lancer `network`,
+qui était la première du fichier et ne disait rien du reste. La liste est
+**générée depuis les annotations `## …` des cibles elles-mêmes**, pas maintenue à
+côté — une liste séparée diverge dès qu'on ajoute une cible sans y penser.
+Convention pour toute nouvelle cible : `cible: ## ARG=<valeur> — description`,
+l'annotation sur la ligne de la *définition* (pour `clearr`/`recyclarr-sync`, qui
+ont d'abord une ligne `cible: STACK := arr`, elle va sur la ligne
+`cible: network` — un `#` dans une affectation de variable make serait avalé
+comme commentaire et fausserait la valeur). Ne pas y écrire `$${DOMAIN}` ni
+d'autre échappement make : l'aide est produite par un `grep` sur le fichier brut,
+donc le texte s'affiche littéralement.
 
 ## Sauvegarde — repères rapides
 

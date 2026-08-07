@@ -255,10 +255,12 @@ Détail de chaque service, schémas et rationale des choix : voir
                           # ailleurs immédiatement (gestionnaire de mdp)
     make cron-install     # installe scripts/crontab comme crontab de l'hôte
     ```
-    `make cron-install` programme quatre tâches : le cron interne Nextcloud
+    `make cron-install` programme cinq tâches : le cron interne Nextcloud
     (`cron.php`, 5 min), la sauvegarde restic (hebdomadaire, dimanche 3h),
-    la régénération du dashboard (5 min) et `recyclarr-sync` +
-    `apply-arr-overrides.py` (quotidien, minuit). Les tâches liées à une
+    la régénération du dashboard (5 min), `recyclarr-sync` +
+    `apply-arr-overrides.py` (quotidien, minuit) et la refermeture du
+    middleware LAN-only (5 min, ne fait rien sauf après un
+    `make switch-lan-only-middleware` — voir plus bas). Les tâches liées à une
     stack sont protégées par `scripts/require-running.sh` : elles ne font
     rien si la stack concernée est arrêtée.
 
@@ -276,8 +278,12 @@ Détail de chaque service, schémas et rationale des choix : voir
 
 ### Maintenance courante
 
+`make help` (la cible par défaut : `make` tout court suffit) liste les commandes
+et leurs arguments directement depuis le `Makefile`.
+
 | Commande | Effet |
 |---|---|
+| `make help` | liste les cibles et leurs arguments |
 | `make up STACK=<nom>` | démarre/recrée une stack |
 | `make down STACK=<nom>` | arrête une stack |
 | `make config STACK=<nom>` | affiche la config résolue (debug des `${VAR}`) |
@@ -294,6 +300,31 @@ Détail de chaque service, schémas et rationale des choix : voir
 | `make recyclarr-sync` | applique les guides TRaSH aux profils qualité arr (aussi via cron quotidien) |
 | `make arr-overrides` | réapplique les réglages hors périmètre recyclarr + provisionne `arr/profiles/` + maintient les déclencheurs de suppression des connexions Jellyfin (à lancer après `recyclarr-sync`) |
 | `make kodi-install` | installe l'addon Kodi « Supprimer avec clearr » dans le profil Kodi de l'utilisateur courant, voir [`kodi/README.md`](kodi/README.md) |
+| `make switch-lan-only-middleware` | ouvre (ou referme) au WAN les services normalement restreints au LAN, voir ci-dessous |
+
+#### Ouvrir temporairement les services LAN-only (`switch-lan-only-middleware`)
+
+Transmission, Prowlarr, Sonarr, Radarr et clearr ne sont joignables que depuis
+`LAN_CIDR` (middleware Traefik `ipAllowList`). Pour dépanner depuis l'extérieur
+alors qu'on n'a qu'un accès SSH :
+
+```sh
+make switch-lan-only-middleware   # ouvre au WAN, referme seul au bout d'1 h
+make switch-lan-only-middleware   # referme tout de suite
+scripts/lan-only-middleware.sh status   # où on en est
+```
+
+- **Aucun conteneur n'est redémarré** : le middleware est défini dans
+  `traefik/dynamic/lan-only.yml`, rechargé à chaud par Traefik. Seule sa plage
+  d'adresses change (`LAN_CIDR` → tout le monde).
+- **La refermeture est automatique une heure après l'ouverture**, assurée par une
+  tâche cron installée par `make cron-install` (donc elle survit à la fin de la
+  session SSH et à un redémarrage). Elle tombe dans les 5 minutes suivant
+  l'échéance, pas à la seconde.
+- Tant que c'est ouvert, **le dashboard affiche un bandeau rouge** rappelant
+  l'heure de refermeture — c'est aussi pourquoi la commande régénère le dashboard.
+- Ces services n'ont pas d'authentification forte : à n'ouvrir que le temps
+  nécessaire.
 
 #### Supprimer un torrent + sa place dans la bibliothèque (`clearr`)
 

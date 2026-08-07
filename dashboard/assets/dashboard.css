@@ -38,6 +38,18 @@ h1 { font-size: 1.4rem; margin: 0 0 1.5rem; }
 .switch input:checked + .switch-slider { background: var(--status-good); }
 .switch input:checked + .switch-slider::before { transform: translateX(14px); }
 .updated { font-size: .85rem; opacity: .6; margin: 2.5rem auto 0; max-width: 960px; text-align: center; }
+/* Bandeau « restriction LAN désactivée » (make switch-lan-only-middleware).
+   Pleine opacité et couleur de statut critique, contrairement à .updated : il
+   signale un état volontairement temporaire qu'on ne doit pas rater en
+   survolant la page. Fond translucide plutôt qu'un hex par thème — la même
+   règle tient en clair comme en sombre. */
+.lan-open-banner {
+  max-width: 960px; margin: 0 auto 2rem; padding: .7rem .9rem;
+  border: 1px solid var(--status-critical); border-radius: 8px;
+  background: color-mix(in srgb, var(--status-critical) 10%, transparent);
+  color: var(--status-critical); font-size: .85rem; line-height: 1.45;
+}
+.lan-open-banner code { font-size: .95em; }
 section { max-width: 960px; margin: 0 auto 2.5rem; }
 section h2 {
   font-size: .8rem; text-transform: uppercase; letter-spacing: .08em;

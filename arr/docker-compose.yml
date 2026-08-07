@@ -41,10 +41,12 @@ services:
       - "traefik.http.routers.prowlarr.rule=Host(`prowlarr.${DOMAIN}`)"
       - "traefik.http.routers.prowlarr.entrypoints=websecure"
       - "traefik.http.routers.prowlarr.tls.certresolver=letsencrypt"
-      # hsts/security-headers définis une seule fois dans
-      # traefik/docker-compose.yml, voir CLAUDE.md
-      - "traefik.http.routers.prowlarr.middlewares=arr-lan-only,security-headers@docker,hsts@docker"
-      - "traefik.http.middlewares.arr-lan-only.ipallowlist.sourcerange=${LAN_CIDR}"
+      # LAN-only : arr-lan-only est défini dans traefik/dynamic/lan-only.yml
+      # (provider `file`), pas ici — un middleware déclaré par label ne peut
+      # changer qu'en recréant le conteneur, ce qui interdit de l'ouvrir puis
+      # de le refermer (`make switch-lan-only-middleware`). hsts/security-headers
+      # définis une seule fois dans traefik/docker-compose.yml, voir CLAUDE.md
+      - "traefik.http.routers.prowlarr.middlewares=arr-lan-only@file,security-headers@docker,hsts@docker"
       - "traefik.http.services.prowlarr.loadbalancer.server.port=9696"
       - "traefik.docker.network=traefik-public"
     logging:
@@ -100,10 +102,12 @@ services:
       - "traefik.http.routers.sonarr.rule=Host(`sonarr.${DOMAIN}`)"
       - "traefik.http.routers.sonarr.entrypoints=websecure"
       - "traefik.http.routers.sonarr.tls.certresolver=letsencrypt"
-      # hsts/security-headers définis une seule fois dans
-      # traefik/docker-compose.yml, voir CLAUDE.md
-      - "traefik.http.routers.sonarr.middlewares=arr-lan-only,security-headers@docker,hsts@docker"
-      - "traefik.http.middlewares.arr-lan-only.ipallowlist.sourcerange=${LAN_CIDR}"
+      # LAN-only : arr-lan-only est défini dans traefik/dynamic/lan-only.yml
+      # (provider `file`), pas ici — un middleware déclaré par label ne peut
+      # changer qu'en recréant le conteneur, ce qui interdit de l'ouvrir puis
+      # de le refermer (`make switch-lan-only-middleware`). hsts/security-headers
+      # définis une seule fois dans traefik/docker-compose.yml, voir CLAUDE.md
+      - "traefik.http.routers.sonarr.middlewares=arr-lan-only@file,security-headers@docker,hsts@docker"
       - "traefik.http.services.sonarr.loadbalancer.server.port=8989"
       - "traefik.docker.network=traefik-public"
     logging:
@@ -149,10 +153,12 @@ services:
       - "traefik.http.routers.radarr.rule=Host(`radarr.${DOMAIN}`)"
       - "traefik.http.routers.radarr.entrypoints=websecure"
       - "traefik.http.routers.radarr.tls.certresolver=letsencrypt"
-      # hsts/security-headers définis une seule fois dans
-      # traefik/docker-compose.yml, voir CLAUDE.md
-      - "traefik.http.routers.radarr.middlewares=arr-lan-only,security-headers@docker,hsts@docker"
-      - "traefik.http.middlewares.arr-lan-only.ipallowlist.sourcerange=${LAN_CIDR}"
+      # LAN-only : arr-lan-only est défini dans traefik/dynamic/lan-only.yml
+      # (provider `file`), pas ici — un middleware déclaré par label ne peut
+      # changer qu'en recréant le conteneur, ce qui interdit de l'ouvrir puis
+      # de le refermer (`make switch-lan-only-middleware`). hsts/security-headers
+      # définis une seule fois dans traefik/docker-compose.yml, voir CLAUDE.md
+      - "traefik.http.routers.radarr.middlewares=arr-lan-only@file,security-headers@docker,hsts@docker"
       - "traefik.http.services.radarr.loadbalancer.server.port=7878"
       - "traefik.docker.network=traefik-public"
     logging:
@@ -207,10 +213,12 @@ services:
       - "traefik.http.routers.clearr.rule=Host(`clearr.${DOMAIN}`)"
       - "traefik.http.routers.clearr.entrypoints=websecure"
       - "traefik.http.routers.clearr.tls.certresolver=letsencrypt"
-      # hsts/security-headers définis une seule fois dans
-      # traefik/docker-compose.yml, voir CLAUDE.md
-      - "traefik.http.routers.clearr.middlewares=arr-lan-only,security-headers@docker,hsts@docker"
-      - "traefik.http.middlewares.arr-lan-only.ipallowlist.sourcerange=${LAN_CIDR}"
+      # LAN-only : arr-lan-only est défini dans traefik/dynamic/lan-only.yml
+      # (provider `file`), pas ici — un middleware déclaré par label ne peut
+      # changer qu'en recréant le conteneur, ce qui interdit de l'ouvrir puis
+      # de le refermer (`make switch-lan-only-middleware`). hsts/security-headers
+      # définis une seule fois dans traefik/docker-compose.yml, voir CLAUDE.md
+      - "traefik.http.routers.clearr.middlewares=arr-lan-only@file,security-headers@docker,hsts@docker"
       - "traefik.http.services.clearr.loadbalancer.server.port=8000"
       - "traefik.docker.network=traefik-public"
     logging:

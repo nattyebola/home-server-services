@@ -1,0 +1,5 @@
+Ce dossier est monté dans le conteneur traefik (provider `file`, voir
+../traefik.yml). Il doit exister dans le checkout : si Docker devait le créer
+lui-même au premier `make up STACK=traefik`, il le ferait en root sur l'hôte.
+Son contenu (lan-only.yml) est généré par scripts/lan-only-middleware.sh et
+gitignoré — il porte LAN_CIDR, valeur propre au déploiement.

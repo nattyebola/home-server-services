@@ -26,6 +26,18 @@ providers:
     endpoint: "tcp://socket-proxy:2375"
     exposedByDefault: false
     network: traefik-public
+  # Middlewares that must be switchable WITHOUT recreating a container: a
+  # middleware declared through docker labels can only change by recreating the
+  # container carrying it, which rules out flipping it on and off. Here that is
+  # the LAN-only ipAllowList of the arr/transmission routers — see
+  # scripts/lan-only-middleware.sh and `make switch-lan-only-middleware`.
+  # `watch: true` reloads the file in place, no container restart at all.
+  # A directory, not a single file: a bind-mounted *file* keeps the inode it had
+  # at container start, so replacing it on the host would go unnoticed inside the
+  # container (see CLAUDE.md).
+  file:
+    directory: /dynamic
+    watch: true
 
 certificatesResolvers:
   letsencrypt:
