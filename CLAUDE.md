@@ -643,6 +643,32 @@ explicitement :
   2026-08-06 : 3 torrents seedaient sans limite propre, dont un à 13,25 de
   ratio. C'est exactement le motif de la connexion Jellyfin — un réglage qui ne
   vit que dans la base Sonarr n'est ni reproductible ni rattrapable.
+  **La valeur est posée sur l'indexeur PROWLARR** (`torrentBaseSettings.
+  seedRatio`, ajouté le 2026-08-07), pas seulement sur les indexeurs
+  synchronisés côté arr : l'hypothèse « probablement une resynchronisation » du
+  2026-08-06 est **confirmée et c'était bien la cause**. Les deux applications
+  Prowlarr sont en `syncLevel: fullSync` et sa tâche `ApplicationIndexerSync`
+  tourne **toutes les 6 h** (360 min) — elle réécrit alors l'indexeur de chaque
+  arr depuis la définition de Prowlarr, ce qui efface tout `seedCriteria` que
+  l'arr portait. Chronométré le 2026-08-07 dans les logs Sonarr : écriture du
+  script à 12:17:14 (`PUT /api/v3/indexer/4?forceSave=true`), remise à `None`
+  par Prowlarr à 12:20:41 (`PUT /api/v3/indexer/4`). Une valeur posée seulement
+  côté arr ne pouvait donc pas tenir plus de 6 h — la dérive de 2026-08-06
+  n'était pas un accident mais le comportement normal.
+  **Corrige au passage une affirmation fausse de ce fichier** (« Prowlarr n'a
+  aucun champ ratio/seed sur son propre objet indexeur », entrée du 2026-07-28
+  plus bas) : `/api/v1/indexer/<id>` expose bien
+  `torrentBaseSettings.seedRatio`, `seedTime`, `packSeedTime` et
+  `appMinimumSeeders`. C'est là qu'un réglage de seed doit vivre, puisque
+  Prowlarr fait autorité.
+  La passe côté arr est **conservée** comme filet : effet immédiat sans attendre
+  un sync, et seul recours si `syncLevel` passait un jour à `addOnly`/`disabled`
+  (Prowlarr ne pousserait alors plus rien). Vérifié le 2026-08-07 : après avoir
+  posé la valeur chez Prowlarr, un `ApplicationIndexerSync` déclenché à la main
+  laisse `1.5` en place sur Sonarr **et** Radarr (au lieu de le remettre à
+  `None`), 2e exécution du script idempotente, et seul Nyaa.si est touché —
+  C411/YggReborn sont `private` et TR4KER `semiPrivate`, tous trois laissés sans
+  limite, conforme à la décision.
   `forceSave=true` sur le PUT : Sonarr/Radarr testent la connexion à l'indexeur
   au moment de l'écriture, et ces trackers répondent régulièrement 520/530 —
   sans ça une panne passagère ferait échouer un réalignement purement local.
@@ -1089,11 +1115,16 @@ explicitement :
   conservé dans un fichier tourné. Toujours ajouter les deux ensemble sur
   tout nouveau service, jamais `max-size` seul.
 - **Ratio-limite 2 sur les torrents Nyaa.si via `seedCriteria.seedRatio`
-  côté Sonarr, pas un script maison** (demandé le 2026-07-28) — Prowlarr n'a
+  côté Sonarr, pas un script maison** (demandé le 2026-07-28) — ~~Prowlarr n'a
   aucun champ ratio/seed sur son propre objet indexeur (vérifié via l'API,
-  `/api/v1/indexer/<id>`), seul Sonarr/Radarr en expose un (`seedCriteria.
-  seedRatio`/`seedTime`, poussé au client de téléchargement au moment du
-  grab). Réglé à `2` sur l'indexeur synchronisé `Nyaa.si (Prowlarr)` côté
+  `/api/v1/indexer/<id>`)~~ **FAUX, démenti le 2026-08-07** : Prowlarr expose
+  `torrentBaseSettings.seedRatio`/`seedTime`/`packSeedTime`/`appMinimumSeeders`
+  sur son propre indexeur, et c'est là que le réglage doit vivre (voir l'entrée
+  `PUBLIC_INDEXER_SEED_RATIO` plus haut — le poser uniquement côté arr le fait
+  effacer par le `fullSync` de Prowlarr toutes les 6 h, ce qui explique la
+  disparition constatée le 2026-08-06). Sonarr/Radarr en exposent un aussi
+  (`seedCriteria.seedRatio`/`seedTime`, poussé au client de téléchargement au
+  moment du grab), mais leur valeur n'est pas celle qui fait autorité. Réglé à `2` sur l'indexeur synchronisé `Nyaa.si (Prowlarr)` côté
   Sonarr (`/api/v3/indexer/4`, via l'API — pas l'UI, pas dans un fichier
   versionné, comme les autres réglages arr faits par API). Un premier
   script (`scripts/apply-nyaa-ratio-limit.py`, cron 5 min) avait été écrit
@@ -1230,6 +1261,15 @@ explicitement :
   horaires séparés) : la fenêtre où ces réglages sont faux se limite à la
   durée réelle du sync (quelques secondes, mesuré), pas à un délai de
   sécurité estimé.
+  **Ce `&&` ne refermait en fait rien du tout** (démenti le 2026-08-07, voir le
+  piège « écritures Servarr asynchrones » plus bas) : recyclarr écrit les
+  tailles de palier avec un `PUT /api/v3/qualitydefinition/update` qui répond
+  **202 Accepted**, donc rend la main avant que l'arr n'ait appliqué la valeur.
+  Le script lisait 200 ms plus tard des valeurs encore correctes, sortait « déjà
+  à jour, rien à faire », et la dérive s'installait pour 24 h. Enchaîner plus
+  serré rendait même la course *plus* facile à perdre. Corrigé côté script
+  (`settle()`, relecture jusqu'à 2 passes propres consécutives), pas côté cron —
+  la ligne cron reste inchangée.
 - **Carte dashboard "Tâches planifiées"** (ajoutée le 2026-07-30, remplace
   l'ancienne carte solo "Dernière sauvegarde") : liste chaque tâche de
   `scripts/crontab` avec un point coloré — vert si elle a tourné avec
@@ -1380,6 +1420,40 @@ explicitement :
   `require-running.sh` ci-dessus) — pas concernées par ce placeholder.
 
 ## Pièges à ne pas répéter
+
+- **Les écritures de configuration Servarr peuvent être ASYNCHRONES : un
+  `200 OK` n'est pas une garantie, un `202 Accepted` en est l'aveu** — repéré le
+  2026-08-07 en cherchant pourquoi les tailles de palier de qualité étaient
+  dérivées en pleine journée alors que le cron nocturne les corrige. `PUT
+  /api/v3/qualitydefinition/update` (l'endpoint qu'utilise recyclarr) répond
+  **202 Accepted** : l'arr met la mise à jour en file et l'applique *après* avoir
+  répondu. Conséquence mesurée en rejouant la chaîne cron à la main :
+  ```
+  12:26:17.2  recyclarr : PUT /api/v3/qualitydefinition/update -> 202 (5 ms)
+  12:26:17.4  lecture   : encore les BONNES valeurs (100/85)
+  12:26:17.9  script    : « déjà à jour, rien à faire »
+  12:27:10    lecture   : valeurs du guide en place (None/None)
+  ```
+  Un script « lire → comparer → écrire » enchaîné juste derrière (`&&`) ne voit
+  donc rien à corriger et laisse la dérive s'installer jusqu'au prochain
+  passage, qui reperd la même course. Le piège est vicieux parce que le script
+  se déclare explicitement satisfait — c'est un faux négatif silencieux, pas une
+  erreur.
+  Fix retenu dans `scripts/apply-arr-overrides.py` : `settle()`, qui rejoue une
+  étape jusqu'à **2 passes consécutives sans rien à corriger** (`SETTLE_*`),
+  bornées à 6 tentatives × 5 s. Appliqué aux seules étapes que recyclarr fait
+  dériver (tailles Sonarr, tailles + `language` Radarr). Une passe qui corrige
+  remet le compteur à zéro, donc une écriture en deux temps ne conclut pas sur la
+  première accalmie. Vérifié le 2026-08-07 : la chaîne complète
+  (`require-running.sh && make recyclarr-sync && apply-arr-overrides.py`) dure
+  24 s et rattrape les 2 tailles Sonarr + 6 Radarr que la version précédente
+  laissait passer ; état encore correct plusieurs minutes après.
+  **Ne pas « corriger » ça par un `sleep` dans `scripts/crontab`** : la latence
+  de la file n'est pas connue (observée entre 0,5 s et 53 s), et un délai figé
+  serait soit trop court, soit du temps perdu chaque nuit. Se méfier de la même
+  classe de bug pour toute future comparaison avant/après sur un endpoint
+  Servarr en 202 — et plus généralement : un test manuel réussi ne prouve rien
+  ici, exactement comme pour le `%` non échappé du crontab plus bas.
 
 - **`make cron-install` ne doit jamais remplacer le crontab entier** — il
   pipait `scripts/crontab` directement dans `crontab -`, qui écrase toute la

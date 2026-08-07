@@ -35,6 +35,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ANIME_CONFIG = os.path.join(REPO_ROOT, "arr", "profiles", "sonarr-anime.json")
@@ -47,6 +48,34 @@ PROWLARR_CONTAINER = "arr-prowlarr-1"
 PROWLARR_URL = "http://localhost:9696/api/v1"
 
 RADARR_PROFILE_NAME = "[SQP] SQP-1 WEB (2160p)"
+
+# --- relecture : les écritures de recyclarr atterrissent APRÈS sa sortie ------
+#
+# `PUT /api/v3/qualitydefinition/update` répond **202 Accepted** : Sonarr/Radarr
+# mettent la mise à jour en file et l'appliquent après avoir répondu. recyclarr a
+# donc déjà rendu la main quand les valeurs du guide atterrissent — et ce script,
+# enchaîné juste derrière par `&&` (scripts/crontab), lisait des valeurs encore
+# correctes, concluait « déjà à jour, rien à faire », et laissait la dérive
+# s'installer pour 24 h, jusqu'au sync suivant qui reperdait la même course.
+#
+# Mesuré le 2026-08-07 en rejouant la chaîne cron à la main : PUT de recyclarr à
+# 12:26:17.2 (202 Accepted, 5 ms), lecture du script à 12:26:17.4 encore aux
+# bonnes valeurs, « déjà à jour » à 12:26:17.9 — et valeurs du guide bien en
+# place à 12:27:10. Même comportement côté Radarr (202 à 12:26:17.0).
+#
+# C'est ce qui rendait le correctif du 2026-07-30 (enchaîner recyclarr et ce
+# script par `&&` au lieu de deux horaires séparés) inopérant sur ces champs : la
+# fenêtre n'est pas un problème d'ordonnancement mais d'écriture asynchrone,
+# qu'aucun `&&` ne peut refermer.
+#
+# D'où une relecture des seules étapes que recyclarr fait dériver : on ne
+# s'arrête qu'après SETTLE_CLEAN_PASSES passes consécutives sans rien à
+# corriger, ce qui prouve qu'aucune écriture n'est encore en vol. Bornée, pour
+# qu'une dérive qui se rétablirait en boucle ne fasse pas tourner le cron sans
+# fin — au pire SETTLE_ATTEMPTS x SETTLE_DELAY_SECONDS d'attente.
+SETTLE_CLEAN_PASSES = 2
+SETTLE_ATTEMPTS = 6
+SETTLE_DELAY_SECONDS = 5
 
 # --- limite de ratio sur les indexeurs publics -------------------------------
 #
@@ -67,8 +96,25 @@ RADARR_PROFILE_NAME = "[SQP] SQP-1 WEB (2160p)"
 # None au 2026-08-06 (resynchronisation Prowlarr -> Sonarr), sans que rien ne le
 # signale — trois épisodes seedaient donc sans limite, dont un à 13,25 de ratio.
 # 1,5 (au lieu des 2 d'origine) : choix de l'utilisateur le 2026-08-06.
+#
+# La valeur est posée sur l'indexeur PROWLARR (torrentBaseSettings.seedRatio),
+# pas seulement sur les indexeurs synchronisés côté Sonarr/Radarr : les deux
+# applications Prowlarr sont en `syncLevel: fullSync`, et sa tâche
+# ApplicationIndexerSync (toutes les 6 h) réécrit alors l'indexeur dans chaque
+# arr en repartant de SA définition — ce qui efface tout `seedCriteria` que
+# l'arr portait. Mesuré le 2026-08-07 sur les logs Sonarr : écriture du script à
+# 12:17:14 (`PUT /api/v3/indexer/4?forceSave=true`), remise à None par Prowlarr
+# à 12:20:41 (`PUT /api/v3/indexer/4`, déclenché par un ApplicationIndexerSync).
+# C'est LA cause de la disparition constatée le 2026-08-06 et attribuée alors à
+# une hypothèse ("probablement une resynchronisation") : elle est confirmée, et
+# poser la valeur uniquement côté arr ne pouvait pas tenir plus de 6 h.
+# Corollaire : Prowlarr fait autorité, donc c'est chez lui que le réglage doit
+# vivre — la passe côté arr est conservée dessous comme filet (effet immédiat
+# sans attendre un sync, et seul recours si `syncLevel` passait un jour à
+# addOnly/disabled, cas où Prowlarr ne pousserait plus rien).
 PUBLIC_INDEXER_SEED_RATIO = 1.5
 PROWLARR_PUBLIC_PRIVACY = "public"
+PROWLARR_SEED_RATIO_FIELD = "torrentBaseSettings.seedRatio"
 
 # --- connexion "Emby/Jellyfin" de Sonarr/Radarr (refresh ciblé de Jellyfin) ---
 #
@@ -215,6 +261,32 @@ def api_write(container, base_url, api_key, method, path, obj):
 
 def api_put(container, base_url, api_key, path, obj):
     api_write(container, base_url, api_key, "PUT", path, obj)
+
+
+def settle(step):
+    """Rejoue `step` jusqu'à SETTLE_CLEAN_PASSES passes consécutives sans rien à
+    corriger — la seule façon de distinguer « rien ne dérive » d'une lecture
+    faite trop tôt, avant qu'une écriture asynchrone de recyclarr n'atterrisse
+    (voir le commentaire de SETTLE_CLEAN_PASSES).
+
+    Une passe qui corrige quelque chose remet le compteur à zéro : si recyclarr
+    écrit en deux temps, on repart pour un tour au lieu de conclure sur la
+    première accalmie. Les corrections de toutes les passes sont cumulées, donc
+    une valeur rattrapée au 3e tour apparaît bien dans le rapport."""
+    changed = []
+    clean = 0
+    for attempt in range(SETTLE_ATTEMPTS):
+        if attempt:
+            time.sleep(SETTLE_DELAY_SECONDS)
+        applied = step()
+        if applied:
+            changed += applied
+            clean = 0
+        else:
+            clean += 1
+            if clean >= SETTLE_CLEAN_PASSES:
+                break
+    return changed
 
 
 def apply_quality_sizes(label, container, base_url, api_key, overrides):
@@ -373,6 +445,31 @@ def prowlarr_public_ids(prowlarr_api_key):
             "sont publics, limite de ratio non gérée (voir arr/.env.example)")
     indexers = api_get(PROWLARR_CONTAINER, PROWLARR_URL, prowlarr_api_key, "/indexer")
     return {i["id"] for i in indexers if i.get("privacy") == PROWLARR_PUBLIC_PRIVACY}
+
+
+def apply_prowlarr_seed_ratio(prowlarr_api_key, public_ids):
+    """Pose PUBLIC_INDEXER_SEED_RATIO sur chaque indexeur public de Prowlarr
+    lui-même. C'est l'écriture qui TIENT : en `syncLevel: fullSync`, Prowlarr
+    réécrit périodiquement l'indexeur de chaque arr depuis sa propre définition,
+    donc une valeur posée seulement côté arr est effacée au sync suivant (voir le
+    commentaire de PUBLIC_INDEXER_SEED_RATIO).
+
+    `forceSave=true` pour la même raison que côté arr : Prowlarr teste l'indexeur
+    au moment du PUT et ces trackers répondent régulièrement 520/530."""
+    changed = []
+    for indexer in api_get(PROWLARR_CONTAINER, PROWLARR_URL, prowlarr_api_key, "/indexer"):
+        if indexer["id"] not in public_ids:
+            continue
+        current = next((f.get("value") for f in indexer["fields"]
+                        if f["name"] == PROWLARR_SEED_RATIO_FIELD), None)
+        if current == PUBLIC_INDEXER_SEED_RATIO:
+            continue
+        set_field(indexer, PROWLARR_SEED_RATIO_FIELD, PUBLIC_INDEXER_SEED_RATIO)
+        api_put(PROWLARR_CONTAINER, PROWLARR_URL, prowlarr_api_key,
+                f"/indexer/{indexer['id']}?forceSave=true", indexer)
+        changed.append(f"Prowlarr indexeur public {indexer['name']!r}: "
+                       f"seedRatio {current} -> {PUBLIC_INDEXER_SEED_RATIO}")
+    return changed
 
 
 def indexer_prowlarr_id(indexer):
@@ -569,9 +666,12 @@ def main():
     except Exception as e:
         errors.append(f"Prowlarr: {e}")
 
+    # Sous `settle` : c'est l'étape que recyclarr fait dériver, et son écriture
+    # est asynchrone (voir SETTLE_CLEAN_PASSES).
     try:
-        changed += apply_quality_sizes("Sonarr", SONARR_CONTAINER, SONARR_URL,
-                                        sonarr_api_key, SONARR_SIZE_OVERRIDES)
+        changed += settle(
+            lambda: apply_quality_sizes("Sonarr", SONARR_CONTAINER, SONARR_URL,
+                                        sonarr_api_key, SONARR_SIZE_OVERRIDES))
     except Exception as e:
         errors.append(f"Sonarr: {e}")
     # Bloc à part : une erreur sur la config anime ne doit pas empêcher les
@@ -597,10 +697,15 @@ def main():
                                        sonarr_api_key, SONARR_XBMC_METADATA_FIELDS)
     except Exception as e:
         errors.append(f"Sonarr (metadata): {e}")
+    # Les deux réglages Radarr que recyclarr fait dériver, donc sous `settle`
+    # pour la même raison que les tailles Sonarr — le champ `language` vit sur le
+    # profil qualité, que recyclarr réécrit aussi.
     try:
-        changed += apply_quality_sizes("Radarr", RADARR_CONTAINER, RADARR_URL,
+        changed += settle(
+            lambda: apply_quality_sizes("Radarr", RADARR_CONTAINER, RADARR_URL,
                                         radarr_api_key, RADARR_SIZE_OVERRIDES)
-        changed += apply_radarr_language(RADARR_CONTAINER, RADARR_URL, radarr_api_key, RADARR_PROFILE_NAME)
+            + apply_radarr_language(RADARR_CONTAINER, RADARR_URL, radarr_api_key,
+                                    RADARR_PROFILE_NAME))
     except Exception as e:
         errors.append(f"Radarr: {e}")
     # Bloc à part de celui ci-dessus pour la même raison que la config anime :
@@ -622,7 +727,16 @@ def main():
     # Bloc à part, et par arr : le PUT d'un indexeur est le seul de ce script à
     # dépendre d'un service tiers joignable (le tracker lui-même, testé par
     # Sonarr/Radarr au moment de l'écriture même avec forceSave).
+    #
+    # Prowlarr AVANT les deux arr, pas après : c'est lui qui fait autorité, et
+    # sauver un indexeur chez lui déclenche déjà un sync vers les applications —
+    # la passe côté arr qui suit n'a alors plus rien à corriger, ce qui est le
+    # signe que le réglage tient de lui-même.
     if public_ids:
+        try:
+            changed += apply_prowlarr_seed_ratio(prowlarr_api_key, public_ids)
+        except Exception as e:
+            errors.append(f"Prowlarr (indexeurs publics): {e}")
         for label, container, url, key in (("Sonarr", SONARR_CONTAINER, SONARR_URL, sonarr_api_key),
                                            ("Radarr", RADARR_CONTAINER, RADARR_URL, radarr_api_key)):
             try:
