@@ -1828,6 +1828,41 @@ explicitement :
     atteignable par un fichier importé sur ce profil — filet pour tout futur
     suffixe exotique que le lookahead ne couvrirait pas.
 
+  **Ce lookahead seul ne suffisait pas non plus : les parenthèses imbriquées le
+  contournent** (trouvé le 2026-08-07 en basculant `THE GHOST IN THE SHELL`
+  S01E05 sur une release AV1). `(?![^()]*\))` demande « pas de `)` devant moi
+  sans `(` avant elle » — or Tsundere-Raws met des titres alternatifs
+  parenthésés DANS son suffixe : `(VF, FRENCH, SUBFRENCH, VOSTFR, Koukaku
+  Kidoutai (2026), Koukaku Kidoutai (TV))`. Le `(` de `(2026)` arrive avant la
+  première `)`, `[^()]*\)` échoue, le lookahead négatif réussit, et le terme
+  matche alors qu'il est bien dans le suffixe. Constaté en direct : grab annoncé
+  à **90**, fichier importé réévalué à **40** — les 50 d'écart étaient
+  exactement `VOSTFR (hors suffixe)`. Toute release dont le suffixe porte un
+  titre alternatif entre parenthèses passait donc à travers le correctif du
+  2026-08-02.
+  Fix : **ajout d'un lookbehind de longueur variable `(?<!\([^)]*)`** (« pas
+  précédé d'une `(` encore ouverte ») aux 3 regex de `arr/profiles/
+  sonarr-anime.json` — `FRENCH`, `VOSTFR`, `SUBFRENCH`. Les deux assertions se
+  complètent : le lookbehind attrape le terme placé AVANT le groupe imbriqué (le
+  cas réel), le lookahead celui placé APRÈS. .NET accepte un lookbehind de
+  longueur variable (Python `re` non — utiliser le module `regex` pour tout test
+  hors Sonarr).
+  Validé sur **688 titres réels** (483 `sourceTitle` de `/api/v3/history` + 371
+  noms de fichiers/`sceneName` de `/api/v3/episodefile`, 272 avec parenthèses,
+  80 à parenthèses multiples), vérité terrain calculée par **comptage réel de
+  profondeur de parenthèses** et non par une autre regex : **0 faux positif, 0
+  faux négatif** après, contre 6 faux positifs avant par terme ; 195 vrais
+  VOSTFR, 12 SUBFRENCH et 29 FRENCH tous conservés. Croisé .NET (`/api/v3/parse`
+  sur les 688 titres, via 3 CF jetables `ZZTEST … nested` supprimés après) et
+  Python `regex` : **0 désaccord**. Résultat final : le titre suffixé et le nom
+  de fichier scorent tous les deux **40** sur `Anime (Fansub) VOSTFR` —
+  l'asymétrie grab/fichier, moteur de la boucle, est refermée.
+  Deux limites connues, laissées en l'état : un terme entouré de groupes fermés
+  des DEUX côtés à l'intérieur des mêmes parenthèses
+  (`(Alt (2026) VOSTFR (TV) fin)`) passe encore — aucun schéma de nommage réel
+  ne fait ça ; et un titre à parenthèses non appariées ne matche pas, ce qui
+  était déjà vrai avant ce fix.
+
   Piège structurant rencontré en l'appliquant : **le CF `VOSTFR` est géré par
   recyclarr** (`trash_id 07a32f77690263bb9fda1842db7e273f`, référencé deux
   fois dans `recyclarr.yml` — `custom_formats` pour son score sur

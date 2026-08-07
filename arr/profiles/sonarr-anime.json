@@ -8,7 +8,7 @@
           "implementation": "ReleaseTitleSpecification",
           "negate": false,
           "required": true,
-          "value": "\\b(TRUEFRENCH|FRENCH|VFF|VFQ)\\b(?![^()]*\\))"
+          "value": "\\b(TRUEFRENCH|FRENCH|VFF|VFQ)\\b(?![^()]*\\))(?<!\\([^)]*)"
         }
       ]
     },
@@ -20,14 +20,14 @@
           "implementation": "ReleaseTitleSpecification",
           "negate": false,
           "required": false,
-          "value": "\\b(VOST.*?FR(E|A)?)\\b(?![^()]*\\))"
+          "value": "\\b(VOST.*?FR(E|A)?)\\b(?![^()]*\\))(?<!\\([^)]*)"
         },
         {
           "name": "SUBFRENCH",
           "implementation": "ReleaseTitleSpecification",
           "negate": false,
           "required": false,
-          "value": "\\b(SUBFR(A|ENCH)?)\\b(?![^()]*\\))"
+          "value": "\\b(SUBFR(A|ENCH)?)\\b(?![^()]*\\))(?<!\\([^)]*)"
         }
       ]
     }
