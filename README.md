@@ -75,6 +75,27 @@ Détail de chaque service, schémas et rationale des choix : voir
   si vous voulez l'entrée de menu contextuel « Supprimer avec clearr »
   (étape 22).
 
+### Vue d'ensemble
+
+Vingt-deux étapes, en quatre temps. L'ordre n'est pas cosmétique : chaque
+phase produit ce dont la suivante a besoin.
+
+| Phase | Étapes | Ce qu'on fait | Durée |
+|---|---|---|---|
+| **Préparation** | 1 → 7 | Cloner, remplir les `.env`, créer le réseau, poser le DNS. Rien ne tourne encore. | ~30 min, dont l'attente de propagation DNS |
+| **Démarrage** | 8 → 13 | Lancer les six stacks dans l'ordre de leurs dépendances. Traefik d'abord (il porte les certificats), `vpn` avant `arr` (qui rejoint son réseau), `jellyfin` et `arr` avant `seerr`. | ~15 min |
+| **Provisionnement** | 14 → 18 | Collecter les clés API générées au premier démarrage, puis créer par script tout ce qui se faisait à la main dans les UI. | ~15 min |
+| **Finalisation** | 19 → 22 | Dashboard, vérification, sauvegardes et crons, addon Kodi. | ~10 min |
+
+Les étapes **5** (VPN), **6** (montages personnels) et **22** (Kodi) sont
+facultatives selon ce que vous déployez.
+
+Deux points où l'ordre est contraint et où s'en écarter échoue franchement
+plutôt que silencieusement : `make api-keys` (14) doit précéder les profils
+qualité (16), qui référencent les clés ; et la configuration Seerr, faite par
+`make provision` (17), doit les suivre, car elle désigne ces profils **par
+nom**.
+
 ### Étapes
 
 1. **Cloner le repo**
@@ -352,7 +373,8 @@ et leurs arguments directement depuis le `Makefile`.
 | `make update STACK=<nom>` | pull + rebuild + recrée (+ maintenance `occ` si `nextcloud`) |
 | `make update-all` | `update` sur nextcloud, vpn, jellyfin, arr, seerr (continue même si un stack échoue, résumé + prune images + refresh dashboard à la fin) |
 | `make backup` | sauvegarde restic (aussi via cron) |
-| `make restore SNAPSHOT=<id\|latest>` | restauration guidée d'un snapshot |
+| `make restore SNAPSHOT=<id\|latest>` | restaure un snapshot dans un dossier à part et **affiche** les étapes à faire à la main — n'écrit jamais sur le live |
+| `make test` | tests des chemins destructifs de `clearr` (stdlib, aucune dépendance à installer, ne touche ni la bibliothèque ni les API arr) |
 | `make cron-install` | (ré)installe `scripts/crontab` comme crontab de l'hôte |
 | `make api-keys` | collecte les clés API générées au 1er démarrage vers `arr/.env` (voir étape 14) |
 | `make provision` | crée la config d'installation restante (bibliothèques Jellyfin, objets arr, Seerr) — additif et relançable, voir étape 17 |
