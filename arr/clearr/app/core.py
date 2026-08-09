@@ -440,32 +440,67 @@ def plan_arr_actions(lib_matches):
     return radarr_plan + sonarr_plan
 
 
+def arr_write(base_url, api_key, method, path, params=None, json_body=None, what=""):
+    """Écriture arr dont on VÉRIFIE le résultat, contrairement à arr_api() qui
+    est best-effort et rend None sur tout échec sans que l'appelant s'en
+    aperçoive. Renvoie True/False.
+
+    Repéré le 2026-08-09 : les écritures des chemins de suppression jetaient
+    leur retour puis loguaient un succès inconditionnel. Une série pouvait donc
+    être effacée du disque, affichée « supprimée » en vert et journalisée comme
+    retirée, tout en restant suivie par Sonarr — donc re-téléchargée
+    intégralement à la recherche suivante, ce que le retrait avec exclusion
+    existe précisément pour empêcher. arr_api reste best-effort pour les
+    LECTURES, où dégrader est le bon comportement ; une écriture, non."""
+    if arr_api(base_url, api_key, method, path, params=params, json_body=json_body) is None:
+        logger.error("écriture arr ÉCHOUÉE (%s %s)%s — état arr inchangé",
+                     method, path, f" : {what}" if what else "")
+        return False
+    return True
+
+
 def execute_arr_plan(plan):
+    """Renvoie le nombre d'actions arr qui ont échoué — l'appelant doit le dire
+    à l'utilisateur plutôt que d'annoncer une suppression complète."""
+    arr_failed = 0
     for action in plan:
         try:
             if action["kind"] == "radarr_delete":
-                arr_api(RADARR_URL, RADARR_API_KEY, "DELETE",
-                        f"/api/v3/movie/{action['movie_id']}",
-                        params={"deleteFiles": "false", "addImportExclusion": "true"})
-                logger.info("Radarr: film retiré id=%s (%s)", action["movie_id"], action["title"])
+                if arr_write(RADARR_URL, RADARR_API_KEY, "DELETE",
+                             f"/api/v3/movie/{action['movie_id']}",
+                             params={"deleteFiles": "false", "addImportExclusion": "true"},
+                             what=f"retrait du film {action['title']!r}"):
+                    logger.info("Radarr: film retiré id=%s (%s)", action["movie_id"], action["title"])
+                else:
+                    arr_failed += 1
             elif action["kind"] == "sonarr_season":
                 series = arr_api(SONARR_URL, SONARR_API_KEY, "GET",
                                   f"/api/v3/series/{action['series_id']}")
                 if not series:
                     logger.warning("sonarr_season: série id=%s introuvable au moment d'exécuter", action["series_id"])
+                    arr_failed += 1
                     continue
                 for season in series["seasons"]:
                     if season["seasonNumber"] == action["season_number"]:
                         season["monitored"] = False
-                arr_api(SONARR_URL, SONARR_API_KEY, "PUT",
-                        f"/api/v3/series/{action['series_id']}", json_body=series)
-                logger.info("Sonarr: série id=%s saison %s désactivée", action["series_id"], action["season_number"])
+                if arr_write(SONARR_URL, SONARR_API_KEY, "PUT",
+                             f"/api/v3/series/{action['series_id']}", json_body=series,
+                             what=f"désactivation de la saison {action['season_number']}"):
+                    logger.info("Sonarr: série id=%s saison %s désactivée",
+                                action["series_id"], action["season_number"])
+                else:
+                    arr_failed += 1
             elif action["kind"] == "sonarr_episodes":
-                arr_api(SONARR_URL, SONARR_API_KEY, "PUT", "/api/v3/episode/monitor",
-                        json_body={"episodeIds": action["episode_ids"], "monitored": False})
-                logger.info("Sonarr: épisodes désactivés ids=%s", action["episode_ids"])
+                if arr_write(SONARR_URL, SONARR_API_KEY, "PUT", "/api/v3/episode/monitor",
+                             json_body={"episodeIds": action["episode_ids"], "monitored": False},
+                             what=f"désactivation des épisodes {action['episode_ids']}"):
+                    logger.info("Sonarr: épisodes désactivés ids=%s", action["episode_ids"])
+                else:
+                    arr_failed += 1
         except Exception as e:
             logger.warning("échec d'exécution de l'action arr %r : %s", action.get("description"), e)
+            arr_failed += 1
+    return arr_failed
 
 
 # --- Vues Séries/Films : suppression d'un titre entier d'un coup (torrents +
@@ -756,6 +791,7 @@ def bulk_delete_torrents(client, matched, all_torrents, linked_ids, missing_ids,
     freed = 0
     deleted = 0
     failed = 0
+    failed_entries = []
     for torrent, host_files, lib_matches in matched:
         current_ids = {t["id"] for t in all_torrents}
         if torrent["id"] not in current_ids:
@@ -766,10 +802,14 @@ def bulk_delete_torrents(client, matched, all_torrents, linked_ids, missing_ids,
         except Exception as e:
             logger.error("échec de la suppression groupée de %r (id=%s) : %s", torrent["name"], torrent["id"], e)
             failed += 1
+            # Les entrées en échec sont rendues à l'appelant : leurs fichiers
+            # sont TOUJOURS couverts par un torrent vivant, donc cleanup_orphan_
+            # files() ne doit pas les balayer (voir son paramètre `covered`).
+            failed_entries.append((torrent, host_files, lib_matches))
             continue
         freed += f
         deleted += 1
-    return all_torrents, freed, deleted, failed
+    return all_torrents, freed, deleted, failed, failed_entries
 
 
 def is_seeding(torrent):
@@ -826,10 +866,18 @@ def _arr_covered_paths():
     webapp.py rend déjà un RuntimeError en bandeau lisible."""
     series = arr_api(SONARR_URL, SONARR_API_KEY, "GET", "/api/v3/series")
     movies = arr_api(RADARR_URL, RADARR_API_KEY, "GET", "/api/v3/movie")
-    if series is None or movies is None:
-        unreachable = "Sonarr" if series is None else "Radarr"
-        raise RuntimeError(f"{unreachable} est injoignable : impossible de distinguer un fichier "
-                           "orphelin d'un fichier géré par un arr, balayage abandonné.")
+    # On teste la FORME attendue, pas seulement None : arr_api ne renvoie None
+    # que sur un échec de transport, et rend {} sur un corps de réponse vide
+    # (200 sans contenu, 204, réponse tronquée par un arr qui redémarre). {}
+    # n'étant pas None, l'ancien test laissait passer — et `for m in movies:`
+    # itère alors zéro fois SANS lever, donc couverture vide : les 241 .nfo et
+    # tout fichier dont l'arr a déjà retiré le torrent ressortaient orphelins,
+    # proposés à la suppression. Exactement la catastrophe que ce garde-fou
+    # existe pour empêcher, par le seul chemin qu'il ne couvrait pas.
+    if not isinstance(series, list) or not isinstance(movies, list):
+        bad = "Sonarr" if not isinstance(series, list) else "Radarr"
+        raise RuntimeError(f"{bad} n'a pas renvoyé de liste exploitable : impossible de distinguer "
+                           "un fichier orphelin d'un fichier géré par un arr, balayage abandonné.")
     files, dirs = set(), []
     for m in movies:
         movie_file = m.get("movieFile") or {}
@@ -843,7 +891,7 @@ def _arr_covered_paths():
         dirs.append(s["path"].rstrip("/") + "/")
         episode_files = arr_api(SONARR_URL, SONARR_API_KEY, "GET", "/api/v3/episodefile",
                                 params={"seriesId": s["id"]})
-        if episode_files is None:
+        if not isinstance(episode_files, list):  # même raison qu'au-dessus : {} n'est pas None
             raise RuntimeError(f"Sonarr n'a pas renvoyé les fichiers de {s.get('title')!r} : "
                                "balayage abandonné plutôt que de compter ses épisodes orphelins.")
         for episode_file in episode_files:
@@ -915,20 +963,34 @@ def delete_library_orphans(orphans):
     return removed, freed, failed
 
 
-def cleanup_orphan_files(target_path, root=LIBRARY_ROOT):
+def cleanup_orphan_files(target_path, root=LIBRARY_ROOT, covered=()):
     """Supprime tout fichier restant sous un dossier après le passage de
     bulk_delete_torrents — un fichier sans torrent Transmission correspondant
     (retiré par un autre moyen, ou jamais suivi) resterait sinon orphelin
     malgré la promesse "tout le titre est supprimé". `root` borne l'élagage des
     dossiers devenus vides : library/ pour une série Sonarr, completed/ pour un
-    titre hors arr (voir execute_delete_media_path)."""
+    titre hors arr (voir execute_delete_media_path).
+
+    `covered` = chemins qu'un torrent VIVANT couvre encore, à ne pas toucher.
+    Le raisonnement implicite d'avant — « après bulk_delete_torrents, ce qui
+    reste est par définition orphelin » — est faux dès qu'un torrent du lot a
+    échoué, puisque la boucle capture l'échec et poursuit : on supprimait alors
+    les données de torrents toujours présents dans Transmission, jamais
+    annoncées dans l'écran de confirmation (qui, lui, les exclut déjà via
+    orphan_files_under). Même espace de chemins que `covered` là-bas : fichiers
+    Transmission pour un titre hors arr, correspondances library/ pour une
+    série Sonarr."""
     removed = 0
     freed = 0
+    covered = set(covered)
     if not os.path.isdir(target_path):
         return removed, freed
     for walk_root, _dirs, files in os.walk(target_path):
         for name in files:
             path = os.path.join(walk_root, name)
+            if path in covered:
+                logger.info("conservé (torrent toujours présent après un échec de suppression) : %s", path)
+                continue
             try:
                 size = os.path.getsize(path)
             except OSError:
@@ -953,15 +1015,22 @@ def execute_delete_series(client, series, matched, all_torrents, cross_seed_grou
     pour un film via plan_radarr_deletion) avec exclusion de liste pour ne
     jamais la voir revenir via un import list sync."""
     host_path = series["path"]  # même mount /data_root que Sonarr, aucune traduction nécessaire
-    all_torrents, freed, deleted, failed = bulk_delete_torrents(client, matched, all_torrents, linked_ids,
-                                                                 missing_ids, cross_seed_groups)
-    orphan_removed, _orphan_freed = cleanup_orphan_files(host_path)
-    arr_api(SONARR_URL, SONARR_API_KEY, "DELETE", f"/api/v3/series/{series['id']}",
-            params={"deleteFiles": "false", "addImportListExclusion": "true"})
-    logger.info("Sonarr: série %r (id=%s) retirée complètement (+ exclusion) — %d torrent(s) supprimé(s), "
+    all_torrents, freed, deleted, failed, failed_entries = bulk_delete_torrents(
+        client, matched, all_torrents, linked_ids, missing_ids, cross_seed_groups)
+    # Espace de chemins : le dossier de la série ne contient que des hardlinks
+    # library/, donc ce sont les lib_matches des torrents en échec qu'il faut
+    # préserver (mêmes chemins que ceux qu'orphan_files_under exclut côté
+    # écran de confirmation), pas leurs fichiers Transmission.
+    still_covered = {p for _t, _hf, lib_matches in failed_entries for p, _s in lib_matches}
+    orphan_removed, _orphan_freed = cleanup_orphan_files(host_path, covered=still_covered)
+    arr_ok = arr_write(SONARR_URL, SONARR_API_KEY, "DELETE", f"/api/v3/series/{series['id']}",
+                       params={"deleteFiles": "false", "addImportListExclusion": "true"},
+                       what=f"retrait de la série {series['title']!r}")
+    logger.info("Sonarr: série %r (id=%s) — retrait arr %s, %d torrent(s) supprimé(s), "
                 "%d échec(s), %d fichier(s) orphelin(s)",
-                series["title"], series["id"], deleted, failed, orphan_removed)
-    return all_torrents, freed, deleted, failed
+                series["title"], series["id"], "OK" if arr_ok else "ÉCHOUÉ",
+                deleted, failed, orphan_removed)
+    return all_torrents, freed, deleted, failed, arr_ok
 
 
 def execute_delete_movie_no_torrent(movie):
@@ -971,10 +1040,15 @@ def execute_delete_movie_no_torrent(movie):
     s'en charge ici, contrairement au chemin normal où plan_radarr_deletion
     laisse toujours deleteFiles=false (le fichier est déjà retiré par ce
     script via lib_matches)."""
-    arr_api(RADARR_URL, RADARR_API_KEY, "DELETE", f"/api/v3/movie/{movie['id']}",
-            params={"deleteFiles": "true" if movie.get("hasFile") else "false", "addImportExclusion": "true"})
-    logger.info("Radarr: film %r (id=%s) retiré complètement (+ exclusion), sans torrent correspondant",
-                movie["title"], movie["id"])
+    arr_ok = arr_write(RADARR_URL, RADARR_API_KEY, "DELETE", f"/api/v3/movie/{movie['id']}",
+                       params={"deleteFiles": "true" if movie.get("hasFile") else "false",
+                               "addImportExclusion": "true"},
+                       what=f"retrait du film {movie['title']!r}")
+    logger.info("Radarr: film %r (id=%s) — retrait arr %s (sans torrent correspondant)",
+                movie["title"], movie["id"], "OK" if arr_ok else "ÉCHOUÉ")
+    # Ici l'échec est total : c'est Radarr qui devait supprimer le fichier
+    # (deleteFiles=true), aucun torrent ne s'en charge sur ce chemin.
+    return arr_ok
 
 
 # --- Titres hors Sonarr/Radarr, résolus par leur chemin -----------------------
@@ -1090,9 +1164,14 @@ def execute_delete_media_path(client, plan, all_torrents, cross_seed_groups, lin
     target = plan["target"]
     root = COMPLETED_ROOT if os.path.commonpath([target, COMPLETED_ROOT]) == COMPLETED_ROOT \
         else os.path.dirname(target)
-    all_torrents, freed, deleted, failed = bulk_delete_torrents(client, plan["matched"], all_torrents,
-                                                                 linked_ids, missing_ids, cross_seed_groups)
-    orphan_removed, orphan_freed = cleanup_orphan_files(target, root)
+    all_torrents, freed, deleted, failed, failed_entries = bulk_delete_torrents(
+        client, plan["matched"], all_torrents, linked_ids, missing_ids, cross_seed_groups)
+    # Espace de chemins inverse de celui d'execute_delete_series : les DONNÉES
+    # d'un titre hors arr sont sous target, donc ce sont les host_files des
+    # torrents en échec qu'il faut préserver (même critère qu'au calcul de
+    # `covered` ligne ~1065, qui alimente l'écran de confirmation).
+    still_covered = {p for _t, host_files, _lm in failed_entries for p, _s in host_files}
+    orphan_removed, orphan_freed = cleanup_orphan_files(target, root, covered=still_covered)
     if os.path.isdir(target):
         prune_empty_dirs_from(target, root)
     elif os.path.isfile(target):

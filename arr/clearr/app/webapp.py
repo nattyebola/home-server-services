@@ -60,6 +60,44 @@ async def runtime_error_handler(request: Request, exc: RuntimeError):
     return HTMLResponse(f'<div class="alert alert-danger m-3">Erreur : {exc}</div>', status_code=503)
 
 
+# Un POST de formulaire cross-origin est une « simple request » : aucun
+# préflight CORS ne l'arrête, et clearr n'a ni cookie ni session dont un
+# SameSite pourrait dépendre. Les 5 routes de suppression étaient donc
+# déclenchables depuis n'importe quelle page visitée par un navigateur DU LAN
+# (vérifié le 2026-08-09 : un POST portant `Origin: https://evil.example` était
+# accepté et exécuté). Le nom d'hôte n'est pas un secret — il est public via les
+# logs Certificate Transparency dès l'émission du certificat, comme le note déjà
+# CLAUDE.md à propos du dashboard.
+#
+# Ce contrôle ne remet PAS en cause la décision « pas de jeton
+# d'authentification sur ces routes » : le CSRF est un problème distinct de
+# l'authentification, et se referme sans en ajouter une.
+#
+# On compare à l'hôte de la requête plutôt qu'à un ${DOMAIN} attendu : ça marche
+# aussi bien derrière Traefik qu'en direct sur clearr:8000, sans dépendre d'une
+# variable d'environnement qui pourrait manquer. Origin absent = client non
+# navigateur (addon Kodi, curl) : laissé passer, il n'y a pas de navigateur à
+# piéger — c'est d'ailleurs le cas des routes /api/, déjà protégées par leur
+# exigence de Content-Type JSON (qui, elle, force un préflight).
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+@app.middleware("http")
+async def block_cross_origin_writes(request: Request, call_next):
+    if request.method not in SAFE_METHODS:
+        origin = request.headers.get("origin")
+        cross_origin = bool(origin) and urllib.parse.urlparse(origin).netloc != request.headers.get("host")
+        if cross_origin or request.headers.get("sec-fetch-site") == "cross-site":
+            core.logger.warning("POST cross-origin refusé sur %s (origin=%r, host=%r)",
+                                request.url.path, origin, request.headers.get("host"))
+            message = ("Requête refusée : elle provient d'un autre site. Ouvrez clearr directement "
+                       "pour supprimer quoi que ce soit.")
+            if request.url.path.startswith("/api/"):
+                return JSONResponse({"deleted": False, "message": message}, status_code=403)
+            return HTMLResponse(f'<div class="alert alert-danger m-3">{message}</div>', status_code=403)
+    return await call_next(request)
+
+
 def render(name, **ctx):
     return templates.env.get_template(name).render(**ctx)
 
@@ -684,8 +722,15 @@ def torrent_delete(tid: int, sort: str = Form(DEFAULT_SORT["torrents"]), reverse
 def _delete_series(series, state):
     matched = core.find_series_torrents(state["all_torrents"], state["library_index"],
                                          state["cross_seed_child_ids"], series["path"])
-    core.execute_delete_series(state["client"], series, matched, state["all_torrents"],
-                                state["cross_seed_groups"], state["linked_ids"], state["missing_ids"])
+    *_, arr_ok = core.execute_delete_series(state["client"], series, matched, state["all_torrents"],
+                                             state["cross_seed_groups"], state["linked_ids"],
+                                             state["missing_ids"])
+    if not arr_ok:
+        # Les fichiers sont partis mais Sonarr suit toujours la série : sans ce
+        # message l'utilisateur lisait « Série supprimée » en vert pendant que
+        # la série se remettait en file de téléchargement.
+        return (f"Série supprimée : {series['title']} — ATTENTION : le retrait côté Sonarr a ÉCHOUÉ, "
+                "la série est encore suivie et sera re-téléchargée. À retirer à la main dans Sonarr.")
     return f"Série supprimée : {series['title']}"
 
 
@@ -703,7 +748,11 @@ def _delete_movie(movie, state):
         return f"Film supprimé : {movie['title']} ({core.human_size(freed)} libéré(s))"
     # Jamais téléchargé, ou fichier orphelin hors suivi : c'est Radarr qui
     # supprime son propre fichier (voir core.execute_delete_movie_no_torrent).
-    core.execute_delete_movie_no_torrent(movie)
+    if not core.execute_delete_movie_no_torrent(movie):
+        # Sur ce chemin c'est Radarr qui devait supprimer le fichier : son échec
+        # signifie que RIEN n'a été supprimé, d'où une erreur et non un succès.
+        raise RuntimeError(f"Radarr n'a pas pu retirer {movie['title']!r} : aucun fichier n'a été "
+                           "supprimé. Vérifiez que Radarr répond, puis réessayez.")
     return f"Film supprimé : {movie['title']}"
 
 

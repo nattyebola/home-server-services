@@ -660,7 +660,7 @@ def main(stdscr):
                 matched = core.find_series_torrents(all_torrents, library_index, cross_seed_child_ids,
                                                      series["path"])
                 if confirm_delete_series(stdscr, series, matched):
-                    all_torrents, freed, deleted, failed = core.execute_delete_series(
+                    all_torrents, freed, deleted, failed, arr_ok = core.execute_delete_series(
                         client, series, matched, all_torrents, cross_seed_groups, linked_ids, missing_ids)
                     cross_seed_groups, cross_seed_child_ids = core.build_cross_seed_groups(all_torrents)
                     series_list = [s for s in series_list if s["id"] != series["id"]]
@@ -669,7 +669,8 @@ def main(stdscr):
                     message = f"Série supprimée : {series['title']} ({deleted} torrent(s)"
                     message += f", {failed} échec(s)" if failed else ""
                     message += ")"
-                    message_color = COLOR_DANGER if failed else COLOR_LINKED
+                    message += " — RETRAIT SONARR ÉCHOUÉ, série encore suivie" if not arr_ok else ""
+                    message_color = COLOR_DANGER if failed or not arr_ok else COLOR_LINKED
             except Exception as e:
                 core.logger.error("échec de la suppression de la série %r : %s", series["title"], e)
                 message = f"ÉCHEC (voir {core.LOG_PATH}) : {e}"
@@ -695,11 +696,16 @@ def main(stdscr):
                         message = f"Film supprimé : {movie['title']}"
                         message_color = COLOR_LINKED
                 elif confirm_delete_movie_no_torrent(stdscr, movie):
-                    core.execute_delete_movie_no_torrent(movie)
-                    movies_list = [m for m in movies_list if m["id"] != movie["id"]]
-                    session_deletions += 1
-                    message = f"Film supprimé : {movie['title']}"
-                    message_color = COLOR_LINKED
+                    # Sur ce chemin c'est Radarr qui supprime le fichier : son
+                    # échec veut dire que rien n'est parti, la ligne reste.
+                    if core.execute_delete_movie_no_torrent(movie):
+                        movies_list = [m for m in movies_list if m["id"] != movie["id"]]
+                        session_deletions += 1
+                        message = f"Film supprimé : {movie['title']}"
+                        message_color = COLOR_LINKED
+                    else:
+                        message = f"ÉCHEC Radarr : {movie['title']} n'a pas été supprimé (voir {core.LOG_PATH})"
+                        message_color = COLOR_DANGER
             except Exception as e:
                 core.logger.error("échec de la suppression du film %r : %s", movie["title"], e)
                 message = f"ÉCHEC (voir {core.LOG_PATH}) : {e}"
@@ -728,7 +734,7 @@ def main(stdscr):
             try:
                 matched = core.find_series_torrents(all_torrents, library_index, cross_seed_child_ids,
                                                      series["path"])
-                all_torrents, freed, deleted, failed = core.execute_delete_series(
+                all_torrents, freed, deleted, failed, arr_ok = core.execute_delete_series(
                     client, series, matched, all_torrents, cross_seed_groups, linked_ids, missing_ids)
                 cross_seed_groups, cross_seed_child_ids = core.build_cross_seed_groups(all_torrents)
                 series_list = [s for s in series_list if s["id"] != series["id"]]
@@ -737,7 +743,8 @@ def main(stdscr):
                 message = f"Série supprimée (sans confirmation) : {series['title']} ({deleted} torrent(s)"
                 message += f", {failed} échec(s)" if failed else ""
                 message += ")"
-                message_color = COLOR_DANGER if failed else COLOR_LINKED
+                message += " — RETRAIT SONARR ÉCHOUÉ, série encore suivie" if not arr_ok else ""
+                message_color = COLOR_DANGER if failed or not arr_ok else COLOR_LINKED
             except Exception as e:
                 core.logger.error("échec de la suppression rapide de la série %r : %s", series["title"], e)
                 message = f"ÉCHEC (voir {core.LOG_PATH}) : {e}"
@@ -754,8 +761,8 @@ def main(stdscr):
                         stdscr, client, torrent, library_index, cross_seed_groups, all_torrents, linked_ids,
                         missing_ids, confirm=False)
                     session_freed_bytes += freed
-                else:
-                    core.execute_delete_movie_no_torrent(movie)
+                elif not core.execute_delete_movie_no_torrent(movie):
+                    raise RuntimeError("Radarr n'a pas pu retirer le film, aucun fichier supprimé")
                 movies_list = [m for m in movies_list if m["id"] != movie["id"]]
                 session_deletions += 1
                 message = f"Film supprimé (sans confirmation) : {movie['title']}"
