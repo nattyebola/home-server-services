@@ -6,6 +6,13 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Message explicite plutôt que l'erreur brute de `source` : ce script est aussi
+# lancé par cron, où une ligne « No such file or directory » sans contexte est
+# tout ce qu'on retrouverait dans backup.log.
+if [ ! -f "$REPO_ROOT/.env.shared" ]; then
+	echo "$(basename "$0"): .env.shared introuvable — voir .env.shared.example (étape 2 du README)" >&2
+	exit 1
+fi
 set -a
 source "$REPO_ROOT/.env.shared"
 set +a

@@ -90,6 +90,12 @@ phase produit ce dont la suivante a besoin.
 Les étapes **5** (VPN), **6** (montages personnels) et **22** (Kodi) sont
 facultatives selon ce que vous déployez.
 
+Toute cible `make` qui lit `.env.shared` refuse de démarrer tant qu'il est
+absent, ou que `DATA_ROOT`/`DOMAIN` y valent encore les placeholders de
+l'exemple, ou que `DATA_ROOT` pointe sur un dossier inexistant — et dit quoi
+faire. Copier un `.example` sans le remplir est l'erreur qui coûte le plus
+cher ici : Docker crée sinon l'arborescence bidon en root sur l'hôte.
+
 Deux points où l'ordre est contraint et où s'en écarter échoue franchement
 plutôt que silencieusement : `make api-keys` (14) doit précéder les profils
 qualité (16), qui référencent les clés ; et la configuration Seerr, faite par

@@ -8,7 +8,7 @@ STACKS := traefik jellyfin nextcloud vpn arr seerr
 
 UPDATE_STACKS := nextcloud vpn jellyfin arr seerr
 
-.PHONY: help network up down config logs update update-all backup restore cron-install dashboard-refresh clearr arr-overrides recyclarr-sync kodi-install api-keys provision switch-lan-only-middleware test
+.PHONY: help require-env-shared network up down config logs update update-all backup restore cron-install dashboard-refresh clearr arr-overrides recyclarr-sync kodi-install api-keys provision switch-lan-only-middleware test
 
 # `make` sans argument affiche l'aide plutôt que de lancer la première cible
 # (c'était `network`, qui ne dit rien de ce que le reste sait faire).
@@ -33,6 +33,48 @@ help: ## — liste les cibles disponibles et leurs arguments
 # another user or a non-default profile path: make kodi-install KODI_HOME=...
 KODI_HOME ?= $(HOME)/.kodi
 
+# Vérifie .env.shared AVANT toute recette qui en dépend. En cible à part et pas
+# en première ligne de recette : les `$(eval ...)` d'une recette sont expansés
+# quand make traite la règle, donc AVANT que sa première commande ne s'exécute —
+# le `test -f` qui gardait cron-install était du code mort, et un dépôt
+# fraîchement cloné répondait `grep: .env.shared: Aucun fichier ou dossier de ce
+# nom` au lieu de dire quoi faire. Trouvé en rejouant l'installation depuis un
+# clone neuf le 2026-08-09.
+require-env-shared:
+	@test -f .env.shared || { \
+		echo "" >&2; \
+		echo "  .env.shared est absent." >&2; \
+		echo "  C'est l'étape 2 de l'installation (voir README.md) :" >&2; \
+		echo "" >&2; \
+		echo "      cp .env.shared.example .env.shared" >&2; \
+		echo "      \$$EDITOR .env.shared      # PUID/PGID/DOMAIN/DATA_ROOT/LAN_CIDR…" >&2; \
+		echo "" >&2; \
+		exit 1; }
+	@# Placeholders laissés tels quels : c'est le piège documenté dans CLAUDE.md
+	@# — Docker crée sinon silencieusement /path/to/your/data en root sur l'hôte
+	@# (déjà arrivé le 2026-07-22, nettoyé à la main). Sans ce test, l'erreur
+	@# visible était un « mkdir: Permission denied » qui ne dit pas pourquoi.
+	@root=$$(grep '^DATA_ROOT=' .env.shared | cut -d= -f2-); \
+	dom=$$(grep '^DOMAIN=' .env.shared | cut -d= -f2-); \
+	if [ -z "$$root" ] || [ "$$root" = "/path/to/your/data" ]; then \
+		echo "" >&2; \
+		echo "  DATA_ROOT vaut encore le placeholder de .env.shared.example." >&2; \
+		echo "  Mettez-y le chemin réel du disque de données, puis relancez." >&2; \
+		echo "" >&2; exit 1; \
+	fi; \
+	if [ ! -d "$$root" ]; then \
+		echo "" >&2; \
+		echo "  DATA_ROOT pointe sur $$root, qui n'existe pas." >&2; \
+		echo "  Créez-le (et vérifiez qu'il vous appartient) avant de continuer :" >&2; \
+		echo "      mkdir -p $$root" >&2; \
+		echo "" >&2; exit 1; \
+	fi; \
+	if [ "$$dom" = "example.com" ]; then \
+		echo "" >&2; \
+		echo "  DOMAIN vaut encore example.com : la demande de certificat échouera." >&2; \
+		echo "" >&2; exit 1; \
+	fi
+
 network: ## — crée les réseaux Traefik s'ils manquent (prérequis de tout `up`)
 	@docker network inspect $(NETWORK) >/dev/null 2>&1 || docker network create $(NETWORK)
 	@# Réseau séparé pour les services que Traefik doit joindre mais qui n'ont
@@ -52,7 +94,7 @@ network: ## — crée les réseaux Traefik s'ils manquent (prérequis de tout `u
 # compose files stay free of any one deployment's folder layout.
 compose = docker compose --env-file .env.shared $(if $(wildcard $(STACK)/.env),--env-file $(STACK)/.env,) -f $(STACK)/docker-compose.yml $(if $(wildcard $(STACK)/docker-compose.override.yml),-f $(STACK)/docker-compose.override.yml,)
 
-up: network ## STACK=<nom> — démarre (ou met à jour) les conteneurs de la stack
+up: require-env-shared network ## STACK=<nom> — démarre (ou met à jour) les conteneurs de la stack
 	@test -n "$(STACK)" || (echo "usage: make up STACK=<$(STACKS)>" >&2 && exit 1)
 	@# seerr tourne nativement en UID 1000 sans étape root-puis-drop et ne chown
 	@# pas son volume : si ${DATA_ROOT}/.seerr/config n'existe pas, c'est Docker
@@ -105,7 +147,7 @@ logs: ## STACK=<nom> — suit les logs de la stack (Ctrl-C pour sortir)
 # Dockerfile (nextcloud app/web ; arr/clearr), then recreate. nextcloud
 # additionally needs its post-upgrade occ maintenance run every time app:
 # gets a new image.
-update: network ## STACK=<nom> — pull/rebuild puis recrée la stack
+update: require-env-shared network ## STACK=<nom> — pull/rebuild puis recrée la stack
 	@test -n "$(STACK)" || (echo "usage: make update STACK=<$(STACKS)>" >&2 && exit 1)
 	$(compose) pull
 	@if [ "$(STACK)" = "nextcloud" ] || [ "$(STACK)" = "arr" ]; then $(compose) build -q; fi
@@ -219,12 +261,12 @@ test: ## — lance les tests des chemins destructifs de clearr (stdlib, rien à 
 	@# bibliothèque réelle NI les API arr — les appels réseau sont bouchonnés.
 	@python3 arr/clearr/tests/test_core.py
 
-backup: ## — sauvegarde restic (aussi faite par cron le dimanche à 3 h)
+backup: require-env-shared ## — sauvegarde restic (aussi faite par cron le dimanche à 3 h)
 	@scripts/backup.sh
 
 # restore a restic snapshot to sauvegarde/restore-<snapshot>/ and print the
 # manual steps to bring it back — see scripts/restore.sh.
-restore: ## SNAPSHOT=<id|latest> — restaure un snapshot dans sauvegarde/ sans toucher au live
+restore: require-env-shared ## SNAPSHOT=<id|latest> — restaure un snapshot dans sauvegarde/ sans toucher au live
 	@scripts/restore.sh $(if $(SNAPSHOT),$(SNAPSHOT),latest)
 
 # installs scripts/crontab as this host's crontab (nextcloud cron.php +
@@ -244,8 +286,7 @@ restore: ## SNAPSHOT=<id|latest> — restaure un snapshot dans sauvegarde/ sans 
 # every other line of the crontab (jobs the user added by hand, unrelated to
 # this repo) is preserved — piping into `crontab -` replaced the whole crontab
 # and dropped them silently.
-cron-install: ## — installe les crons du repo dans le crontab, en préservant les jobs perso
-	@test -f .env.shared || (echo ".env.shared missing — see .env.shared.example" >&2 && exit 1)
+cron-install: require-env-shared ## — installe les crons du repo dans le crontab, en préservant les jobs perso
 	$(eval PUID := $(shell grep '^PUID=' .env.shared | cut -d= -f2))
 	$(eval DATA_ROOT := $(shell grep '^DATA_ROOT=' .env.shared | cut -d= -f2))
 	@test -n "$(PUID)" || (echo "PUID not set in .env.shared" >&2 && exit 1)
@@ -271,7 +312,7 @@ cron-install: ## — installe les crons du repo dans le crontab, en préservant 
 # from .env.shared — same reason the crontab placeholders are substituted above.
 # Never overwrites an existing settings.xml: Kodi rewrites that file itself, and
 # the URL may have been adjusted by hand since.
-kodi-install: ## [KODI_HOME=<chemin>] — installe l'addon de menu contextuel clearr dans Kodi
+kodi-install: require-env-shared ## [KODI_HOME=<chemin>] — installe l'addon de menu contextuel clearr dans Kodi
 	@test -f .env.shared || (echo ".env.shared missing — see .env.shared.example" >&2 && exit 1)
 	$(eval DOMAIN := $(shell grep '^DOMAIN=' .env.shared | cut -d= -f2))
 	@test -n "$(DOMAIN)" || (echo "DOMAIN not set in .env.shared" >&2 && exit 1)
