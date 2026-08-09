@@ -20,8 +20,19 @@
 # veut éviter.
 #
 # Refermeture automatique au bout d'une heure : ouvrir donne accès au WAN à
-# Transmission et aux trois arr, tous sans authentification forte — un oubli est
-# le vrai risque de cette commande, pas l'ouverture elle-même. L'échéance est
+# Transmission, aux trois arr ET À CLEARR — un oubli est
+# le vrai risque de cette commande, pas l'ouverture elle-même.
+#
+# Nuance qui manquait ici (relevée le 2026-08-09) : les cinq services ne sont
+# pas au même niveau d'exposition. Prowlarr, Sonarr et Radarr sont en
+# AuthenticationRequired=DisabledForLocalAddresses, donc une source WAN se voit
+# bien réclamer un login. CLEARR N'A AUCUN REPLI — et c'est celui qui supprime
+# des fichiers. Le RPC Transmission non plus (son contrôle d'accès est délégué
+# à ce middleware, cf. rpc-authentication-required=false). Pendant la fenêtre,
+# ces deux-là sont donc pilotables par quiconque connaît le nom d'hôte, lequel
+# est public via les logs Certificate Transparency dès l'émission du certificat.
+# Écart assumé (arbitré le 2026-08-09) : la fenêtre est courte et se referme
+# seule. Ne pas rouvrir le sujet sans que ce soit redemandé. L'échéance est
 # écrite dans un fichier d'état et un garde cron (scripts/crontab, toutes les
 # 5 min) referme dès qu'elle est passée. Le cron plutôt qu'un `sleep` détaché :
 # il survit à une déconnexion SSH et à un redémarrage de la machine, ce qu'un
