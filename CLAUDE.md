@@ -759,7 +759,15 @@ explicitement :
   commits qui n'existent plus** (idem pour les SHA cités dans
   `sauvegarde/backup.log` et dans `infra-commit.txt` des anciens snapshots) —
   sans gravité, mais un `git checkout` de ces SHA lors d'une restauration
-  échouera : reprendre le tag `backup-*` correspondant à la place. GitHub
+  échouera : reprendre le tag `backup-*` correspondant à la place.
+  Piège relevé juste après l'opération : ces anciens commits **survivaient
+  encore localement** comme objets orphelins (git garde deux semaines les
+  objets non référencés), donc `git cat-file -e <ancien sha>` réussissait et
+  l'ancienne adresse restait lisible dans la base d'objets du checkout — alors
+  qu'un clone frais depuis GitHub était bien propre. Purgés par
+  `git reflog expire --expire=now --expire-unreachable=now --all` puis
+  `git gc --prune=now`. À refaire après toute réécriture : le force-push ne
+  nettoie que le distant. GitHub
   conserve par ailleurs les objets orphelins accessibles par SHA tant qu'on ne
   demande pas leur purge au support, et tout clone ou fork antérieur garde
   l'ancien historique.
