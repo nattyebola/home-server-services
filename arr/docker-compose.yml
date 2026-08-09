@@ -20,6 +20,9 @@ services:
     networks:
       - default
       - traefik-public
+      # Interrogé par clearr pour résoudre les noms de tracker — voir le bloc
+      # `networks:` de clearr plus bas.
+      - clearr-arr
       # Prowlarr a aussi sa propre section Download Clients (recherche
       # interactive manuelle, indépendante de Sonarr/Radarr) — besoin du
       # même accès direct à transmission-vpn:9091 qu'eux.
@@ -82,6 +85,7 @@ services:
     networks:
       - default
       - traefik-public
+      - clearr-arr
       # Atteint transmission-vpn directement par nom de conteneur
       # (transmission-vpn:9091) — pas via transmission-proxy, qui n'existe
       # que pour l'accès humain LAN-only. Rejoindre ce réseau ne concerne
@@ -137,6 +141,7 @@ services:
     networks:
       - default
       - traefik-public
+      - clearr-arr
       - vpn-internal
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:7878/ping"]
@@ -179,10 +184,31 @@ services:
     restart: unless-stopped
     user: "${PUID}:${PGID}"
     volumes:
-      # Même mount unique que sonarr/radarr (voir leur commentaire plus haut) :
-      # clearr partage donc leur référentiel de chemins (/data_root/...) sans
-      # aucune traduction host<->conteneur à faire.
-      - ${DATA_ROOT}:/data_root
+      # Mêmes CHEMINS que sonarr/radarr (/data_root/...), donc aucune traduction
+      # host<->conteneur à faire — mais montés un par un au lieu de ${DATA_ROOT}
+      # en entier (resserré le 2026-08-09).
+      #
+      # Pourquoi : clearr est le seul service web maison, non authentifié, et il
+      # avait lecture ET écriture sur tout ${DATA_ROOT} — donc sur
+      # .arr/*/config/config.xml (clés API des trois arr), .jellyfin, .seerr,
+      # .transmission/config (identifiants OpenVPN) et les données Nextcloud.
+      # Vérifié avant correction : l'écriture sur le config.xml de Sonarr
+      # passait. La justification du mount unique (« Cross-device link », voir
+      # sonarr/radarr) porte sur les hardlinks entre library/ et
+      # .transmission/data et ne couvrait aucun de ces dossiers ; clearr
+      # n'appelle d'ailleurs jamais link(), il ne fait que stat/remove.
+      - ${DATA_ROOT}/library:/data_root/library
+      - ${DATA_ROOT}/.transmission/data:/data_root/.transmission/data
+      # Jaquettes servies par /poster/... (core.poster_file) : lecture seule,
+      # c'est le seul besoin de clearr sous .arr/ — et ça met les clés API des
+      # arr hors de portée en écriture.
+      - ${DATA_ROOT}/.arr:/data_root/.arr:ro
+      # Journal applicatif. Montage de FICHIER, ce qui suppose qu'il existe côté
+      # hôte (sinon Docker crée un dossier) : `make up` le crée. Compatible avec
+      # la rotation parce que scripts/logrotate.conf utilise copytruncate, qui
+      # tronque en place et ne remplace jamais l'inode — un montage de fichier
+      # suit l'inode capturé au démarrage, pas le chemin.
+      - ${DATA_ROOT}/.clearr.log:/data_root/.clearr.log
       - /etc/localtime:/etc/localtime:ro
     env_file:
       - .env
@@ -193,8 +219,19 @@ services:
       # Absent = pas de lien arr affiché, le reste de la vue fonctionne.
       - DOMAIN=${DOMAIN}
     networks:
-      - default
-      - traefik-public
+      # `clearr-arr` et PAS `default` : seerr rejoint le réseau `default` du
+      # projet arr pour joindre sonarr/radarr (voir seerr/docker-compose.yml),
+      # et y atteignait donc clearr en direct — même exposition que celle
+      # refermée côté traefik-public, par une autre porte. clearr n'a besoin
+      # que de prowlarr/sonarr/radarr, qui rejoignent ce réseau dédié.
+      - clearr-arr
+      # traefik-restricted et PAS traefik-public (2026-08-09) : clearr supprime
+      # des fichiers sans authentification, et sur traefik-public il était
+      # joignable EN DIRECT — donc en court-circuitant arr-lan-only@file — par
+      # jellyfin, seerr et nextcloud-web, les trois seuls services réellement
+      # atteignables depuis Internet. Le middleware ne protège que le chemin
+      # Traefik, pas le port. Seul Traefik a besoin de l'atteindre.
+      - traefik-restricted
       # Atteint transmission-vpn directement par nom de conteneur, comme
       # sonarr/radarr/prowlarr ci-dessus — plus de docker exec.
       - vpn-internal
@@ -220,7 +257,10 @@ services:
       # définis une seule fois dans traefik/docker-compose.yml, voir CLAUDE.md
       - "traefik.http.routers.clearr.middlewares=arr-lan-only@file,security-headers@docker,hsts@docker"
       - "traefik.http.services.clearr.loadbalancer.server.port=8000"
-      - "traefik.docker.network=traefik-public"
+      # Indispensable : sans lui Traefik résoudrait clearr sur traefik-public
+      # (défaut du provider, voir `network:` dans traefik/traefik.yml), où il
+      # n'est plus — le routeur répondrait alors 502.
+      - "traefik.docker.network=traefik-restricted"
     logging:
       driver: json-file
       options:
@@ -326,6 +366,12 @@ services:
 networks:
   traefik-public:
     external: true
+  # Réseau de clearr côté Traefik — voir son bloc `networks:`.
+  traefik-restricted:
+    external: true
+  # Réseau clearr <-> prowlarr/sonarr/radarr, à l'écart de `default` que
+  # seerr rejoint — voir le bloc `networks:` de clearr.
+  clearr-arr:
   vpn-internal:
     external: true
     # vpn/docker-compose.yml ne fixe pas de `name:` de projet compose, donc

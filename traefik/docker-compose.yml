@@ -71,6 +71,7 @@ services:
     networks:
       - socket-proxy
       - traefik-public
+      - traefik-restricted
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8082/ping"]
       interval: 30s
@@ -165,4 +166,8 @@ networks:
   socket-proxy:
     internal: true
   traefik-public:
+    external: true
+  # Services que Traefik doit joindre mais qui n'ont rien à faire au contact
+  # des services exposés au WAN — voir la cible `network` du Makefile.
+  traefik-restricted:
     external: true

@@ -2,6 +2,8 @@
 # no single `docker compose down` can delete a network the other stacks depend on.
 # It must therefore be created once, out-of-band, before any stack is started.
 NETWORK := traefik-public
+# Réseau à part pour clearr et le proxy RPC Transmission — voir la cible `network`.
+RESTRICTED_NETWORK := traefik-restricted
 STACKS := traefik jellyfin nextcloud vpn arr seerr
 
 UPDATE_STACKS := nextcloud vpn jellyfin arr seerr
@@ -31,8 +33,16 @@ help: ## — liste les cibles disponibles et leurs arguments
 # another user or a non-default profile path: make kodi-install KODI_HOME=...
 KODI_HOME ?= $(HOME)/.kodi
 
-network: ## — crée le réseau traefik-public s'il manque (prérequis de tout `up`)
+network: ## — crée les réseaux Traefik s'ils manquent (prérequis de tout `up`)
 	@docker network inspect $(NETWORK) >/dev/null 2>&1 || docker network create $(NETWORK)
+	@# Réseau séparé pour les services que Traefik doit joindre mais qui n'ont
+	@# RIEN à voir avec les services exposés au WAN : clearr (suppression de
+	@# fichiers, sans authentification) et le proxy RPC Transmission (sans
+	@# authentification lui aussi). Sur traefik-public, ils étaient joignables en
+	@# direct par jellyfin, seerr et nextcloud-web — les trois seuls services
+	@# réellement atteignables depuis Internet — ce qui court-circuitait
+	@# entièrement les middlewares LAN-only.
+	@docker network inspect $(RESTRICTED_NETWORK) >/dev/null 2>&1 || docker network create $(RESTRICTED_NETWORK)
 
 # .env.shared is the single source of truth for PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT,
 # used by every stack. docker compose never reads it unless told to, so up/down/config/logs
@@ -62,6 +72,14 @@ up: network ## STACK=<nom> — démarre (ou met à jour) les conteneurs de la st
 		root=$$(grep '^DATA_ROOT=' .env.shared | cut -d= -f2); \
 		test -n "$$root" || (echo "DATA_ROOT not set in .env.shared" >&2 && exit 1); \
 		mkdir -p "$$root/.traefik/log"; \
+	fi
+	@# clearr monte son journal en bind-mount de FICHIER (voir arr/docker-compose.yml) :
+	@# s'il n'existe pas, Docker crée un DOSSIER à la place et le service crashe au
+	@# démarrage sur IsADirectoryError.
+	@if [ "$(STACK)" = "arr" ]; then \
+		root=$$(grep '^DATA_ROOT=' .env.shared | cut -d= -f2); \
+		test -n "$$root" || (echo "DATA_ROOT not set in .env.shared" >&2 && exit 1); \
+		touch "$$root/.clearr.log"; \
 	fi
 	@# Les routeurs arr/transmission référencent `<nom>@file` : sans
 	@# traefik/dynamic/lan-only.yml, Traefik ne sait pas résoudre leur middleware
