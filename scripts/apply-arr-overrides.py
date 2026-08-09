@@ -31,6 +31,7 @@
 # repo. Le JSON est déclaratif et fait autorité : tout custom format absent
 # de `scores` est remis à 0 sur le profil concerné.
 import copy
+import datetime
 import json
 import os
 import subprocess
@@ -231,36 +232,92 @@ def load_env_file(path):
     return values
 
 
-def api_get(container, base_url, api_key, path):
-    cmd = ["docker", "exec", container, "curl", "-s",
-           "-H", f"X-Api-Key: {api_key}", f"{base_url}{path}"]
-    res = subprocess.run(cmd, capture_output=True, timeout=15)
+# curl -s sort 0 quel que soit le code HTTP : sans -w, une réponse 401/500 est
+# indiscernable d'un succès. On demande donc le code sur une dernière ligne et
+# on le sépare du corps — même mécanisme que scripts/provision.py, dont
+# l'asymétrie avec ce fichier était le vrai défaut (là-bas le code était lu,
+# ici non).
+CURL_WRITE_OUT = "\n%{http_code}"
+
+
+def _curl(container, api_key, args, stdin=None):
+    """Renvoie (code_http, corps). Lève si docker exec lui-même échoue."""
+    cmd = ["docker", "exec"] + (["-i"] if stdin is not None else []) + [
+        container, "curl", "-s", "-w", CURL_WRITE_OUT,
+        "-H", f"X-Api-Key: {api_key}"] + args
+    res = subprocess.run(cmd, input=stdin, capture_output=True, timeout=15)
     if res.returncode != 0:
         raise RuntimeError(f"docker exec {container} a échoué — container arrêté ?")
-    return json.loads(res.stdout)
+    body, _, code = res.stdout.decode().rpartition("\n")
+    return code.strip(), body.strip()
+
+
+def api_get(container, base_url, api_key, path):
+    code, body = _curl(container, api_key, [f"{base_url}{path}"])
+    if not code.startswith("2"):
+        # Sans ce test, une réponse d'erreur Servarr — un JSON valide du type
+        # {"message": "Unauthorized"} — était rendue telle quelle aux appelants,
+        # qui attendent une liste : on itérait alors sur les CLÉS du dict et le
+        # diagnostic remonté à l'utilisateur était un « string indices must be
+        # integers » au lieu de « clé API refusée ».
+        raise RuntimeError(f"GET {path} : HTTP {code} — {body[:200] or 'réponse vide'}")
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        raise RuntimeError(f"GET {path} : réponse illisible — {body[:200]!r}")
 
 
 def api_write(container, base_url, api_key, method, path, obj):
-    cmd = ["docker", "exec", "-i", container, "curl", "-s", "-X", method,
-           "-H", f"X-Api-Key: {api_key}", "-H", "Content-Type: application/json",
-           "--data", "@-", f"{base_url}{path}"]
-    res = subprocess.run(cmd, input=json.dumps(obj).encode(), capture_output=True, timeout=15)
-    if res.returncode != 0:
-        raise RuntimeError(f"docker exec {container} a échoué — container arrêté ?")
-    # curl -s sort 0 même sur un 400/404 : la seule preuve que l'écriture a
-    # abouti est un objet JSON avec un id en réponse. Sonarr renvoie sinon une
-    # liste d'erreurs de validation, qu'on remonte telle quelle.
-    body = res.stdout.decode().strip()
+    code, body = _curl(container, api_key,
+                       ["-X", method, "-H", "Content-Type: application/json",
+                        "--data", "@-", f"{base_url}{path}"],
+                       stdin=json.dumps(obj).encode())
+    # Le code HTTP fait foi. L'ancien critère — « un objet JSON avec un id » —
+    # traitait tout corps VIDE comme un succès, et avalait donc le 202 Accepted
+    # que renvoie justement /qualitydefinition/update, plus les 204 et tout
+    # 4xx/5xx sans corps. Le script se déclarait alors satisfait d'une écriture
+    # qui n'avait pas eu lieu : un faux négatif silencieux, exactement ce que
+    # settle() avait été écrit pour fermer une couche plus haut.
+    if not code.startswith("2"):
+        raise RuntimeError(f"{method} {path} : HTTP {code} — {body[:300] or 'réponse vide'}")
     if not body:
         return None
     parsed = json.loads(body)
     if isinstance(parsed, dict) and "id" in parsed:
         return parsed
+    # 2xx mais corps inattendu : Sonarr répond parfois 200 avec une liste
+    # d'erreurs de validation, qu'on remonte telle quelle.
     raise RuntimeError(f"{method} {path} refusé par l'API : {body[:300]}")
 
 
 def api_put(container, base_url, api_key, path, obj):
     api_write(container, base_url, api_key, "PUT", path, obj)
+
+
+class SettleFailed(RuntimeError):
+    """Échec d'une étape sous settle(), porteur des corrections DÉJÀ appliquées.
+
+    Sans ça, une exception à la 3e passe faisait perdre ce que les deux
+    premières avaient réellement écrit côté Sonarr/Radarr : le rapport final
+    n'affichait aucune ligne « corrigé » alors que des paliers avaient changé.
+    """
+
+    def __init__(self, message, changed):
+        super().__init__(message)
+        self.changed = changed
+
+
+def _dedupe(lines):
+    """Ordre de première apparition conservé — settle() rejoue les mêmes
+    corrections quand ça ne converge pas, et six lignes identiques dans le
+    rapport disent moins que la même ligne suivie de l'erreur de non-convergence.
+    """
+    seen, out = set(), []
+    for line in lines:
+        if line not in seen:
+            seen.add(line)
+            out.append(line)
+    return out
 
 
 def settle(step):
@@ -278,15 +335,31 @@ def settle(step):
     for attempt in range(SETTLE_ATTEMPTS):
         if attempt:
             time.sleep(SETTLE_DELAY_SECONDS)
-        applied = step()
+        try:
+            applied = step()
+        except Exception as e:
+            # Les passes précédentes ont déjà ÉCRIT côté arr : les perdre avec
+            # l'exception ferait rapporter « rien corrigé » alors que des valeurs
+            # ont bel et bien changé, et l'exploitant croirait l'état intact.
+            raise SettleFailed(str(e), _dedupe(changed)) from e
         if applied:
             changed += applied
             clean = 0
         else:
             clean += 1
             if clean >= SETTLE_CLEAN_PASSES:
-                break
-    return changed
+                return _dedupe(changed)
+    # Épuisement des tentatives sans jamais obtenir SETTLE_CLEAN_PASSES passes
+    # propres : quelque chose réécrit en continu, ou nos écritures sont refusées
+    # sans qu'on s'en aperçoive. L'ancienne version sortait ici par le bas, sans
+    # rien distinguer d'une convergence réussie — six lignes « corrigé »
+    # identiques, exit 0, marqueur cron écrit, carte du dashboard au vert, et la
+    # dérive installée pour 24 h. C'est le faux négatif que ce mécanisme devait
+    # justement supprimer, reproduit un cran plus haut.
+    raise SettleFailed(
+        f"non stabilisé après {SETTLE_ATTEMPTS} passes : les mêmes corrections sont "
+        "rejouées en boucle — écritures refusées, ou un tiers réécrit en continu",
+        _dedupe(changed))
 
 
 def apply_quality_sizes(label, container, base_url, api_key, overrides):
@@ -671,6 +744,12 @@ def apply_anime_config(container, base_url, api_key):
 
 
 def main():
+    # Séparateur horodaté en tête de chaque exécution. La sortie est appendée
+    # dans arr/apply-overrides.log par cron : sans lui, impossible d'attribuer
+    # une ligne « corrigé » à un run, donc impossible de distinguer « corrigé
+    # une fois puis stable » de « rejoué en boucle chaque nuit ». C'est ce qui
+    # avait empêché de confirmer la non-convergence par la seule lecture du log.
+    print(f"=== {datetime.datetime.now().isoformat(timespec='seconds')} ===")
     arr_env = load_env_file(os.path.join(REPO_ROOT, "arr", ".env"))
     sonarr_api_key = arr_env.get("SONARR_API_KEY")
     radarr_api_key = arr_env.get("RADARR_API_KEY")
@@ -701,6 +780,9 @@ def main():
         changed += settle(
             lambda: apply_quality_sizes("Sonarr", SONARR_CONTAINER, SONARR_URL,
                                         sonarr_api_key, SONARR_SIZE_OVERRIDES))
+    except SettleFailed as e:
+        changed += e.changed          # ces corrections-là ont bien été écrites
+        errors.append(f"Sonarr: {e}")
     except Exception as e:
         errors.append(f"Sonarr: {e}")
     # Bloc à part : une erreur sur la config anime ne doit pas empêcher les
@@ -743,6 +825,9 @@ def main():
                                         radarr_api_key, RADARR_SIZE_OVERRIDES)
             + apply_radarr_language(RADARR_CONTAINER, RADARR_URL, radarr_api_key,
                                     RADARR_PROFILE_NAME))
+    except SettleFailed as e:
+        changed += e.changed
+        errors.append(f"Radarr: {e}")
     except Exception as e:
         errors.append(f"Radarr: {e}")
     # Bloc à part de celui ci-dessus pour la même raison que la config anime :
