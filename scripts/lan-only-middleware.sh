@@ -102,9 +102,22 @@ refresh_dashboard() {
 }
 
 open_until() {
-	local deadline=$(($(date +%s) + OPEN_WINDOW_SECONDS))
+	local deadline tmp
+	deadline=$(($(date +%s) + OPEN_WINDOW_SECONDS))
+	# L'échéance est écrite AVANT l'ouverture, et atomiquement (mktemp + mv,
+	# comme le fichier dynamique juste au-dessus). L'ordre inverse laissait une
+	# fenêtre où le middleware était ouvert sans qu'aucune échéance n'existe
+	# (disque plein, DATA_ROOT non monté) : `rearm` n'avait alors plus rien à
+	# refermer et les 5 services restaient joignables depuis Internet
+	# indéfiniment. Mieux vaut refuser d'ouvrir que d'ouvrir sans minuterie.
+	tmp=$(mktemp "$(dirname "$STATE_FILE")/.lan-only-open-until.XXXXXX") || {
+		echo "impossible d'écrire dans $(dirname "$STATE_FILE") — ouverture annulée" >&2
+		exit 1
+	}
+	printf '%s\n' "$deadline" >"$tmp"
+	chmod 644 "$tmp"
+	mv "$tmp" "$STATE_FILE"
 	render wan
-	echo "$deadline" >"$STATE_FILE"
 	echo "LAN-only DÉSACTIVÉ — services joignables depuis le WAN"
 	echo "  refermeture automatique vers $(date -d "@$deadline" '+%H:%M') (garde cron, ±5 min)"
 	echo "  concernés : ${MIDDLEWARES[*]}"
@@ -116,13 +129,37 @@ close_now() {
 	echo "LAN-only ACTIF — seul $LAN_CIDR peut atteindre ces services"
 }
 
-deadline() { # échéance courante, vide si fermé
-	[ -f "$STATE_FILE" ] && cat "$STATE_FILE" || true
+# Présence du fichier d'état = une fenêtre a été ouverte, même si son contenu
+# est devenu illisible. C'est ce test (et pas `deadline`) qui doit décider d'un
+# toggle ou d'une refermeture : sinon un fichier corrompu se lit comme « fermé »
+# et un toggle RE-ouvrirait au lieu de refermer.
+window_open() { [ -f "$STATE_FILE" ]; }
+
+deadline() { # échéance VALIDE, vide si fermé ou si le contenu est inexploitable
+	local raw
+	window_open || return 0
+	raw=$(cat "$STATE_FILE" 2>/dev/null || true)
+	case "$raw" in
+	'' | *[!0-9]*)
+		# Fichier vide ou tronqué (coupure pendant l'écriture, ou écriture par
+		# un tiers — il vit sous DATA_ROOT, monté en écriture dans clearr,
+		# sonarr et radarr). L'ancienne version injectait ce contenu tel quel
+		# dans une comparaison entière : `test` sortait « nombre entier
+		# attendu » et retournait faux, donc `rearm` ne refermait jamais,
+		# pendant que `status` et le bandeau du dashboard annonçaient tous deux
+		# « LAN uniquement ». Les trois canaux de visibilité d'accord, et tous
+		# les trois faux. On rend donc vide, et les appelants refermeront —
+		# l'échec doit être FERMÉ, jamais ouvert.
+		echo "$(basename "$0"): échéance illisible dans $STATE_FILE — traitée comme périmée" >&2
+		return 0
+		;;
+	esac
+	printf '%s\n' "$raw"
 }
 
 case "${1:-toggle}" in
 toggle)
-	if [ -n "$(deadline)" ]; then close_now; else open_until; fi
+	if window_open; then close_now; else open_until; fi
 	refresh_dashboard
 	;;
 open)
@@ -136,10 +173,16 @@ close)
 rearm)
 	# Muet quand il n'y a rien à faire : appelé toutes les 5 min par cron, il ne
 	# doit rien écrire dans les logs le reste du temps.
-	until_ts=$(deadline)
-	if [ -n "$until_ts" ] && [ "$(date +%s)" -ge "$until_ts" ]; then
-		close_now
-		refresh_dashboard
+	#
+	# Referme dès que le fichier d'état existe ET que l'échéance est atteinte
+	# OU illisible : une échéance qu'on ne sait pas lire ne doit jamais valoir
+	# « laisse ouvert » (voir deadline()).
+	if window_open; then
+		until_ts=$(deadline)
+		if [ -z "$until_ts" ] || [ "$(date +%s)" -ge "$until_ts" ]; then
+			close_now
+			refresh_dashboard
+		fi
 	fi
 	;;
 ensure)
@@ -170,6 +213,14 @@ ensure)
 	;;
 status)
 	until_ts=$(deadline)
+	if window_open && [ -z "$until_ts" ]; then
+		# Fenêtre ouverte mais échéance illisible : le dire franchement plutôt
+		# que d'afficher « LAN uniquement », qui serait un mensonge tant que le
+		# prochain `rearm` (≤ 5 min) n'a pas refermé.
+		echo "état INCOHÉRENT : $STATE_FILE existe mais son échéance est illisible."
+		echo "  l'accès est probablement encore ouvert — lancez '$(basename "$0") close' maintenant."
+		exit 1
+	fi
 	if [ -n "$until_ts" ]; then
 		left=$((until_ts - $(date +%s)))
 		printf 'ouvert au WAN — refermeture vers %s (%d min restantes)\n' \
