@@ -1,6 +1,6 @@
 <div class="modal-header">
-  <h5 class="modal-title text-truncate" title="Supprimer : {{ torrent_name }}">Supprimer : {{ torrent_name }}</h5>
-  <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+  <h2 class="modal-title h5" id="modal-title" text-truncate" title="Supprimer : {{ torrent_name }}">Supprimer : {{ torrent_name }}</h2>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
 </div>
 <div class="modal-body">
 
@@ -22,7 +22,7 @@
 
 {% if lib_matches %}
 <p class="mb-1 small">Fichiers bibliothèque correspondants ({{ lib_matches|length }}) — {{ lib_matches_size }} :</p>
-<ul class="small text-success" style="max-height:160px; overflow-y:auto;">
+<ul class="small text-success-emphasis" style="max-height:160px; overflow-y:auto;">
   {% for f in lib_matches[:10] %}<li class="text-truncate" title="{{ f.name }} ({{ f.size }})">{{ f.name }} ({{ f.size }})</li>{% endfor %}
   {% if lib_matches|length > 10 %}<li>... et {{ lib_matches|length - 10 }} de plus</li>{% endif %}
 </ul>
@@ -40,6 +40,8 @@
 <p class="mb-0 fw-semibold">Espace total libéré : {{ total_size }}</p>
 </div>
 <form class="modal-footer">
+<p class="small text-danger-emphasis mb-0 me-auto">Suppression définitive : aucune annulation possible.</p>
+
   <input type="hidden" name="sort" value="{{ sort }}">
   <input type="hidden" name="reverse" value="{{ '1' if reverse else '0' }}">
   <input type="hidden" name="filter" value="{{ filter_str }}">

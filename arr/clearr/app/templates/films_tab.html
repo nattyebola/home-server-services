@@ -16,8 +16,8 @@
   <thead>
     <tr class="text-body-secondary text-uppercase" style="font-size:.72rem;">
       {% for col in columns %}
-      <th>
-        <a href="#" class="link-body-emphasis text-decoration-none {{ 'link-warning fw-semibold' if col.active else '' }}"
+      <th{% if col.active %} aria-sort="{{ 'descending' if reverse else 'ascending' }}"{% else %} aria-sort="none"{% endif %}>
+        <a href="#" class="link-body-emphasis text-decoration-none {{ 'fw-semibold text-decoration-underline' if col.active else '' }}"
            data-get="{{ col.url }}" data-target="#tab-content">
           {{ col.label }}{% if col.active %}{{ ' ▼' if reverse else ' ▲' }}{% endif %}
         </a>
@@ -29,8 +29,8 @@
   <tbody>
     {% for m in rows %}
     <tr>
-      <td class="{{ 'text-success' if m.monitored else '' }}">{{ '✓' if m.monitored else '' }}</td>
-      <td class="{{ 'text-success' if m.has_file else '' }}">{{ '✓' if m.has_file else '' }}</td>
+      <td class="{{ 'text-success-emphasis' if m.monitored else '' }}">{{ '✓' if m.monitored else '' }}</td>
+      <td class="{{ 'text-success-emphasis' if m.has_file else '' }}">{{ '✓' if m.has_file else '' }}</td>
       <td>{{ m.year }}</td>
       <td>{{ m.size }}</td>
       <td>{{ title_cell(m.title, m.meta, details_url='/films/' ~ m.id ~ '/details') }}</td>

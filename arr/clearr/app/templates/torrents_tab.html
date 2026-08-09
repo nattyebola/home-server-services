@@ -31,8 +31,8 @@
   <thead>
     <tr class="text-body-secondary text-uppercase" style="font-size:.72rem;">
       {% for col in columns %}
-      <th class="{{ 'text-nowrap' }}">
-        <a href="#" class="link-body-emphasis text-decoration-none {{ 'link-warning fw-semibold' if col.active else '' }}"
+      <th class="text-nowrap"{% if col.active %} aria-sort="{{ 'descending' if reverse else 'ascending' }}"{% else %} aria-sort="none"{% endif %}>
+        <a href="#" class="link-body-emphasis text-decoration-none {{ 'fw-semibold text-decoration-underline' if col.active else '' }}"
            data-get="{{ col.url }}" data-target="#tab-content">
           {{ col.label }}{% if col.active %}{{ ' ▼' if reverse else ' ▲' }}{% endif %}
         </a>
@@ -44,13 +44,13 @@
   <tbody>
     {% for g in groups %}
     <tr>
-      <td class="text-success">{{ g.parent.bib }}</td>
-      <td class="{{ 'text-danger fw-semibold' if g.parent.abs_danger else '' }}">{{ g.parent.abs }}</td>
+      <td class="text-success-emphasis">{{ g.parent.bib }}</td>
+      <td class="{{ 'text-danger-emphasis fw-semibold' if g.parent.abs_danger else '' }}">{{ g.parent.abs }}</td>
       <td>{{ g.parent.age }}</td>
       <td>{{ g.parent.size }}</td>
       <td class="ratio-{{ g.parent.ratio_class }}">{{ g.parent.ratio }}</td>
       <td class="text-body-secondary"{% if g.parent.tracker_others %} title="{{ g.parent.tracker_others }}"{% endif %}>{{ g.parent.tracker }}</td>
-      <td class="{{ 'text-danger' if g.parent.abs_danger else '' }}">
+      <td class="{{ 'text-danger-emphasis' if g.parent.abs_danger else '' }}">
         {{ title_cell(g.parent.name, g.parent.meta, details_url='/torrents/' ~ g.parent.id ~ '/details') }}
         {% if g.children %}
         <button type="button" class="btn btn-sm btn-link p-0 ms-1 align-baseline"

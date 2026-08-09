@@ -221,6 +221,7 @@ def render_torrents_tab(sort, reverse, filter_str, message=None, message_kind="s
 
     return render(
         "torrents_tab.html",
+        active="torrents",  # consommé par _tabs.html ; sans lui aucun onglet n'est marqué
         sort=sort, reverse=reverse, filter_str=filter_str,
         qs=query_string(sort, reverse, filter_str),
         columns=build_columns("torrents", core.SORT_FIELDS, sort, reverse, filter_str),
@@ -277,6 +278,7 @@ def render_arr_tab(tab, sort, reverse, filter_str, message=None, message_kind="s
     core.sort_items(selected, spec["fields"], field_index(spec["fields"], sort), reverse)
     return render(
         f"{tab}_tab.html",
+        active=tab,
         sort=sort, reverse=reverse, filter_str=filter_str,
         qs=query_string(sort, reverse, filter_str),
         columns=build_columns(tab, spec["fields"], sort, reverse, filter_str),

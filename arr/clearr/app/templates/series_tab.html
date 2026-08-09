@@ -16,8 +16,8 @@
   <thead>
     <tr class="text-body-secondary text-uppercase" style="font-size:.72rem;">
       {% for col in columns %}
-      <th>
-        <a href="#" class="link-body-emphasis text-decoration-none {{ 'link-warning fw-semibold' if col.active else '' }}"
+      <th{% if col.active %} aria-sort="{{ 'descending' if reverse else 'ascending' }}"{% else %} aria-sort="none"{% endif %}>
+        <a href="#" class="link-body-emphasis text-decoration-none {{ 'fw-semibold text-decoration-underline' if col.active else '' }}"
            data-get="{{ col.url }}" data-target="#tab-content">
           {{ col.label }}{% if col.active %}{{ ' ▼' if reverse else ' ▲' }}{% endif %}
         </a>
@@ -29,7 +29,7 @@
   <tbody>
     {% for s in rows %}
     <tr>
-      <td class="{{ 'text-success' if s.monitored else '' }}">{{ '✓' if s.monitored else '' }}</td>
+      <td class="{{ 'text-success-emphasis' if s.monitored else '' }}">{{ '✓' if s.monitored else '' }}</td>
       <td>{{ s.seasons }}</td>
       <td>{{ s.episodes }}</td>
       <td>{{ s.size }}</td>

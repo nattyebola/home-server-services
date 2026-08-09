@@ -1,8 +1,8 @@
 <div class="modal-header">
-  <h5 class="modal-title">
+  <h2 class="modal-title h5" id="modal-title"">
     {% if orphans %}Supprimer {{ orphans|length }} fichier(s) orphelin(s) de library/{% else %}Aucun orphelin dans library/{% endif %}
-  </h5>
-  <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+  </h2>
+  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
 </div>
 <div class="modal-body">
 {% if orphans %}
@@ -25,6 +25,8 @@
 {% endif %}
 </div>
 <form class="modal-footer">
+<p class="small text-danger-emphasis mb-0 me-auto">Suppression définitive : aucune annulation possible.</p>
+
   <input type="hidden" name="sort" value="{{ sort }}">
   <input type="hidden" name="reverse" value="{{ '1' if reverse else '0' }}">
   <input type="hidden" name="filter" value="{{ filter_str }}">

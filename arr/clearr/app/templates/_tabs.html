@@ -1,14 +1,26 @@
-<ul class="nav nav-tabs mb-3">
-  <li class="nav-item">
-    <a href="#" class="nav-link {{ 'active' if active == 'torrents' else '' }}"
+{# role="tablist"/"tab" + aria-selected : Bootstrap les exige pour ce composant,
+   et sans eux la barre n'est qu'une liste de liens pour un lecteur d'écran.
+   `active` n'était passé par AUCUNE route (webapp.py), donc la comparaison
+   portait sur un Undefined et l'onglet courant n'était jamais mis en évidence —
+   aucun repère de « où suis-je » dans un outil dont les trois vues ont des
+   sémantiques de suppression différentes. #}
+<ul class="nav nav-tabs mb-3" role="tablist">
+  <li class="nav-item" role="presentation">
+    <a href="#" role="tab" class="nav-link {{ 'active' if active == 'torrents' else '' }}"
+       aria-selected="{{ 'true' if active == 'torrents' else 'false' }}"
+       {% if active == 'torrents' %}aria-current="page"{% endif %}
        data-get="/tab/torrents" data-target="#tab-content">Torrents</a>
   </li>
-  <li class="nav-item">
-    <a href="#" class="nav-link {{ 'active' if active == 'series' else '' }}"
+  <li class="nav-item" role="presentation">
+    <a href="#" role="tab" class="nav-link {{ 'active' if active == 'series' else '' }}"
+       aria-selected="{{ 'true' if active == 'series' else 'false' }}"
+       {% if active == 'series' %}aria-current="page"{% endif %}
        data-get="/tab/series" data-target="#tab-content">Séries</a>
   </li>
-  <li class="nav-item">
-    <a href="#" class="nav-link {{ 'active' if active == 'films' else '' }}"
+  <li class="nav-item" role="presentation">
+    <a href="#" role="tab" class="nav-link {{ 'active' if active == 'films' else '' }}"
+       aria-selected="{{ 'true' if active == 'films' else 'false' }}"
+       {% if active == 'films' %}aria-current="page"{% endif %}
        data-get="/tab/films" data-target="#tab-content">Films</a>
   </li>
 </ul>

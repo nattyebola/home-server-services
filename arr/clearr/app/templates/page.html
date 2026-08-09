@@ -23,15 +23,32 @@
 <body>
 <nav class="navbar navbar-expand bg-body-tertiary border-bottom mb-3">
   <div class="container-fluid px-3">
-    <span class="navbar-brand mb-0 fw-semibold">clearr</span>
+    {# h1 : la page n'avait AUCUN titre, et son premier élément de titre était
+       un h5 dans une modale — saut de h1 à h5, navigation par titres
+       impossible au lecteur d'écran (WCAG 1.3.1). .h5 garde l'apparence. #}
+    <h1 class="navbar-brand h5 mb-0 fw-semibold">clearr</h1>
     <span class="text-body-secondary small d-none d-sm-inline">nettoyage Transmission / Sonarr / Radarr</span>
   </div>
 </nav>
+
+{# Zone d'alerte PERMANENTE, hors de #tab-content. Deux rôles :
+   - le handler RuntimeError renvoyait un fragment nu que clearr.js injectait
+     dans #tab-content, lequel inclut _tabs.html : le bandeau d'erreur effaçait
+     donc la barre d'onglets, laissant un rectangle rouge sur une page vide,
+     sans aucun élément d'interface pour réessayer. Transmission redémarre à
+     chaque reconnexion VPN, le cas est courant ;
+   - role="status" fait annoncer le résultat d'une suppression, qui ne l'était
+     pas du tout (WCAG 4.1.3) : après confirmation, ni succès ni échec partiel
+     n'étaient restitués. #}
+<div class="container-fluid px-3">
+  <div id="alert-zone" role="status" aria-live="polite"></div>
+</div>
+
 <main class="container-fluid px-3" id="tab-content">
 {{ initial_content|safe }}
 </main>
 
-<div class="modal fade" id="modal" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="modal" tabindex="-1" aria-hidden="true" aria-labelledby="modal-title">
   <div class="modal-dialog modal-lg modal-dialog-centered">
     <div class="modal-content" id="modal-body"></div>
   </div>
