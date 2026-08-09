@@ -1324,15 +1324,7 @@ explicitement :
   exécution idempotente, objets supprimés après coup — sans quoi ce chemin,
   celui qui justifie tout l'exercice, n'aurait jamais été exercé avant le
   jour d'une vraie réinstallation (même leçon que le bug de `pg_dump` plus
-  haut). Ne couvre QUE ces deux profils : les profils
-  `Anime (Fansub)*` (et le custom format `FRENCH` qui n'y est scoré que sur
-  `Anime (Fansub) VF`) restent volontairement hors périmètre — usage
-  personnel de l'utilisateur, pas géré pour la reproductibilité multi-PC,
-  décidé explicitement en écartant l'option d'un script plus large. Ce trou
-  connu (custom formats/profils Anime encore API-only, non reproductibles
-  sans repasser à la main par l'API) reste documenté par les entrées
-  existantes plus haut (profils Anime, `cutoffFormatScore`) mais n'a pas de
-  script de provisioning dédié.
+  haut).
   Cron initialement réglé à 00h15, un délai de sécurité estimé après le
   sync interne `@daily` (00h00) du conteneur recyclarr — repéré le
   2026-07-30 (utilisateur) comme une fenêtre de 15 min pendant laquelle ces
