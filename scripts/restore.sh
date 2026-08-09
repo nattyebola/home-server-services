@@ -11,7 +11,11 @@ source "$REPO_ROOT/.env.shared"
 set +a
 BACKUP_DIR="$REPO_ROOT/sauvegarde"
 export RESTIC_REPOSITORY="$BACKUP_DIR/restic-repo"
-export RESTIC_PASSWORD_FILE="$BACKUP_DIR/restic-password"
+# Même résolution que scripts/backup.sh : hors de l'arborescence sauvegardée
+# par défaut, l'ancien emplacement accepté en repli.
+RESTIC_PASSWORD_FILE="${RESTIC_PASSWORD_FILE:-$HOME/.config/server-restic-password}"
+[ -f "$RESTIC_PASSWORD_FILE" ] || RESTIC_PASSWORD_FILE="$BACKUP_DIR/restic-password"
+export RESTIC_PASSWORD_FILE
 
 SNAPSHOT="${1:-latest}"
 TARGET="${2:-$BACKUP_DIR/restore-$SNAPSHOT}"

@@ -12,7 +12,21 @@ set +a
 BACKUP_DIR="$REPO_ROOT/sauvegarde"
 STAGING_DIR="$BACKUP_DIR/.staging"
 export RESTIC_REPOSITORY="$BACKUP_DIR/restic-repo"
-export RESTIC_PASSWORD_FILE="$BACKUP_DIR/restic-password"
+# The password must NOT live next to the repository it encrypts: anyone who
+# walks off with (or copies) sauvegarde/ would get both, and the repo holds
+# every .env of the deployment. Keeping them together made the encryption
+# protect against nothing but a lost disk platter.
+# Default location outside the checkout and outside the backed-up tree;
+# RESTIC_PASSWORD_FILE in the environment still wins, and the legacy path is
+# accepted so an existing install keeps working until it is moved.
+RESTIC_PASSWORD_FILE="${RESTIC_PASSWORD_FILE:-$HOME/.config/server-restic-password}"
+LEGACY_PASSWORD_FILE="$BACKUP_DIR/restic-password"
+if [ ! -f "$RESTIC_PASSWORD_FILE" ] && [ -f "$LEGACY_PASSWORD_FILE" ]; then
+	echo "note: restic password still at $LEGACY_PASSWORD_FILE (inside the backed-up tree)." >&2
+	echo "      move it to $RESTIC_PASSWORD_FILE — keep a copy elsewhere first." >&2
+	RESTIC_PASSWORD_FILE="$LEGACY_PASSWORD_FILE"
+fi
+export RESTIC_PASSWORD_FILE
 
 STACKS="traefik jellyfin nextcloud vpn arr seerr"
 
@@ -25,10 +39,14 @@ compose_for() {
 }
 
 mkdir -p "$STAGING_DIR"
+# Le staging contient le dump Postgres en clair le temps du `restic backup` :
+# le rendre inaccessible aux autres comptes de la machine.
+chmod 700 "$STAGING_DIR"
 
 if [ ! -f "$RESTIC_PASSWORD_FILE" ]; then
 	echo "No restic password file at $RESTIC_PASSWORD_FILE — generating one." >&2
 	echo "Keep a copy of it somewhere else (password manager); without it the backup is unreadable." >&2
+	mkdir -p "$(dirname "$RESTIC_PASSWORD_FILE")"
 	( umask 077; openssl rand -base64 32 > "$RESTIC_PASSWORD_FILE" )
 fi
 
@@ -51,9 +69,14 @@ echo "==> dumping nextcloud DB (consistent, not a raw copy of db-next's data dir
 # quel : un vieux dump silencieusement re-sauvegardé comme s'il était frais
 # serait pire qu'une sauvegarde manquante.
 if "$REPO_ROOT/scripts/require-running.sh" nextcloud/db-next; then
-	compose_for nextcloud exec -T db-next \
+	# umask 077 : le dump porte les hachages de mots de passe, les jetons de
+	# session et les jetons d'application de Nextcloud. Il était créé en
+	# rw-rw-r-- (543 Mo lisibles par tout compte de la machine) et n'était
+	# jamais purgé — il restait donc en clair sur le disque système en
+	# permanence, là où le dépôt restic, lui, est chiffré.
+	( umask 077; compose_for nextcloud exec -T db-next \
 		sh -c 'pg_dump -U "$POSTGRES_USER" "${POSTGRES_DB:-nextcloud}"' \
-		>"$STAGING_DIR/nextcloud-db.sql"
+		>"$STAGING_DIR/nextcloud-db.sql" )
 else
 	echo "nextcloud/db-next n'est pas démarré — dump DB ignoré pour cette sauvegarde" >&2
 	rm -f "$STAGING_DIR/nextcloud-db.sql"
@@ -104,6 +127,10 @@ restic backup \
 	"$DATA_ROOT/.transmission/config" \
 	"$STAGING_DIR" \
 	--tag weekly --tag "commit-$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+
+# Le dump n'a plus de raison d'exister une fois dans le dépôt chiffré. Il
+# était conservé indéfiniment (543 Mo en clair) entre deux sauvegardes.
+rm -f "$STAGING_DIR/nextcloud-db.sql"
 
 echo "==> checking repository integrity (structure + 5% of data packs read back)"
 # 5%/week averages a full --read-data pass roughly every ~5 months without
