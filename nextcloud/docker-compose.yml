@@ -123,6 +123,16 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # Pas de serveur ni d'endpoint à interroger : ce conteneur ne fait que
+    # boucler sur cron.php. On vérifie donc que son process est toujours là —
+    # même approche que recyclarr (`pgrep supercronic`), avec la même limite
+    # assumée : ça détecte un scheduler mort, pas un job individuel bloqué.
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f nextcloud-news-updater > /dev/null"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     logging:
       driver: "json-file"
       options:

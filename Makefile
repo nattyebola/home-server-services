@@ -54,6 +54,15 @@ up: network ## STACK=<nom> — démarre (ou met à jour) les conteneurs de la st
 		test -n "$$root" || (echo "DATA_ROOT not set in .env.shared" >&2 && exit 1); \
 		mkdir -p "$$root/.seerr/config"; \
 	fi
+	@# Même raison que ci-dessus : traefik tourne en PUID:PGID et n'écrirait pas
+	@# dans un dossier que Docker aurait créé en root. Porte l'access log
+	@# (accessLog dans traefik.yml), sans lequel aucune requête WAN ne laisse de
+	@# trace — y compris les 403 des middlewares LAN-only.
+	@if [ "$(STACK)" = "traefik" ]; then \
+		root=$$(grep '^DATA_ROOT=' .env.shared | cut -d= -f2); \
+		test -n "$$root" || (echo "DATA_ROOT not set in .env.shared" >&2 && exit 1); \
+		mkdir -p "$$root/.traefik/log"; \
+	fi
 	@# Les routeurs arr/transmission référencent `<nom>@file` : sans
 	@# traefik/dynamic/lan-only.yml, Traefik ne sait pas résoudre leur middleware
 	@# et répond 404. Écrit ici (en mode fermé) plutôt que laissé au premier
@@ -217,6 +226,13 @@ cron-install: ## — installe les crons du repo dans le crontab, en préservant 
 	@test -n "$(PUID)" || (echo "PUID not set in .env.shared" >&2 && exit 1)
 	@test -n "$(DATA_ROOT)" || (echo "DATA_ROOT not set in .env.shared" >&2 && exit 1)
 	@mkdir -p "$(DATA_ROOT)/.cron-status"
+	@# logrotate n'interprète aucune variable : ses chemins doivent être
+	@# littéraux. On rend donc le fichier avec les mêmes substitutions que le
+	@# crontab, vers DATA_ROOT (état d'exécution, hors du checkout — il
+	@# contiendrait sinon des chemins propres à ce déploiement dans un dépôt
+	@# public). La ligne cron pointe sur ce rendu, pas sur la source.
+	@sed -e "s|__REPO_ROOT__|$(CURDIR)|g" -e "s|__DATA_ROOT__|$(DATA_ROOT)|g" scripts/logrotate.conf > "$(DATA_ROOT)/.logrotate.conf"
+	@echo "rendered $(DATA_ROOT)/.logrotate.conf"
 	sed -e "s|__REPO_ROOT__|$(CURDIR)|g" -e "s|__PUID__|$(PUID)|g" -e "s|__DATA_ROOT__|$(DATA_ROOT)|g" scripts/crontab | scripts/install-crontab.sh "$(CURDIR)"
 	@echo "installed crontab:"
 	@crontab -l

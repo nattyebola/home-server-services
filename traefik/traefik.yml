@@ -1,6 +1,23 @@
 log:
   level: INFO
 
+# Traefik is the only entry point from the WAN (it alone publishes ports), so
+# without an access log there is no trace at all of who reaches Jellyfin,
+# Nextcloud, Seerr or the dashboard — including the 403s the LAN-only
+# middlewares emit, which is precisely what a scan from outside would produce.
+# The `rate-limit` middleware was the only counter-measure, and post-incident
+# there was nothing to analyse. fail2ban runs on the host but, with no access
+# log to read, can only watch SSH.
+#
+# JSON so it stays parsable by a future fail2ban jail (or jq) rather than
+# needing a regexp over the CLF format. Buffered to keep the write off the
+# request path. Volume + rotation: see docker-compose.yml and
+# scripts/logrotate.conf.
+accessLog:
+  filePath: /var/log/traefik/access.log
+  format: json
+  bufferingSize: 100
+
 entryPoints:
   web:
     address: ":8080"

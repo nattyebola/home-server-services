@@ -21,6 +21,21 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # Seul service du dépôt à en être resté dépourvu avec news-updater, alors
+    # que c'est lui qui médie l'accès Docker de Traefik : figé sans crasher, le
+    # provider docker cesse de voir les créations/suppressions de conteneurs,
+    # les routeurs se figent, et `restart: unless-stopped` ne se déclenche
+    # jamais puisque le process ne sort pas. Exactement le scénario que les
+    # healthchecks de 2026-07-24 devaient couvrir. Rien ne le verrait sinon :
+    # le dashboard lit `docker ps --filter health=unhealthy`.
+    # wget plutôt que nc : l'image est en read_only avec un tmpfs minimal, et
+    # /_ping est l'endpoint que Traefik interroge lui-même.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:2375/_ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     logging:
       driver: json-file
       options:
@@ -46,6 +61,12 @@ services:
       # scripts/lan-only-middleware.sh (holds LAN_CIDR, hence gitignored).
       - ./dynamic:/dynamic:ro
       - ./letsencrypt:/letsencrypt
+      # Access log (voir accessLog dans traefik.yml). Sous DATA_ROOT et pas dans
+      # le checkout : c'est de l'état d'exécution, pas de l'infra as code — même
+      # convention que .cron-status/ et .clearr.log. Le dossier est créé par
+      # `make up` (traefik tourne en PUID:PGID, et un dossier créé par Docker le
+      # serait en root). Rotation : scripts/logrotate.conf.
+      - ${DATA_ROOT}/.traefik/log:/var/log/traefik
       - /etc/localtime:/etc/localtime:ro
     networks:
       - socket-proxy
