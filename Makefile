@@ -8,7 +8,7 @@ STACKS := traefik jellyfin nextcloud vpn arr seerr
 
 UPDATE_STACKS := nextcloud vpn jellyfin arr seerr
 
-.PHONY: help network up down config logs update update-all backup restore cron-install dashboard-refresh clearr arr-overrides recyclarr-sync kodi-install api-keys provision switch-lan-only-middleware
+.PHONY: help network up down config logs update update-all backup restore cron-install dashboard-refresh clearr arr-overrides recyclarr-sync kodi-install api-keys provision switch-lan-only-middleware test
 
 # `make` sans argument affiche l'aide plutôt que de lancer la première cible
 # (c'était `network`, qui ne dit rien de ce que le reste sait faire).
@@ -212,6 +212,13 @@ switch-lan-only-middleware: ## — ouvre/referme les services LAN-only au WAN (r
 
 # weekly restic backup (nextcloud DB dump + data + .env secrets + image
 # digest manifest) — see scripts/backup.sh. Also run by cron, see CLAUDE.md.
+test: ## — lance les tests des chemins destructifs de clearr (stdlib, rien à installer)
+	@# unittest et pas pytest : le dépôt n'installe aucune dépendance de
+	@# développement, et python3 est déjà un prérequis. Les tests tournent dans
+	@# un répertoire temporaire (CLEARR_DATA_ROOT) et ne touchent NI la
+	@# bibliothèque réelle NI les API arr — les appels réseau sont bouchonnés.
+	@python3 arr/clearr/tests/test_core.py
+
 backup: ## — sauvegarde restic (aussi faite par cron le dimanche à 3 h)
 	@scripts/backup.sh
 

@@ -39,7 +39,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-DATA_ROOT = "/data_root"
+# /data_root est le montage réel en service (voir arr/docker-compose.yml) et
+# reste le défaut. L'override par variable d'environnement n'existe que pour les
+# tests (arr/clearr/tests/), qui doivent pouvoir faire pointer tout le module
+# vers un répertoire jetable : sans lui, aucun des chemins destructifs n'était
+# testable ailleurs que contre la vraie bibliothèque. Ne pas la poser en
+# production — les chemins renvoyés par les API arr sont en /data_root, et un
+# préfixe différent ne matcherait plus rien.
+DATA_ROOT = os.environ.get("CLEARR_DATA_ROOT", "/data_root")
 LIBRARY_ROOT = os.path.join(DATA_ROOT, "library")
 TRANSMISSION_DATA_ROOT = os.path.join(DATA_ROOT, ".transmission", "data")
 # Racine des téléchargements terminés. Aussi montée comme bibliothèque Jellyfin
