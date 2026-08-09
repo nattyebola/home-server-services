@@ -677,8 +677,14 @@ def render_tracker_row(tracker):
     # pas de filtrage côté Python : la ligne existe toujours dans le HTML.
     is_private = tracker.get("official") and tracker.get("private")
     row_class = "" if is_private else "tracker-row-other"
+    # html.escape comme les cartes voisines (render_indexers_card,
+    # render_scheduled_tasks_card) : string.Template n'échappe rien, et ce nom
+    # n'est pas toujours un libellé Prowlarr — c'est le hostname brut d'une URL
+    # d'annonce lue dans un .torrent tiers dès qu'aucun indexeur ne le
+    # revendique. Seul des trois emplacements de la section à ne pas le faire,
+    # sur la seule page du dépôt exposée au WAN.
     return render(
-        "tracker-row.html", name=tracker["name"], meter=meter,
+        "tracker-row.html", name=html.escape(tracker["name"]), meter=meter,
         uploaded=tracker["uploaded_human"], downloaded=tracker["downloaded_human"],
         row_class=row_class,
     )
