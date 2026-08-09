@@ -36,9 +36,18 @@ services:
       - OPENVPN_OPTS=--inactive 3600 --ping 10 --ping-exit 60
       - TRANSMISSION_PEER_PORT=40125
       - TRANSMISSION_PORT_FORWARDING_ENABLED=true
-      - TRANSMISSION_PEER_LIMIT_GLOBAL=500
+      - TRANSMISSION_PEER_LIMIT_GLOBAL=1000
       - TRANSMISSION_PEER_LIMIT_PER_TORRENT=100
       - TRANSMISSION_UPLOAD_SLOTS_PER_TORRENT=14
+      # Transmission 4 marque par défaut ses paquets en DSCP "le" (Lower Effort,
+      # RFC 8622) : une classe explicitement "à jeter en premier en cas de
+      # congestion", que le réseau du fournisseur VPN comme celui du FAI peuvent
+      # déprioriser. On ne veut pas de ce handicap sur du seeding.
+      # "cs0" (DSCP 0, best-effort normal) et PAS "default" : Transmission 4
+      # n'attend que des noms DSCP ici et rejette silencieusement "default" —
+      # updateSettings.py de l'image l'écrit bien dans settings.json, puis le
+      # daemon réécrit le fichier en remettant "le", sans aucun avertissement.
+      - TRANSMISSION_PEER_SOCKET_TOS=cs0
       - TRANSMISSION_UTP_ENABLED=true
       - TRANSMISSION_DHT_ENABLED=true
       - TRANSMISSION_PEX_ENABLED=true
