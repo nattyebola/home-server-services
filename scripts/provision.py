@@ -37,6 +37,7 @@
 # seerr ne l'a pas.
 import json
 import os
+import shlex
 import subprocess
 import sys
 
@@ -208,17 +209,32 @@ def fill_env(path, key, value):
 
 # --- HTTP via docker exec curl ----------------------------------------------
 
-def request(container, url, method="GET", headers=(), body=None, allow_status=()):
-    cmd = ["docker", "exec"]
-    if body is not None:
-        cmd.append("-i")
-    cmd += [container, "curl", "-s", "-w", "\n%{http_code}", "-X", method]
+def request(container, url, method="GET", headers=(), body=None, allow_status=(),
+            secret_header=None):
+    """`secret_header` = (nom, valeur) d'un en-tête d'authentification. Il passe
+    par STDIN et jamais par l'argv : la ligne de commande d'un `docker exec` est
+    lisible dans `ps` par n'importe quel processus local, et /proc n'est pas
+    monté avec hidepid ici. Le shell lit la valeur sur la première ligne, curl
+    consomme le reste du flux pour le corps — un seul canal pour les deux, sans
+    fichier temporaire. `headers` reste pour les en-têtes non secrets."""
+    args = ["-s", "-w", "\n%{http_code}", "-X", method]
     for header in headers:
-        cmd += ["-H", header]
+        args += ["-H", header]
     if body is not None:
-        cmd += ["-H", "Content-Type: application/json", "--data-binary", "@-"]
-    cmd.append(url)
-    res = subprocess.run(cmd, input=json.dumps(body) if body is not None else None,
+        args += ["-H", "Content-Type: application/json", "--data-binary", "@-"]
+    args.append(url)
+
+    payload = json.dumps(body) if body is not None else ""
+    if secret_header:
+        name, value = secret_header
+        quoted = " ".join(shlex.quote(a) for a in args)
+        script = f'IFS= read -r s; exec curl -H {shlex.quote(name + ": ")}"$s" {quoted}'
+        cmd = ["docker", "exec", "-i", container, "sh", "-c", script]
+        payload = value + "\n" + payload
+    else:
+        cmd = ["docker", "exec"] + (["-i"] if body is not None else []) + \
+              [container, "curl"] + args
+    res = subprocess.run(cmd, input=payload if (secret_header or body is not None) else None,
                          capture_output=True, text=True, timeout=120)
     if res.returncode != 0:
         raise Skipped(f"docker exec {container} a échoué (conteneur arrêté ?)")
@@ -240,7 +256,7 @@ def arr_request(name, path, method="GET", body=None, api_key=None):
     spec = ARRS[name]
     url = f"{spec['url']}/api/{spec['api']}{path}"
     return request(spec["container"], url, method,
-                   headers=[f"X-Api-Key: {api_key}"], body=body)
+                   secret_header=("X-Api-Key", api_key), body=body)
 
 
 # --- keys : 12a + 12j -------------------------------------------------------
@@ -281,7 +297,7 @@ def jellyfin_token(admin_user, admin_password):
     auth = ('MediaBrowser Client="server-infra", Device="make", '
             'DeviceId="server-infra-provision", Version="1.0.0"')
     result = request(PROXY_CONTAINER, f"{JELLYFIN_URL}/Users/AuthenticateByName", "POST",
-                     headers=[f"Authorization: {auth}"],
+                     secret_header=("Authorization", auth),
                      body={"Username": admin_user, "Pw": admin_password})
     token = (result or {}).get("AccessToken")
     if not token:
@@ -294,15 +310,15 @@ def jellyfin_api_key(token):
     sinon en crée une. Jellyfin expose les clés en clair sur /Auth/Keys, ce qui
     permet de les relire après création — l'API ne renvoie rien à la création."""
     existing = request(PROXY_CONTAINER, f"{JELLYFIN_URL}/Auth/Keys",
-                       headers=[f"X-Emby-Token: {token}"])
+                       secret_header=("X-Emby-Token", token))
     for item in (existing or {}).get("Items", []):
         if item.get("AppName") == JELLYFIN_KEY_APP:
             return item["AccessToken"], False
     request(PROXY_CONTAINER,
             f"{JELLYFIN_URL}/Auth/Keys?App={JELLYFIN_KEY_APP.replace(' ', '%20')}",
-            "POST", headers=[f"X-Emby-Token: {token}"])
+            "POST", secret_header=("X-Emby-Token", token))
     after = request(PROXY_CONTAINER, f"{JELLYFIN_URL}/Auth/Keys",
-                    headers=[f"X-Emby-Token: {token}"])
+                    secret_header=("X-Emby-Token", token))
     for item in (after or {}).get("Items", []):
         if item.get("AppName") == JELLYFIN_KEY_APP:
             return item["AccessToken"], True
@@ -351,7 +367,7 @@ def provision_jellyfin_libraries(jellyfin_key, done, skipped):
     la création d'une clé API elle-même — donc `make provision` ne dépend que de
     arr/.env."""
     existing = request(PROXY_CONTAINER, f"{JELLYFIN_URL}/Library/VirtualFolders",
-                       headers=[f"X-Emby-Token: {jellyfin_key}"]) or []
+                       secret_header=("X-Emby-Token", jellyfin_key)) or []
     by_name = {v["Name"]: v for v in existing}
     for library in JELLYFIN_LIBRARIES:
         current = by_name.get(library["name"])
@@ -364,7 +380,7 @@ def provision_jellyfin_libraries(jellyfin_key, done, skipped):
                 f"{JELLYFIN_URL}/Library/VirtualFolders"
                 f"?name={library['name'].replace(' ', '%20')}"
                 f"&collectionType={library['collection_type']}&refreshLibrary=true",
-                "POST", headers=[f"X-Emby-Token: {jellyfin_key}"],
+                "POST", secret_header=("X-Emby-Token", jellyfin_key),
                 body={"LibraryOptions": {"PathInfos": [{"Path": library["path"]}],
                                           "EnableRealtimeMonitor": True,
                                           "LocalMetadataReaderOrder": JELLYFIN_METADATA_READER_ORDER}})
@@ -557,7 +573,7 @@ def provision_prowlarr_apps(arr_env, done, skipped):
 
 def seerr_request(path, method="GET", body=None, api_key=None, allow_status=()):
     return request(PROXY_CONTAINER, f"{SEERR_URL}/api/v1{path}", method,
-                   headers=[f"X-Api-Key: {api_key}"], body=body,
+                   secret_header=("X-Api-Key", api_key), body=body,
                    allow_status=allow_status)
 
 

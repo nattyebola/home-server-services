@@ -22,6 +22,7 @@ import json
 import math
 import os
 import re
+import shlex
 import shutil
 import string
 import subprocess
@@ -208,16 +209,19 @@ def prowlarr_indexer_health():
     if not api_key:
         return None
     try:
-        indexers_res = subprocess.run(
-            ["docker", "exec", PROWLARR_CONTAINER, "curl", "-s",
-             "-H", f"X-Api-Key: {api_key}", f"{PROWLARR_URL}/indexer"],
-            capture_output=True, text=True, timeout=15,
-        )
-        status_res = subprocess.run(
-            ["docker", "exec", PROWLARR_CONTAINER, "curl", "-s",
-             "-H", f"X-Api-Key: {api_key}", f"{PROWLARR_URL}/indexerstatus"],
-            capture_output=True, text=True, timeout=15,
-        )
+        # Clé passée par stdin, jamais en argument : l'argv d'un `docker exec`
+        # est lisible dans `ps` par tout processus local, et ce script tourne
+        # toutes les 5 min par cron.
+        def prowlarr_get(path):
+            script = ('IFS= read -r k; exec curl -s -H "X-Api-Key: $k" '
+                      + shlex.quote(f"{PROWLARR_URL}{path}"))
+            return subprocess.run(
+                ["docker", "exec", "-i", PROWLARR_CONTAINER, "sh", "-c", script],
+                input=api_key, capture_output=True, text=True, timeout=15,
+            )
+
+        indexers_res = prowlarr_get("/indexer")
+        status_res = prowlarr_get("/indexerstatus")
         indexers = json.loads(indexers_res.stdout)
         failing = json.loads(status_res.stdout)
     except (subprocess.TimeoutExpired, json.JSONDecodeError):

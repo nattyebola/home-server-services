@@ -16,6 +16,7 @@
 # "indisponible" plutôt que planter toute la régénération du dashboard.
 import json
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -134,10 +135,14 @@ def build_prowlarr_tracker_map():
     (voir resolve_tracker_name)."""
     if not PROWLARR_API_KEY:
         return {}, {}
-    cmd = ["docker", "exec", PROWLARR_CONTAINER, "curl", "-s",
-           "-H", f"X-Api-Key: {PROWLARR_API_KEY}", PROWLARR_URL]
+    # Clé passée par stdin, jamais en argument : l'argv d'un `docker exec` est
+    # lisible dans `ps` par tout processus local (/proc sans hidepid ici), et ce
+    # script tourne toutes les 5 min par cron via le dashboard.
+    cmd = ["docker", "exec", "-i", PROWLARR_CONTAINER, "sh", "-c",
+           f'IFS= read -r k; exec curl -s -H "X-Api-Key: $k" {shlex.quote(PROWLARR_URL)}']
     try:
-        res = subprocess.run(cmd, capture_output=True, timeout=15)
+        res = subprocess.run(cmd, input=PROWLARR_API_KEY.encode() + b"\n",
+                             capture_output=True, timeout=15)
     except subprocess.TimeoutExpired:
         return {}, {}
     if res.returncode != 0:

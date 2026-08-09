@@ -34,6 +34,7 @@ import copy
 import datetime
 import json
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -241,11 +242,22 @@ CURL_WRITE_OUT = "\n%{http_code}"
 
 
 def _curl(container, api_key, args, stdin=None):
-    """Renvoie (code_http, corps). Lève si docker exec lui-même échoue."""
-    cmd = ["docker", "exec"] + (["-i"] if stdin is not None else []) + [
-        container, "curl", "-s", "-w", CURL_WRITE_OUT,
-        "-H", f"X-Api-Key: {api_key}"] + args
-    res = subprocess.run(cmd, input=stdin, capture_output=True, timeout=15)
+    """Renvoie (code_http, corps). Lève si docker exec lui-même échoue.
+
+    La clé API passe par STDIN, jamais en argument : l'argv d'un `docker exec`
+    est lisible dans `ps` par n'importe quel processus local, et /proc n'est pas
+    monté avec hidepid ici. Ces scripts tournent par cron toutes les 5 min pour
+    certains, la fenêtre d'exposition n'était donc pas théorique.
+
+    Le shell lit la clé sur la première ligne (`read k`), curl consomme le reste
+    du flux pour le corps via `--data @-` — un seul canal pour les deux, sans
+    fichier temporaire. `IFS= read -r` pour ne rien réinterpréter dans la clé.
+    """
+    quoted = " ".join(shlex.quote(a) for a in args)
+    script = f'IFS= read -r k; exec curl -s -w {shlex.quote(CURL_WRITE_OUT)} -H "X-Api-Key: $k" {quoted}'
+    payload = api_key.encode() + b"\n" + (stdin or b"")
+    res = subprocess.run(["docker", "exec", "-i", container, "sh", "-c", script],
+                         input=payload, capture_output=True, timeout=15)
     if res.returncode != 0:
         raise RuntimeError(f"docker exec {container} a échoué — container arrêté ?")
     body, _, code = res.stdout.decode().rpartition("\n")
