@@ -1,3 +1,16 @@
+// localStorage lève une SecurityError quand le stockage du site est bloqué
+// (navigation privée sur d'anciens Safari, Firefox « bloquer les cookies »,
+// politique d'entreprise). Non gardé, l'appel interrompait l'IIFE AVANT que son
+// addEventListener soit posé : la section Monitoring restait masquée ET son
+// switch ne répondait plus, sans message. Le dashboard étant public, le
+// navigateur du visiteur n'est pas maîtrisé.
+function storageGet(key) {
+  try { return localStorage.getItem(key); } catch (e) { return null; }
+}
+function storageSet(key, value) {
+  try { localStorage.setItem(key, value); } catch (e) { /* stockage bloqué */ }
+}
+
 // Grise les cartes LAN-only quand l'appelant est sur le WAN : leur
 // ipallowlist Traefik répond 403 à la sonde ci-dessous, ce que <img>
 // distingue d'un chargement réussi sans dépendre de CORS.
@@ -27,9 +40,9 @@ document.querySelectorAll('.card[data-probe]').forEach(function (card) {
     content.classList.toggle('monitoring-hidden', !visible);
     toggle.checked = visible;
   };
-  apply(localStorage.getItem(STORAGE_KEY) === '1');
+  apply(storageGet(STORAGE_KEY) === '1');
   toggle.addEventListener('change', function () {
-    localStorage.setItem(STORAGE_KEY, toggle.checked ? '1' : '0');
+    storageSet(STORAGE_KEY, toggle.checked ? '1' : '0');
     apply(toggle.checked);
   });
 })();
@@ -51,9 +64,43 @@ document.querySelectorAll('.card[data-probe]').forEach(function (card) {
     card.classList.toggle('show-all-trackers', showAll);
     toggle.checked = showAll;
   };
-  apply(localStorage.getItem(STORAGE_KEY) === '1');
+  apply(storageGet(STORAGE_KEY) === '1');
   toggle.addEventListener('change', function () {
-    localStorage.setItem(STORAGE_KEY, toggle.checked ? '1' : '0');
+    storageSet(STORAGE_KEY, toggle.checked ? '1' : '0');
     apply(toggle.checked);
   });
+})();
+
+// Signale que la page servie est périmée, c'est-à-dire que le cron de
+// régénération ne tourne plus. C'est la SEULE vérification d'état qui ne
+// dépend pas de generate-dashboard.py : la carte « Tâches planifiées » est
+// rendue par lui, donc s'il casse, nginx continue de servir le dernier
+// index.html valide — avec toutes ses pastilles au vert, et masquant du même
+// coup les pannes qu'il aurait dû rapporter (sauvegarde périmée, cron
+// Nextcloud arrêté, conteneur unhealthy). Point unique de défaillance de
+// toute l'observabilité, d'où ce contrôle côté client.
+(function () {
+  var footer = document.querySelector('.updated[data-generated]');
+  if (!footer) { return; }
+  var generated = parseInt(footer.dataset.generated, 10);
+  var staleAfter = parseInt(footer.dataset.staleAfter, 10);
+  if (!generated || !staleAfter) { return; }
+  var warn = footer.querySelector('.updated-warning');
+  var check = function () {
+    var age = Math.floor(Date.now() / 1000) - generated;
+    var stale = age > staleAfter;
+    footer.classList.toggle('updated-stale', stale);
+    if (!warn) { return; }
+    warn.hidden = !stale;
+    if (stale) {
+      warn.textContent = 'Page périmée depuis ' + Math.floor(age / 60)
+        + ' min — la régénération automatique ne tourne plus, les états affichés '
+        + 'ci-dessus ne sont plus à jour. ';
+    }
+  };
+  check();
+  // Re-vérifie pendant que l'onglet reste ouvert : la page ne se recharge pas
+  // toute seule, donc sans ça un dashboard laissé affiché resterait crédible
+  // indéfiniment après l'arrêt du cron.
+  setInterval(check, 60000);
 })();

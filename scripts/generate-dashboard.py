@@ -155,7 +155,18 @@ def docker_ps_set(extra_filters=()):
     for f in extra_filters:
         args += ["--filter", f]
     args += ["--format", '{{.Label "com.docker.compose.project"}}/{{.Label "com.docker.compose.service"}}']
-    res = subprocess.run(args, capture_output=True, text=True)
+    try:
+        res = subprocess.run(args, capture_output=True, text=True, timeout=15)
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError("`docker ps` ne répond pas — dashboard non régénéré") from e
+    # Échouer bruyamment plutôt que rendre un ensemble vide : sans ce test, un
+    # daemon Docker injoignable faisait basculer TOUS les services en « Stack non
+    # lancée » et toutes les cartes en placeholder « Arrêté ». La page produite
+    # aurait été un rapport de panne générale parfaitement crédible, alors que
+    # seule la commande d'inspection avait échoué.
+    if res.returncode != 0:
+        raise RuntimeError(f"`docker ps` a échoué ({res.returncode}) : "
+                           f"{res.stderr.strip()[:200]} — dashboard non régénéré")
     return {line for line in res.stdout.splitlines() if line}
 
 
@@ -169,7 +180,10 @@ def docker_compose_config(stack):
     if override.exists():
         args += ["-f", str(override)]
     args += ["config", "--format", "json"]
-    res = subprocess.run(args, capture_output=True, text=True)
+    try:
+        res = subprocess.run(args, capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return {}
     if res.returncode != 0:
         return {}
     try:
@@ -527,6 +541,13 @@ def render_disk_card(data_root, backup_dir):
 # a été manqué ou a échoué silencieusement plutôt que la fenêtre normale
 # entre deux cron.
 BACKUP_MAX_AGE_DAYS = 7
+
+# Au-delà, dashboard.js signale que la page servie est périmée — donc que le
+# cron de régénération ne tourne plus. 3 ticks de l'intervalle */5 : assez large
+# pour absorber le jitter du scheduler et un tick manqué (même raison que
+# CRON_MARKER_SLACK), assez court pour que ça se voie dans la demi-heure.
+DASHBOARD_STALE_AFTER_SECONDS = 15 * 60
+
 RESTIC_REPO_DIR = REPO_ROOT / "sauvegarde" / "restic-repo"
 RESTIC_PASSWORD_FILE = REPO_ROOT / "sauvegarde" / "restic-password"
 
@@ -841,15 +862,34 @@ def main():
 
     copy_assets()
 
+    now = datetime.now()
     page = render(
         "page.html",
         domain=domain,
-        updated=datetime.now().strftime("%Y-%m-%d %H:%M"),
+        updated=now.strftime("%Y-%m-%d %H:%M"),
+        # Horodatage machine + seuil, consommés par dashboard.js. C'est la SEULE
+        # vérification d'état qui ne dépend pas de ce script : la carte « Tâches
+        # planifiées » est rendue par lui, donc s'il casse (erreur Python, docker
+        # indisponible) le dernier index.html valide continue d'être servi avec
+        # toutes ses pastilles au vert — et masque du même coup toutes les pannes
+        # qu'il aurait dû rapporter. Un surlignage client existait, retiré le
+        # 2026-07-30 comme « redondant avec la carte » ; il était en fait le seul
+        # signal indépendant, d'où son retour ici.
+        generated_epoch=int(now.timestamp()),
+        stale_after=DASHBOARD_STALE_AFTER_SECONDS,
         lan_banner=render_lan_only_banner(env_shared.get("DATA_ROOT")),
         sections="\n".join(sections),
     )
     out_file = OUT_DIR / "index.html"
-    out_file.write_text(page)
+    # Écriture atomique : deux lignes cron régénèrent le dashboard, toutes les
+    # 5 min chacune (le tick régulier et le garde `rearm` de
+    # lan-only-middleware.sh), donc à la minute où une fenêtre WAN expire les
+    # deux tombent ensemble. Une écriture en place (write_text tronque puis
+    # écrit) sert alors une page tronquée au visiteur — précisément au moment où
+    # le bandeau « ouvert au WAN » doit être fiable.
+    tmp_file = out_file.with_suffix(".html.tmp")
+    tmp_file.write_text(page)
+    os.replace(tmp_file, out_file)
     print(f"dashboard régénéré : {out_file}")
 
 

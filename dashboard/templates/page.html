@@ -14,7 +14,9 @@
 $lan_banner
 $sections
 
-  <footer class="updated">Généré le $updated — make dashboard-refresh</footer>
+  <footer class="updated" data-generated="$generated_epoch" data-stale-after="$stale_after">
+    <span class="updated-warning" hidden></span>Généré le $updated — make dashboard-refresh
+  </footer>
 
   <script src="/assets/dashboard.js"></script>
 </body>

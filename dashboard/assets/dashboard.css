@@ -38,6 +38,11 @@ h1 { font-size: 1.4rem; margin: 0 0 1.5rem; }
 .switch input:checked + .switch-slider { background: var(--status-good); }
 .switch input:checked + .switch-slider::before { transform: translateX(14px); }
 .updated { font-size: .85rem; opacity: .6; margin: 2.5rem auto 0; max-width: 960px; text-align: center; }
+/* Page périmée = le cron de régénération ne tourne plus (voir dashboard.js).
+   Pleine opacité : c'est le seul signal qui survit à une panne du générateur,
+   il ne doit pas être aussi discret que le pied de page normal. */
+.updated-stale { opacity: 1; color: var(--status-critical); font-weight: 600; }
+.updated-warning { display: block; margin-bottom: .35rem; }
 /* Bandeau « restriction LAN désactivée » (make switch-lan-only-middleware).
    Pleine opacité et couleur de statut critique, contrairement à .updated : il
    signale un état volontairement temporaire qu'on ne doit pas rater en
