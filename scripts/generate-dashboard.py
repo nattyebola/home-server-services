@@ -654,8 +654,18 @@ def render_scheduled_tasks_card(data_root, running):
         items.append((label, age_seconds is not None and age_seconds <= interval_seconds * CRON_MARKER_SLACK))
 
     lis = "\n".join(
-        '<li><span class="status-dot status-dot-{}"></span>{}</li>'.format(
-            "good" if ok else "critical", html.escape(label),
+        # Glyphe + texte caché en plus de la pastille : l'état ne reposait QUE
+        # sur la couleur (WCAG 1.4.1), donc invisible pour un daltonien deutan
+        # ou protan — ~8 % des hommes — alors que c'est la seule information de
+        # la carte, et muet pour un lecteur d'écran (1.1.1), qui n'entendait
+        # qu'une liste de noms. Le glyphe hérite de la couleur du point.
+        '<li><span class="status-dot status-dot-{cls}"></span>'
+        '<span class="status-mark status-mark-{cls}" aria-hidden="true">{mark}</span>'
+        '{label}<span class="visually-hidden"> — {state}</span></li>'.format(
+            cls="good" if ok else "critical",
+            mark="✓" if ok else "✕",
+            label=html.escape(label),
+            state="OK" if ok else "en échec",
         )
         for label, ok in items
     )
@@ -675,8 +685,15 @@ def render_indexers_card(running):
     if indexers is None:
         return None
     items = "\n".join(
-        '<li><span class="status-dot status-dot-{}"></span>{}</li>'.format(
-            "good" if i["ok"] else "critical", html.escape(i["name"]),
+        # Même raison que render_scheduled_tasks_card ci-dessus : « quel
+        # indexeur est tombé » ne doit pas dépendre de la perception des couleurs.
+        '<li><span class="status-dot status-dot-{cls}"></span>'
+        '<span class="status-mark status-mark-{cls}" aria-hidden="true">{mark}</span>'
+        '{label}<span class="visually-hidden"> — {state}</span></li>'.format(
+            cls="good" if i["ok"] else "critical",
+            mark="✓" if i["ok"] else "✕",
+            label=html.escape(i["name"]),
+            state="OK" if i["ok"] else "en échec",
         )
         for i in indexers
     )
