@@ -35,7 +35,27 @@ services:
       - OPENVPN_PROVIDER=CUSTOM
       - OPENVPN_OPTS=--inactive 3600 --ping 10 --ping-exit 60
       - TRANSMISSION_PEER_PORT=40125
+      # Le port fixe ci-dessus est celui ouvert côté AirVPN : sans cette ligne,
+      # rien dans le dépôt ne garantit que Transmission ne reparte pas sur un
+      # port aléatoire au premier démarrage d'une installation neuve. Le défaut
+      # produit est déjà `false`, mais avec des images en :latest un défaut amont
+      # n'est pas une garantie — et la panne serait muette : plus aucune
+      # connexion entrante, ce qui se lit comme une lenteur, pas comme une panne.
+      - TRANSMISSION_PEER_PORT_RANDOM_ON_START=false
       - TRANSMISSION_PORT_FORWARDING_ENABLED=true
+      # Les deux dossiers sur lesquels repose toute la chaîne : `completed` est
+      # ce que les arr voient via leur remote path mapping (voir
+      # scripts/provision.py) et ce que cross-seed compare tel quel à ses
+      # dataDirs, `incomplete` évite qu'un fichier en cours d'écriture soit vu
+      # par un scan. Ce sont les défauts de l'image, explicités ici parce que le
+      # reste du dépôt en dépend en dur.
+      - TRANSMISSION_DOWNLOAD_DIR=/data/completed
+      - TRANSMISSION_INCOMPLETE_DIR=/data/incomplete
+      - TRANSMISSION_INCOMPLETE_DIR_ENABLED=true
+      # 002 : les fichiers écrits par Transmission doivent rester inscriptibles
+      # par le groupe, sinon Sonarr/Radarr (mêmes PUID/PGID) ne peuvent plus
+      # créer leurs hardlinks dans library/ ni supprimer à l'import.
+      - TRANSMISSION_UMASK=002
       - TRANSMISSION_PEER_LIMIT_GLOBAL=1000
       - TRANSMISSION_PEER_LIMIT_PER_TORRENT=100
       - TRANSMISSION_UPLOAD_SLOTS_PER_TORRENT=14
