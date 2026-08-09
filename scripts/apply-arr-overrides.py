@@ -318,6 +318,35 @@ def apply_radarr_language(container, base_url, api_key, profile_name):
     return [f"Radarr {profile_name}: language {before} -> Any"]
 
 
+# Réglages de /config/mediamanagement à maintenir sur les deux arr. Un seul
+# aujourd'hui, mais celui-là porte à lui seul le fix du 2026-07-23.
+#
+# copyUsingHardlinks est la valeur par défaut du produit, donc une installation
+# neuve la retrouve — mais RIEN ne la protégeait d'un basculement dans l'UI ni
+# d'un changement de défaut en amont. La repasser à false rejouerait
+# silencieusement le bug de juillet : chaque import redevient une copie
+# complète au lieu d'un hardlink, ~185 Go regagnés à l'époque en le corrigeant,
+# et aucune erreur nulle part — la seule manifestation est le disque qui se
+# remplit deux fois plus vite. C'est exactement le genre de réglage qu'un
+# script déclaratif doit tenir.
+MEDIA_MANAGEMENT_OVERRIDES = {"copyUsingHardlinks": True}
+
+
+def apply_media_management(label, container, base_url, api_key, overrides):
+    config = api_get(container, base_url, api_key, "/config/mediamanagement")
+    # Même leçon que _arr_covered_paths dans clearr : une réponse d'erreur
+    # Servarr est un JSON valide ({"message": ...}), donc isinstance ne suffit
+    # pas — on exige le champ qu'on va réellement utiliser.
+    if not isinstance(config, dict) or "id" not in config:
+        raise RuntimeError(f"{label}: /config/mediamanagement n'a pas renvoyé un objet exploitable")
+    current = {k: config.get(k) for k in overrides}
+    if current == overrides:
+        return []
+    config.update(overrides)
+    api_put(container, base_url, api_key, f"/config/mediamanagement/{config['id']}", config)
+    return [f"{label} mediamanagement: {current} -> {overrides}"]
+
+
 def set_field(body, name, value):
     for field in body["fields"]:
         if field["name"] == name:
@@ -697,6 +726,14 @@ def main():
                                        sonarr_api_key, SONARR_XBMC_METADATA_FIELDS)
     except Exception as e:
         errors.append(f"Sonarr (metadata): {e}")
+    # Hors `settle` : recyclarr ne touche pas à /config/mediamanagement, il n'y
+    # a donc pas de course à perdre ici — seul un changement manuel dans l'UI
+    # peut faire dériver ce réglage.
+    try:
+        changed += apply_media_management("Sonarr", SONARR_CONTAINER, SONARR_URL,
+                                          sonarr_api_key, MEDIA_MANAGEMENT_OVERRIDES)
+    except Exception as e:
+        errors.append(f"Sonarr (mediamanagement): {e}")
     # Les deux réglages Radarr que recyclarr fait dériver, donc sous `settle`
     # pour la même raison que les tailles Sonarr — le champ `language` vit sur le
     # profil qualité, que recyclarr réécrit aussi.
@@ -724,6 +761,11 @@ def main():
                                        radarr_api_key, RADARR_XBMC_METADATA_FIELDS)
     except Exception as e:
         errors.append(f"Radarr (metadata): {e}")
+    try:
+        changed += apply_media_management("Radarr", RADARR_CONTAINER, RADARR_URL,
+                                          radarr_api_key, MEDIA_MANAGEMENT_OVERRIDES)
+    except Exception as e:
+        errors.append(f"Radarr (mediamanagement): {e}")
     # Bloc à part, et par arr : le PUT d'un indexeur est le seul de ce script à
     # dépendre d'un service tiers joignable (le tracker lui-même, testé par
     # Sonarr/Radarr au moment de l'écriture même avec forceSave).
