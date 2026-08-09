@@ -62,3 +62,17 @@ MAILTO=""
 # carries a red banner (with the deadline) for as long as the window is open,
 # which is the state actually worth surveilling.
 */5 * * * * __REPO_ROOT__/scripts/lan-only-middleware.sh rearm >> __REPO_ROOT__/dashboard/refresh.log 2>&1
+
+# Rotate this repo's log files. Runs as the invoking user with its own state
+# file rather than dropping a config into /etc/logrotate.d: no root needed, and
+# the system logrotate has no business knowing about this checkout. Fires daily
+# because the config's shortest cadence is daily (Traefik's access log); the
+# per-file schedule is decided there, not here. No success marker: a rotation
+# that does nothing most days would only ever show green on the dashboard, same
+# reasoning as the LAN-only guard above.
+# NOTE: points at the RENDERED config under DATA_ROOT, not scripts/logrotate.conf
+# — logrotate expands no variables, so its paths must be literal; `make
+# cron-install` does that substitution (see the Makefile).
+# the placeholders below are substituted by `make cron-install` with this
+# checkout's absolute path and DATA_ROOT — never hardcode literals here.
+30 4 * * * logrotate --state __DATA_ROOT__/.logrotate.state __DATA_ROOT__/.logrotate.conf >> __REPO_ROOT__/dashboard/refresh.log 2>&1

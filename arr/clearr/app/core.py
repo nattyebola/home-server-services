@@ -82,9 +82,14 @@ SONARR_API_KEY = os.environ.get("SONARR_API_KEY")
 # INFO = actions normales (lancement, suppressions), WARNING = anomalie
 # récupérée sans bloquer (fichier déjà absent, échec de suppression isolé),
 # ERROR = échec qui empêche l'action demandée.
+# DEBUG par défaut faisait ~95 Ko/jour (une ligne par appel RPC et par lookup),
+# soit ~35 Mo/an sans rotation — et surtout une trace d'erreur noyée au milieu.
+# INFO par défaut, DEBUG à la demande via CLEARR_LOG_LEVEL quand on diagnostique
+# vraiment : la valeur utile au quotidien n'est pas celle utile une fois par
+# trimestre. La rotation est par ailleurs assurée par scripts/logrotate.conf.
 logging.basicConfig(
     filename=LOG_PATH,
-    level=logging.DEBUG,
+    level=getattr(logging, os.environ.get("CLEARR_LOG_LEVEL", "INFO").upper(), logging.INFO),
     format="%(asctime)s %(levelname)s: %(message)s",
     datefmt="%Y-%m-%dT%H:%M:%S",
 )
