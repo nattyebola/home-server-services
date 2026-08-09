@@ -57,6 +57,20 @@ Détail de chaque service, schémas et rationale des choix : voir
   `make dashboard-refresh`, `make arr-overrides` et les stats Transmission du
   dashboard (`scripts/*.py`).
 - [`restic`](https://restic.net/) pour les sauvegardes.
+- `logrotate` — le cron de l'étape 21 s'en sert pour tourner les journaux du
+  dépôt et l'access log Traefik. Lancé en tant qu'utilisateur avec son propre
+  fichier d'état, donc **sans root** et sans rien déposer dans
+  `/etc/logrotate.d`.
+- (optionnel, recommandé) `fail2ban` sur l'hôte. Il ne fait pas partie de la
+  stack mais complète l'access log Traefik (`accessLog` dans
+  `traefik/traefik.yml`), qui est le seul endroit où les requêtes WAN — y
+  compris les 403 des middlewares LAN-only — laissent une trace. Sans jail
+  lisant ce fichier, fail2ban ne surveille que SSH.
+- (optionnel, Jellyfin) les **plugins** ne sont pas provisionnés : à installer
+  une fois dans l'UI. `Kodi Sync Queue` est nécessaire si vous utilisez
+  l'addon de l'étape 22 (c'est lui qui propage une suppression jusqu'à Kodi).
+  Le **transcodage matériel** (VAAPI) ne l'est pas non plus, il dépend du GPU
+  de la machine — voir Tableau de bord → Lecture.
 - (optionnel, client Kodi) Kodi 19+ avec l'addon `jellyfin-kodi` en mode sync,
   si vous voulez l'entrée de menu contextuel « Supprimer avec clearr »
   (étape 22).
@@ -209,7 +223,11 @@ Détail de chaque service, schémas et rationale des choix : voir
     Transmission comme client de téléchargement, les Root Folders
     (`/data_root/library/...` — le préfixe `/data_root` est essentiel, c'est le
     montage unique qui rend le hardlink possible à l'import, voir
-    [`ARCHITECTURE.md`](ARCHITECTURE.md)), la Connection **Custom Script**
+    [`ARCHITECTURE.md`](ARCHITECTURE.md)), le **remote path mapping** qui
+    traduit les chemins annoncés par Transmission (`/data/completed/`) vers
+    ceux que voient les arr (`/data_root/.transmission/data/completed/`) —
+    sans lui les téléchargements aboutissent mais ne sont **jamais importés**,
+    sans erreur nulle part —, la Connection **Custom Script**
     cross-seed, puis toute la configuration de Seerr (compte propriétaire
     importé depuis Jellyfin, bibliothèques, Sonarr/Radarr avec les profils de
     l'étape 16, et le scan complet de bibliothèque).
@@ -219,14 +237,47 @@ Détail de chaque service, schémas et rationale des choix : voir
     existant — donc relançable sans risque, et chaque objet est indépendant :
     un service arrêté ne fait échouer que ce qui le concerne.
 
-18. **Ajouter les indexeurs Prowlarr** (seule configuration d'UI restante :
-    elle demande vos identifiants de tracker) dans
-    `https://prowlarr.<DOMAIN>`. Reportez ensuite leurs IDs dans
-    `CROSS_SEED_INDEXER_IDS` (`arr/.env`, voir `.env.example` — l'ID apparaît
-    dans l'URL de chaque indexeur) et relancez `make up STACK=arr` pour que
-    cross-seed les prenne en compte. Prowlarr synchronise de lui-même les
-    nouveaux indexeurs vers Sonarr/Radarr, les applications de l'étape 17
-    étant en `fullSync`.
+18. **Déclarer vos indexeurs Prowlarr**. Ils sont créés par `make provision`
+    (étape 17) à partir de `arr/profiles/prowlarr-indexers.json`, à copier
+    depuis le `.example` à côté et à adapter :
+
+    ```sh
+    cp arr/profiles/prowlarr-indexers.json.example arr/profiles/prowlarr-indexers.json
+    ```
+
+    Ce fichier est **gitignoré** — il nomme les trackers que vous utilisez,
+    ce qui n'a pas sa place dans un dépôt public — mais il est inclus dans la
+    sauvegarde restic. Il ne contient **aucun secret** : les clés de compte
+    (`apikey`, `passkey`) y sont désignées par nom de variable, à renseigner
+    dans `arr/.env` (voir son `.example`). Sans la variable attendue,
+    l'indexeur n'est pas créé et le script le signale — un indexeur sans son
+    secret ne répondrait à aucune recherche, ce qui est plus difficile à
+    diagnostiquer qu'un objet absent.
+
+    Pour connaître le `definitionName` d'un tracker, cherchez-le dans la liste
+    des définitions Cardigann que Prowlarr expose :
+
+    ```sh
+    docker exec arr-prowlarr-1 curl -s -H "X-Api-Key: <clé>" \
+      http://localhost:9696/api/v1/indexer/schema \
+      | python3 -c 'import json,sys; [print(i["definitionName"], "—", i["name"]) for i in json.load(sys.stdin)]' \
+      | grep -i <nom-du-tracker>
+    ```
+
+    Ne listez dans `fields` que ce qui **diffère du défaut** de la définition :
+    tout le reste est repris du schéma, donc suit les mises à jour amont au
+    lieu d'être figé. Rien n'empêche par ailleurs d'ajouter un indexeur
+    directement dans l'UI (`https://prowlarr.<DOMAIN>`) — il ne sera
+    simplement pas recréé sur une installation neuve.
+
+    Reportez ensuite les IDs dans `CROSS_SEED_INDEXER_IDS` (`arr/.env`, voir
+    `.env.example` — l'ID apparaît dans l'URL de chaque indexeur) et relancez
+    `make up STACK=arr` pour que cross-seed les prenne en compte. Ces IDs sont
+    attribués par Prowlarr et **changent si un indexeur est recréé** : un ID
+    obsolète ne produit aucune erreur, seulement des recherches sans résultat
+    (voir [`ISSUES.md`](ISSUES.md)). Prowlarr synchronise de lui-même les
+    indexeurs vers Sonarr/Radarr, les applications de l'étape 17 étant en
+    `fullSync`.
 
     Si votre bibliothèque (`${DATA_ROOT}/library`) n'est pas sur le même
     disque que le reste de `DATA_ROOT` (vérifiable avec `df` sur les deux
@@ -255,14 +306,24 @@ Détail de chaque service, schémas et rationale des choix : voir
                           # ailleurs immédiatement (gestionnaire de mdp)
     make cron-install     # installe scripts/crontab comme crontab de l'hôte
     ```
-    `make cron-install` programme cinq tâches : le cron interne Nextcloud
+    `make cron-install` programme six tâches : le cron interne Nextcloud
     (`cron.php`, 5 min), la sauvegarde restic (hebdomadaire, dimanche 3h),
     la régénération du dashboard (5 min), `recyclarr-sync` +
-    `apply-arr-overrides.py` (quotidien, minuit) et la refermeture du
+    `apply-arr-overrides.py` (quotidien, minuit), la refermeture du
     middleware LAN-only (5 min, ne fait rien sauf après un
-    `make switch-lan-only-middleware` — voir plus bas). Les tâches liées à une
+    `make switch-lan-only-middleware` — voir plus bas) et la rotation des
+    journaux (quotidien, 4h30). Les tâches liées à une
     stack sont protégées par `scripts/require-running.sh` : elles ne font
     rien si la stack concernée est arrêtée.
+
+    La commande **fusionne** ces tâches dans un bloc délimité par deux
+    commentaires marqueurs et recopie verbatim tout ce qui est en dehors :
+    vos propres jobs cron survivent à une réinstallation. Elle refuse
+    d'installer plutôt que de deviner si `crontab -l` échoue pour une raison
+    autre que « pas encore de crontab », ou si les marqueurs du bloc sont
+    déséquilibrés. Elle rend aussi la configuration logrotate vers
+    `${DATA_ROOT}/.logrotate.conf` — `logrotate` n'interprétant aucune
+    variable, ses chemins doivent être littéraux.
 
 22. **(optionnel) Addon Kodi « Supprimer avec clearr »** — sur la machine où
     tourne Kodi, pas forcément le serveur :
@@ -374,6 +435,9 @@ est pas connu (téléchargement jamais importé), ce volet est simplement
 sauté — la suppression des fichiers n'est jamais bloquée pour autant.
 Le plan d'action est affiché dans l'écran de confirmation avant exécution.
 
-Journal détaillé de chaque suppression (fichiers touchés côté Transmission,
+Journal de chaque suppression (fichiers touchés côté Transmission,
 bibliothèque et actions Sonarr/Radarr, erreurs éventuelles) dans
-`${DATA_ROOT}/.clearr.log`.
+`${DATA_ROOT}/.clearr.log`, tourné chaque semaine par le cron de l'étape 21.
+Niveau `INFO` par défaut ; passer `CLEARR_LOG_LEVEL=DEBUG` dans
+`arr/docker-compose.yml` pour le détail des appels RPC et des recherches de
+correspondance, utile seulement en diagnostic (~95 Ko/jour).
