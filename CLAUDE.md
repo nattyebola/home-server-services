@@ -739,6 +739,33 @@ explicitement :
   une variable d'env `TZ` : ne dépend pas d'un paquet `tzdata` présent dans
   chaque image et suit automatiquement les changements d'heure d'été/hiver
   de l'hôte. Ajouter ce montage à tout nouveau service plutôt que `TZ=...`.
+- **Historique git réécrit le 2026-08-09 (force-push)** pour retirer l'adresse
+  e-mail personnelle qui y traînait : dans `traefik/traefik.yml` (committée le
+  2026-07-14, retirée du fichier le 2026-07-18 — mais toujours lisible dans 21
+  révisions) **et surtout comme auteur/committer des 141 commits**. Le nettoyage
+  de juillet n'avait donc rien masqué : réécrire le seul fichier laissait
+  l'adresse dans les métadonnées de chaque commit. Les deux volets sont
+  indissociables, ne jamais refaire l'un sans l'autre.
+  Fait avec `git-filter-repo` (`--mailmap` pour les métadonnées,
+  `--replace-text` pour le contenu), vers l'adresse `noreply` GitHub du compte.
+  `git config --local user.email` a été posé sur la même adresse : sans ça le
+  commit suivant réintroduisait l'ancienne. Vérifié par un clone frais depuis
+  GitHub — 0 occurrence dans les métadonnées comme dans le contenu, 137 commits
+  et 6 tags préservés, et l'arbre suivi à HEAD **identique au bit près** (même
+  sha de tree qu'avant réécriture).
+  Conséquences à connaître : tous les SHA ont changé, donc les tags
+  `backup-YYYY-MM-DD` ont été force-poussés eux aussi, et les **tags
+  `commit-<sha>` des snapshots restic existants pointent désormais vers des
+  commits qui n'existent plus** (idem pour les SHA cités dans
+  `sauvegarde/backup.log` et dans `infra-commit.txt` des anciens snapshots) —
+  sans gravité, mais un `git checkout` de ces SHA lors d'une restauration
+  échouera : reprendre le tag `backup-*` correspondant à la place. GitHub
+  conserve par ailleurs les objets orphelins accessibles par SHA tant qu'on ne
+  demande pas leur purge au support, et tout clone ou fork antérieur garde
+  l'ancien historique.
+  Ne pas relancer ce nettoyage : il est fait, et le refaire ne ferait que
+  changer tous les SHA une nouvelle fois.
+
 - **Repo public** sur GitHub (`nattyebola/home-server-services`, remote
   `origin` via deploy key dédiée `~/.ssh/id_ed25519_server_backup` / alias
   SSH `github-server-backup`, pas la clé perso de l'utilisateur). Ne
