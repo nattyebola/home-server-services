@@ -87,7 +87,13 @@ env_files=("$REPO_ROOT/.env.shared")
 for stack in $STACKS; do
 	[ -f "$REPO_ROOT/$stack/.env" ] && env_files+=("$REPO_ROOT/$stack/.env")
 done
-echo "    .env files included: ${#env_files[@]}"
+# Same category as the .env files: gitignored because it names the trackers this
+# deployment uses, but needed to rebuild Prowlarr from scratch (see
+# arr/profiles/prowlarr-indexers.json.example). The secrets it points at live in
+# arr/.env, already above.
+[ -f "$REPO_ROOT/arr/profiles/prowlarr-indexers.json" ] &&
+	env_files+=("$REPO_ROOT/arr/profiles/prowlarr-indexers.json")
+echo "    gitignored config files included: ${#env_files[@]}"
 
 restic backup \
 	"${env_files[@]}" \

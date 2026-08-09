@@ -15,6 +15,11 @@ __pycache__/
 # deployment) — see */docker-compose.override.yml.example
 **/docker-compose.override.yml
 
+# Prowlarr indexers: names the trackers this deployment actually uses, which
+# has no place in a public repo (same rule as TRACKER_ALIASES). Backed up by
+# scripts/backup.sh — see arr/profiles/prowlarr-indexers.json.example
+arr/profiles/prowlarr-indexers.json
+
 # runtime data / state (not infra-as-code)
 traefik/letsencrypt/
 

@@ -43,6 +43,7 @@ import sys
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ARR_ENV = os.path.join(REPO_ROOT, "arr", ".env")
 JELLYFIN_ENV = os.path.join(REPO_ROOT, "jellyfin", ".env")
+PROWLARR_INDEXERS = os.path.join(REPO_ROOT, "arr", "profiles", "prowlarr-indexers.json")
 
 # Conteneur servant de client HTTP pour Jellyfin et Seerr (voir en-tête).
 PROXY_CONTAINER = "arr-sonarr-1"
@@ -79,6 +80,21 @@ JELLYFIN_LIBRARIES = [
     {"name": "Animés", "collection_type": "tvshows", "path": "/library/anime"},
 ]
 
+# `Nfo` en tête des lecteurs de métadonnées locaux : c'est la moitié aval du
+# correctif d'identification du 2026-08-06. apply-arr-overrides.py provisionne
+# l'ÉCRITURE des .nfo côté Sonarr/Radarr (XBMC_METADATA_*), mais sans cette
+# option Jellyfin peut ne pas les LIRE en priorité et réidentifie alors chaque
+# titre par une recherche TMDB sur le nom de dossier — ce qui avait donné
+# « Dead Man » identifié comme « Dead Man Walking », et un One Piece de 2023 au
+# lieu de 1999. Un titre mal identifié est aussi un titre insupprimable depuis
+# Kodi, dont les ids externes ne matchent alors plus rien côté arr.
+#
+# C'est déjà la valeur observée sur les 6 bibliothèques de ce déploiement, donc
+# vraisemblablement le défaut de Jellyfin — mais un défaut amont n'est pas une
+# garantie avec des images en :latest, et cette chaîne-là coûte trop cher à
+# rediagnostiquer pour dépendre d'un implicite.
+JELLYFIN_METADATA_READER_ORDER = ["Nfo"]
+
 # 12f — Root Folders. Le préfixe /data_root est essentiel : Sonarr/Radarr
 # montent tout ${DATA_ROOT} en un seul volume, condition du hardlink à l'import
 # (voir ARCHITECTURE.md).
@@ -95,6 +111,26 @@ ARR_ROOT_FOLDERS = {
 ARR_DOWNLOAD_CLIENT = {
     "sonarr": {"tvCategory": "sonarr"},
     "radarr": {"movieCategory": "radarr"},
+}
+
+# 12e (suite) — Remote path mapping, la pièce qui fait tenir le fix hardlink du
+# 2026-07-23. Transmission annonce ses téléchargements sous /data/completed/
+# (son propre montage), Sonarr/Radarr voient les mêmes fichiers sous
+# /data_root/.transmission/data/completed/ (le montage unique ${DATA_ROOT},
+# condition du hardlink à l'import). Sans ce mapping, les arr reçoivent un
+# chemin qui n'existe pas chez eux.
+#
+# Ajouté ici le 2026-08-09 : il n'était recréé par RIEN, alors que son absence
+# est le seul trou de provisioning qui casse le chemin nominal de bout en bout —
+# une installation neuve téléchargerait correctement et n'importerait jamais
+# rien, stacks vertes et healthchecks au vert, bibliothèque vide. Les trois
+# valeurs découlent des montages du dépôt, rien n'y identifie ce déploiement.
+# `host` doit correspondre au champ `host` du client de téléchargement
+# ci-dessus : c'est par lui que l'arr rattache le mapping au client.
+ARR_REMOTE_PATH_MAPPING = {
+    "host": "transmission-vpn",
+    "remotePath": "/data/completed/",
+    "localPath": "/data_root/.transmission/data/completed/",
 }
 
 # 12f — tags créés sur les deux arr. Libellé en tirets et pas en underscores :
@@ -330,7 +366,8 @@ def provision_jellyfin_libraries(jellyfin_key, done, skipped):
                 f"&collectionType={library['collection_type']}&refreshLibrary=true",
                 "POST", headers=[f"X-Emby-Token: {jellyfin_key}"],
                 body={"LibraryOptions": {"PathInfos": [{"Path": library["path"]}],
-                                          "EnableRealtimeMonitor": True}})
+                                          "EnableRealtimeMonitor": True,
+                                          "LocalMetadataReaderOrder": JELLYFIN_METADATA_READER_ORDER}})
         done.append(f"bibliothèque Jellyfin {library['name']!r} créée ({library['path']})")
 
 
@@ -380,6 +417,20 @@ def provision_download_client(name, api_key, done, skipped):
     done.append(f"{name} : client de téléchargement Transmission ajouté")
 
 
+def provision_remote_path_mapping(name, api_key, done, skipped):
+    existing = arr_request(name, "/remotepathmapping", api_key=api_key)
+    wanted = ARR_REMOTE_PATH_MAPPING
+    # Comparaison sur les trois champs et pas seulement sur le host : deux
+    # mappings peuvent coexister pour le même client (dossiers différents), et
+    # on ne veut recréer que CELUI-ci s'il manque.
+    if any(m.get("host") == wanted["host"]
+           and m.get("remotePath") == wanted["remotePath"]
+           and m.get("localPath") == wanted["localPath"] for m in existing):
+        return
+    arr_request(name, "/remotepathmapping", "POST", dict(wanted), api_key)
+    done.append(f"{name} : remote path mapping {wanted['remotePath']} -> {wanted['localPath']} ajouté")
+
+
 def provision_cross_seed_script(name, api_key, done, skipped):
     existing = arr_request(name, "/notification", api_key=api_key)
     if any(n["implementation"] == "CustomScript"
@@ -394,6 +445,74 @@ def provision_cross_seed_script(name, api_key, done, skipped):
                    {"name": "arguments", "value": ""}],
     }, api_key)
     done.append(f"{name} : Connection cross-seed (Custom Script) ajoutée")
+
+
+def provision_prowlarr_indexers(arr_env, done, skipped):
+    """Crée les indexeurs décrits par arr/profiles/prowlarr-indexers.json.
+
+    Ils ne vivaient que dans la base Prowlarr : sur une installation neuve,
+    Prowlarr démarrait vide, les deux applications se synchronisaient sans rien
+    pousser, Sonarr/Radarr n'avaient aucun indexeur et cross-seed interrogeait
+    des ids inexistants — sans une seule erreur bloquante. Même signature que le
+    bug Torznab de 2026-07-28, resté silencieux quatre jours.
+
+    Le fichier est gitignoré (il nomme les trackers, cf. son .example) mais
+    sauvegardé par scripts/backup.sh. Créé-si-absent comme le reste de ce
+    script : un indexeur est un objet que l'utilisateur ajuste ensuite dans
+    l'UI, on ne le ramène pas de force à un état théorique.
+
+    Le corps est bâti sur /api/v1/indexer/schema plutôt que sur un dump : les
+    ids sont propres à l'instance, et tout champ non listé garde le défaut de la
+    définition Cardigann — donc suit les mises à jour amont au lieu d'être figé.
+    """
+    prowlarr_key = arr_env.get("PROWLARR_API_KEY")
+    if not prowlarr_key:
+        raise Skipped("PROWLARR_API_KEY absente de arr/.env — `make api-keys` d'abord")
+    if not os.path.exists(PROWLARR_INDEXERS):
+        raise Skipped(f"{os.path.relpath(PROWLARR_INDEXERS, REPO_ROOT)} absent "
+                      "— copier le .example à côté et l'adapter")
+    with open(PROWLARR_INDEXERS, encoding="utf-8") as f:
+        wanted = json.load(f).get("indexers", [])
+    if not wanted:
+        raise Skipped("aucun indexeur déclaré dans prowlarr-indexers.json")
+
+    existing = {i["name"] for i in arr_request("prowlarr", "/indexer", api_key=prowlarr_key)}
+    schema = None
+    for spec in wanted:
+        if spec["name"] in existing:
+            continue
+        if schema is None:  # 621 définitions, ne le charger que si on crée vraiment
+            schema = {s["definitionName"]: s
+                      for s in arr_request("prowlarr", "/indexer/schema", api_key=prowlarr_key)}
+        base = schema.get(spec["definitionName"])
+        if base is None:
+            raise RuntimeError(f"définition Cardigann {spec['definitionName']!r} inconnue de "
+                               "Prowlarr — vérifier definitionName dans prowlarr-indexers.json")
+        body = dict(base)
+        body.update({"name": spec["name"], "enable": True,
+                     "priority": spec.get("priority", 25), "tags": []})
+        body["fields"] = [dict(f) for f in base.get("fields", [])]
+
+        values = dict(spec.get("fields", {}))
+        if spec.get("baseUrl"):
+            values["baseUrl"] = spec["baseUrl"]
+        for field, var in spec.get("secrets", {}).items():
+            secret = arr_env.get(var)
+            if not secret:
+                # Sans le secret l'indexeur serait créé mais ne répondrait à
+                # aucune recherche : mieux vaut ne pas le créer du tout et le
+                # dire, plutôt que de laisser un objet inerte dans Prowlarr.
+                raise Skipped(f"{spec['name']} : {var} absente de arr/.env")
+            values[field] = secret
+        for field in body["fields"]:
+            if field["name"] in values:
+                field["value"] = values.pop(field["name"])
+        if values:
+            raise RuntimeError(f"{spec['name']} : champ(s) {sorted(values)} absent(s) du schéma "
+                               f"de {spec['definitionName']!r}")
+
+        arr_request("prowlarr", "/indexer", "POST", body, prowlarr_key)
+        done.append(f"prowlarr : indexeur {spec['name']} ajouté")
 
 
 def provision_prowlarr_apps(arr_env, done, skipped):
@@ -615,6 +734,8 @@ def command_services(shared, done, skipped, errors):
         run_step(f"{name} tags", provision_tags, done, skipped, errors, name, api_key)
         run_step(f"{name} client de téléchargement", provision_download_client,
                  done, skipped, errors, name, api_key)
+        run_step(f"{name} remote path mapping", provision_remote_path_mapping,
+                 done, skipped, errors, name, api_key)
         run_step(f"{name} Connection cross-seed", provision_cross_seed_script,
                  done, skipped, errors, name, api_key)
 
@@ -623,6 +744,9 @@ def command_services(shared, done, skipped, errors):
             raise Skipped("PROWLARR_API_KEY absente de arr/.env — `make api-keys` d'abord")
         provision_prowlarr_apps(arr_env, done, skipped)
 
+    # Indexeurs AVANT les applications : une application déclenche un sync vers
+    # Sonarr/Radarr dès sa création, autant qu'elle ait quelque chose à pousser.
+    run_step("indexeurs Prowlarr", provision_prowlarr_indexers, done, skipped, errors, arr_env)
     run_step("applications Prowlarr", prowlarr_apps, done, skipped, errors)
     run_step("Seerr", provision_seerr, done, skipped, errors, shared, arr_env)
 

@@ -1,0 +1,57 @@
+{
+  "_comment": [
+    "Indexeurs Prowlarr à créer par `make provision` (créé-si-absent, jamais réécrit).",
+    "",
+    "Copier en prowlarr-indexers.json et adapter. Le fichier réel est gitignoré :",
+    "il nomme les trackers fréquentés par ce déploiement, ce qui n'a pas sa place",
+    "dans un dépôt public — même principe que TRACKER_ALIASES et les",
+    "docker-compose.override.yml. Il EST sauvegardé par scripts/backup.sh.",
+    "",
+    "Pourquoi ce fichier existe : les indexeurs ne vivaient que dans la base",
+    "Prowlarr. Sur une installation neuve, Prowlarr démarrait vide, les deux",
+    "applications se synchronisaient sans rien pousser, Sonarr/Radarr n'avaient",
+    "aucun indexeur et cross-seed interrogeait des ids inexistants — le tout sans",
+    "une seule erreur bloquante, exactement la signature du bug Torznab de",
+    "2026-07-28 resté silencieux quatre jours.",
+    "",
+    "Champs :",
+    "  name           libellé affiché ; c'est aussi la clé d'idempotence.",
+    "  definitionName définition Cardigann, telle que listée par",
+    "                 GET /api/v1/indexer/schema (champ definitionName).",
+    "  baseUrl        URL du tracker ; explicite pour survivre à un changement",
+    "                 de miroir dans la définition amont.",
+    "  priority       priorité Prowlarr (25 = défaut).",
+    "  fields         UNIQUEMENT les champs qui diffèrent du défaut de la",
+    "                 définition. Tout le reste vient du schéma, donc suit les",
+    "                 mises à jour amont au lieu d'être figé ici.",
+    "  secrets        champ -> NOM DE VARIABLE dans arr/.env. Jamais la valeur :",
+    "                 ce sont des identifiants de comptes tiers.",
+    "",
+    "Non géré ici, volontairement : torrentBaseSettings.seedRatio, maintenu par",
+    "scripts/apply-arr-overrides.py (PUBLIC_INDEXER_SEED_RATIO) qui le pose sur",
+    "les seuls indexeurs publics. Le poser aux deux endroits ferait diverger."
+  ],
+  "indexers": [
+    {
+      "name": "MonTrackerPrive",
+      "definitionName": "exemple-tracker",
+      "baseUrl": "https://exemple-tracker.invalid/",
+      "priority": 25,
+      "fields": {},
+      "secrets": {
+        "apikey": "PROWLARR_INDEXER_MONTRACKERPRIVE_APIKEY"
+      }
+    },
+    {
+      "name": "MonTrackerPublic",
+      "definitionName": "exemple-public",
+      "baseUrl": "https://exemple-public.invalid/",
+      "priority": 25,
+      "fields": {
+        "sonarr_compatibility": true,
+        "radarr_compatibility": true
+      },
+      "secrets": {}
+    }
+  ]
+}
