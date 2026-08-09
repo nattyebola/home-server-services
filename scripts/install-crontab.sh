@@ -26,8 +26,46 @@ REPO_ROOT="${1:?usage: install-crontab.sh <repo-root> < substituted-crontab}"
 managed=$(cat)
 test -n "$managed" || { echo "install-crontab.sh: empty input on stdin" >&2; exit 1; }
 
-# `crontab -l` exits non-zero when the user has no crontab yet (first install).
-current=$(crontab -l 2>/dev/null || true)
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT HUP INT TERM
+
+# `crontab -l` exits non-zero when the user has no crontab yet (first install)
+# — but ALSO on any other failure (permissions, cron daemon missing, SELinux).
+# The old `2>/dev/null || true` conflated the two: on a transient error $current
+# came back empty, the script took the migration branch with nothing to keep,
+# and wrote out the managed block alone. Every personal job vanished, with no
+# message — and MAILTO="" even suppresses the mail cron would have sent. That is
+# precisely the accident this script exists to prevent, so an empty crontab is
+# now only accepted when cron actually says there is none.
+set +e
+crontab -l >"$workdir/current" 2>"$workdir/err"
+crontab_rc=$?
+set -e
+if [ "$crontab_rc" -ne 0 ]; then
+	if grep -qi 'no crontab for' "$workdir/err"; then
+		: >"$workdir/current"
+	else
+		echo "install-crontab.sh: 'crontab -l' failed (exit $crontab_rc) — nothing was installed:" >&2
+		sed 's/^/  /' "$workdir/err" >&2
+		exit 1
+	fi
+fi
+current=$(cat "$workdir/current")
+
+# A BEGIN without its END means the block's closing marker was lost (a stray
+# `crontab -e`). The awk below never clears `skip` in that case, so it would
+# swallow every line after BEGIN — silently dropping any personal job placed
+# after the block, and without even triggering the "unmarked lines" report.
+# Refuse rather than guess: the user's own jobs are at stake.
+begin_count=$(grep -cxF "$BEGIN" "$workdir/current" || true)
+end_count=$(grep -cxF "$END" "$workdir/current" || true)
+if [ "$begin_count" -ne "$end_count" ]; then
+	echo "install-crontab.sh: unbalanced markers in the current crontab" >&2
+	echo "  $begin_count begin marker(s), $end_count end marker(s)" >&2
+	echo "  Refusing to install: fix the markers with 'crontab -e' (or delete the" >&2
+	echo "  managed block entirely), then re-run. Nothing was changed." >&2
+	exit 1
+fi
 
 if printf '%s\n' "$current" | grep -qxF "$BEGIN"; then
 	# Normal case: drop the previous managed block, keep everything else.
@@ -50,8 +88,10 @@ else
 	# through awk's escape processing, which turns the `date +\%s` of the cron
 	# lines into `date +%s` and makes them stop matching (same `%` trap as in
 	# scripts/crontab, one layer up).
-	tmp=$(mktemp)
-	trap 'rm -f "$tmp"' EXIT HUP INT TERM
+	# Same $workdir as above, cleaned by the single trap set at the top: a
+	# second `trap ... EXIT` here would REPLACE that one and leak the first
+	# temp dir.
+	tmp="$workdir/managed"
 	printf '%s\n' "$managed" > "$tmp"
 	kept=$(printf '%s\n' "$current" | awk '
 		NR == FNR { seen[$0] = 1; next }
