@@ -76,12 +76,21 @@ echo "==> restic backup"
 # reasoning), $DATA_ROOT/.jellyfin/cache (transcodes/image cache, purely
 # regenerated) — huge and disposable, would blow up the restic repo for no
 # recovery value.
+# The per-stack .env files are collected by looping over $STACKS instead of
+# being listed by hand: jellyfin/.env was created on 2026-08-05 and never added
+# to the old hardcoded list, so the admin credentials `make provision` needs to
+# bootstrap the Jellyfin API key and Seerr's owner account existed NOWHERE but
+# on this disk — gitignored, and unbacked-up. The loop makes the next .env
+# covered by construction. Missing files are skipped so a stack without one
+# (seerr) doesn't abort the backup.
+env_files=("$REPO_ROOT/.env.shared")
+for stack in $STACKS; do
+	[ -f "$REPO_ROOT/$stack/.env" ] && env_files+=("$REPO_ROOT/$stack/.env")
+done
+echo "    .env files included: ${#env_files[@]}"
+
 restic backup \
-	"$REPO_ROOT/.env.shared" \
-	"$REPO_ROOT/traefik/.env" \
-	"$REPO_ROOT/nextcloud/.env" \
-	"$REPO_ROOT/vpn/.env" \
-	"$REPO_ROOT/arr/.env" \
+	"${env_files[@]}" \
 	"$DATA_ROOT/.nextcloud/nexcloud" \
 	"$DATA_ROOT/.jellyfin/config" \
 	"$DATA_ROOT/.arr" \
@@ -97,7 +106,16 @@ echo "==> checking repository integrity (structure + 5% of data packs read back)
 restic check --read-data-subset=5%
 
 echo "==> pruning old snapshots (keep last 8 weekly, ~2 months)"
-restic forget --keep-weekly 8 --prune
+# --group-by host is NOT cosmetic. restic forget defaults to grouping by
+# (host, paths) and applies the policy to each group SEPARATELY, so every time
+# the backup path list below changes, a new group is born and the old one stops
+# being fed — and therefore stops being pruned, keeping its snapshots forever.
+# That already happened here: adding .arr/.jellyfin/.seerr/.transmission/etc
+# left a stale 5-path group pinning ~10 GiB (visible in sauvegarde/backup.log).
+# Worse than the wasted space: right after such a change the real retention
+# drops to a single snapshot while this message still claims 8 weeks of history.
+# Grouping by host alone keeps one policy across path-list changes.
+restic forget --group-by host --keep-weekly 8 --prune
 
 echo "==> tagging infra repo state, if it changed since the last backup tag"
 last_tag="$(git -C "$REPO_ROOT" tag --list 'backup-*' --sort=-creatordate | head -n1)"
