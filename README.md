@@ -329,8 +329,9 @@ nom**.
 21. **Sauvegardes et tâches planifiées** :
     ```sh
     make backup          # première exécution : crée le dépôt restic et
-                          # génère sauvegarde/restic-password — copiez-le
-                          # ailleurs immédiatement (gestionnaire de mdp)
+                          # génère ~/.config/server-restic-password —
+                          # copiez-le ailleurs immédiatement (gestionnaire
+                          # de mdp)
     make cron-install     # installe scripts/crontab comme crontab de l'hôte
     ```
     `make cron-install` programme six tâches : le cron interne Nextcloud

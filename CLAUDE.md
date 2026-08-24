@@ -2226,9 +2226,14 @@ donc le texte s'affiche littéralement.
   dernier tag de ce type, poussé sur `origin`.
 - `make restore SNAPSHOT=<id|latest>` : restaure dans un dossier à part et
   affiche les étapes manuelles — ne touche jamais le live automatiquement.
-- Mot de passe restic dans `sauvegarde/restic-password` (gitignoré,
-  généré au premier `make backup`) — pas de copie ailleurs = dépôt
-  illisible en cas de perte.
+- Mot de passe restic dans `~/.config/server-restic-password` (hors du
+  repo, généré au premier `make backup`) — pas de copie ailleurs = dépôt
+  illisible en cas de perte. **Ancien emplacement**
+  `sauvegarde/restic-password` : `backup.sh`/`restore.sh` s'y replient
+  encore s'il existe (voir `LEGACY_PASSWORD_FILE`), mais toute commande
+  `restic` lancée à la main doit viser le nouveau chemin — sinon
+  `Resolving password failed`, piège rencontré le 2026-08-24 en auditant
+  la sauvegarde.
 - Résilience visée : perte du disque `DATA_ROOT` → restauration depuis
   `sauvegarde/` (sur un disque différent). Perte de celui-ci → seul
   l'infra-as-code est récupérable depuis GitHub, la sauvegarde restic est

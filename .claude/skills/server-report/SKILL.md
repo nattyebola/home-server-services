@@ -45,7 +45,9 @@ source .env.shared
 df -h "$DATA_ROOT"
 df -h sauvegarde
 export RESTIC_REPOSITORY="$PWD/sauvegarde/restic-repo"
-export RESTIC_PASSWORD_FILE="$PWD/sauvegarde/restic-password"
+# le mot de passe vit hors du repo depuis un durcissement de backup.sh —
+# `sauvegarde/restic-password` est l'ancien emplacement, encore accepté en repli
+export RESTIC_PASSWORD_FILE="$HOME/.config/server-restic-password"
 restic snapshots --latest 3
 ```
 
