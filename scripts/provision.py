@@ -634,10 +634,23 @@ def provision_seerr(shared, arr_env, done, skipped):
     # dans l'assistant) par le nom de service interne — un changement non
     # demandé sur une config qui marche.
     if not settings.get("jellyfin", {}).get("apiKey"):
-        seerr_request("/settings/jellyfin", "POST", {
+        # externalHostname n'est PAS décoratif : les liens « Lire sur Jellyfin »
+        # sont construits dans server/entity/Media.ts, qui retombe sur
+        # getHostname() — donc sur ip/port/useSsl, l'adresse *interne* — quand il
+        # est vide. Sans lui, tous les liens montrés aux utilisateurs seraient
+        # http://jellyfin:8096/..., injoignables depuis un navigateur. Pas de
+        # slash final : Media.ts concatène `${jellyfinHost}/web/...`.
+        payload = {
             "ip": "jellyfin", "port": 8096, "useSsl": False, "urlBase": "",
             "apiKey": jellyfin_key,
-        }, seerr_key)
+        }
+        domain = shared.get("DOMAIN")
+        if domain:
+            payload["externalHostname"] = f"https://jellyfin.{domain}"
+        else:
+            skipped.append("Seerr : DOMAIN absent de .env.shared — liens "
+                           "« Lire sur Jellyfin » laissés sur l'adresse interne")
+        seerr_request("/settings/jellyfin", "POST", payload, seerr_key)
         done.append("Seerr : connexion Jellyfin configurée")
         changed = True
 

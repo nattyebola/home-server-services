@@ -733,6 +733,41 @@ explicitement :
   requête unifiée, pas Jellyseerr/Overseerr — les deux projets ont fusionné
   dans Seerr et sont dépréciés depuis (voir docs.seerr.dev). Ne pas proposer
   de revenir sur l'ancienne image.
+  **Seerr parle à Jellyfin en direct (`jellyfin:8096`, réseau `traefik-public`
+  partagé), pas par le domaine public** (changé le 2026-08-24) : il était réglé
+  sur `https://jellyfin.${DOMAIN}:443`, donc chaque requête traversait Traefik
+  et son middleware `rate-limit` (average 50 / burst 100 par IP, voir plus bas)
+  — que son propre `AvailabilitySync` fait sauter. Constaté : 13 × `429` pendant
+  le sync de 03:00, dont 12 titres que Seerr n'a alors **pas** pu retrouver
+  côté Jellyfin. `AvailabilitySync` retire la disponibilité d'un média qu'il ne
+  retrouve plus : un 429 est donc indiscernable d'une suppression réelle, et le
+  job se déclarait quand même « complete ». Même schéma que les connexions
+  Sonarr/Radarr → Jellyfin, qui visent `jellyfin:8096` en direct depuis le
+  début. Vérifié le 2026-08-24 après bascule : 0 × 429, et les mêmes titres
+  ressortent en « still exists. Preventing removal. ».
+  **Piège : il faut renseigner `externalHostname` en même temps.** Les liens
+  « Lire sur Jellyfin » sont construits dans `server/entity/Media.ts`, qui
+  retombe sur `getHostname()` (= `ip`/`port`/`useSsl`, donc l'adresse *interne*)
+  quand `externalHostname` est vide — tous les liens montrés aux utilisateurs
+  seraient devenus `http://jellyfin:8096/...`, injoignables depuis un
+  navigateur. Il porte donc l'ancienne URL publique complète, schéma inclus et
+  sans slash final (`Media.ts` concatène `${jellyfinHost}/web/...`). `mediaUrl`
+  est recalculé en `@AfterLoad()`, donc les entrées déjà en base reprennent la
+  bonne URL sans retraitement.
+  Édité **conteneur arrêté** (`docker stop`/`start`, pas de recréation) : Seerr
+  réécrit `settings.json` lui-même, une édition à chaud est perdue. Sauvegarde
+  laissée à côté (`settings.json.bak-2026-08-24`). Les 4 bibliothèques activées
+  (dont « Kids », activée à la main — `provision.py` n'active que les 3 de
+  `JELLYFIN_LIBRARIES`) sont intactes.
+  `provision.py` écrivait **déjà** `jellyfin:8096` sur une installation neuve —
+  l'adresse publique de cette instance avait été mise à la main dans l'assistant
+  Seerr, et c'est précisément ce que sa garde « ne réécrit pas une connexion
+  déjà configurée » protégeait. La dérive venait donc de l'UI, pas du script.
+  En revanche il ne posait **pas** `externalHostname` (ajouté le 2026-08-24,
+  `https://jellyfin.${DOMAIN}` depuis `.env.shared`) : une installation neuve
+  avait donc bien l'accès serveur correct, mais tous ses liens « Lire sur
+  Jellyfin » pointaient sur `http://jellyfin:8096/...`. Sans `DOMAIN`, le script
+  le signale en `skipped` plutôt que d'écrire une URL fausse.
 - **Timezone de tous les containers alignée sur l'hôte** via bind-mount
   `/etc/localtime:/etc/localtime:ro` (déjà en place sur `vpn/transmission-vpn`
   depuis le début, généralisé à tous les services le 2026-07-23) — préféré à
