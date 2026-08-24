@@ -31,10 +31,16 @@ traefik/dynamic/*.yml
 # `make dashboard-refresh`, see scripts/generate-dashboard.py
 dashboard/html/
 dashboard/refresh.log
+dashboard/refresh.log.*
 
 # cron job output logs (host-specific, not infra-as-code)
+# Les motifs couvrent aussi les fichiers tournés par logrotate
+# (scripts/logrotate.conf) : `.log.1`, `.log.2.gz`... Sans le `.*`, chaque
+# rotation laissait 6 fichiers non suivis en permanence dans `git status`.
 arr/apply-overrides.log
+arr/apply-overrides.log.*
 arr/recyclarr-sync.log
+arr/recyclarr-sync.log.*
 
 # VPN client credentials (private key + certs, not infra-as-code)
 vpn/custom/
