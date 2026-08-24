@@ -6,692 +6,25 @@ choix d'architecture expliqués : **voir `ARCHITECTURE.md`**. Problèmes
 rencontrés : **voir `ISSUES.md`**. Ces trois fichiers sont destinés aux
 humains. Ce fichier ne garde que ce qui sert à retravailler sur ce repo
 sans relitiger des décisions déjà prises ou répéter des pièges déjà
-rencontrés.
+rencontrés — pas l'historique des itérations, ni le détail relisible dans
+le code lui-même.
 
 ## Décisions à respecter
 
 Ne pas proposer de revenir dessus sans que l'utilisateur le redemande
 explicitement :
 
-- **`scripts/torrent-cleanup.py` (ancien `make cleanup`) remplacé par le
-  service `clearr`** (`arr/clearr/`, ajouté le 2026-07-31) : nettoyage
-  manuel torrents/bibliothèque accessible en web LAN-only
-  (`clearr.${DOMAIN}`, middleware `arr-lan-only`) en plus de la TUI
-  d'origine (`make clearr`), toutes deux appuyées sur le même
-  `arr/clearr/app/core.py` — plus aucune duplication de la logique de
-  `webapp.py` (FastAPI + Jinja2 + Bootstrap 5, voir plus bas) et
-  `tui.py`/`cli.py` (curses/`delete-by-inode`, comportement inchangé)
-  importent tous `core.py`, jamais l'inverse.
-  Toute référence plus bas à `scripts/torrent-cleanup.py`/`make cleanup`
-  (nombreuses, décisions/pièges documentés avant ce refactor) reste valable
-  sur le fond — juste relire "torrent-cleanup.py" comme
-  "`arr/clearr/app/core.py`" et "`make cleanup`" comme "`clearr`" (web ou
-  TUI selon le contexte). Pas de réécriture de ces entrées une par une :
-  elles documentent des pièges/décisions déjà pris, le déplacement de
-  fichier ne les invalide pas.
-  Changement de transport, pas seulement d'emplacement : la TUI tournait
-  sur l'hôte et atteignait Transmission/Sonarr/Radarr/Prowlarr via `docker
-  exec <container> curl ...` (seule option depuis l'hôte, `vpn-internal`
-  étant un réseau Docker isolé) — `clearr` tourne maintenant lui-même en
-  conteneur, rejoint directement `vpn-internal` (externe,
-  `vpn_vpn-internal`) et le réseau `default` d'arr, et parle en HTTP direct
-  aux noms de service (`transmission-vpn:9091`, `sonarr:8989`,
-  `radarr:7878`, `prowlarr:9696`) — jamais de socket Docker monté dans le
-  conteneur (aurait cassé le modèle rootless/`cap_drop: ALL`, un accès au
-  socket Docker est root-équivalent sur l'hôte, pire que n'importe quel
-  `cap_add` déjà accepté dans ce repo). `host_to_arr_path()`/
-  `arr_path_to_host()` de l'ancien script ont disparu : `clearr` monte
-  `${DATA_ROOT}:/data_root` en lecture-écriture, exactement comme
-  sonarr/radarr (même mount unique, même raison hardlink — voir plus bas),
-  donc core.py et arr partagent déjà le même référentiel de chemins, plus
-  besoin de traduire.
-  1er service du repo avec des dépendances Python tierces (`fastapi`,
-  `uvicorn`, `jinja2`, `python-multipart` — `arr/clearr/requirements.txt`)
-  et 2e avec un build custom après `nextcloud/app`/`nextcloud/web` (`build:
-  ./clearr`, pas d'`image:` fixée, `python:3-slim` — tag flottant, cohérent
-  avec la philosophie "toujours la dernière version"). `make update
-  STACK=arr` doit donc aussi rebuilder (conditionnel étendu à `arr` en plus
-  de `nextcloud` dans le target `update`).
-  Frontend FastAPI + Jinja2, pas de HTMX vendoré malgré la discussion
-  initiale avec l'utilisateur (qui avait validé "FastAPI + HTMX") :
-  `static/clearr.js` reste un petit JS maison (data-get/data-post/
-  data-live pour la navigation par fragments) plutôt qu'une lib tierce
-  récupérée telle quelle. Même modèle de fond que prévu : chaque
-  action recharge et rerend un fragment HTML calculé from scratch côté
-  serveur (`core.load_full_state()` à chaque requête, jamais de cache ni
-  d'état en mémoire entre deux requêtes — contrairement à la TUI qui ne
-  recharge qu'au démarrage) ; mesuré acceptable (repris du diagnostic fait
-  avant implémentation) à l'échelle de cette bibliothèque, à revoir si ça
-  dérive. Erreur réseau (ex. `vpn/transmission-vpn` arrêté) rendue comme un
-  bandeau lisible (`@app.exception_handler(RuntimeError)`) plutôt qu'un 500
-  brut — la TUI avait déjà ce filet au niveau de `run()`, le web ne l'avait
-  pas nativement (chaque route peut lever indépendamment), piège rencontré
-  en testant l'image sans réseau réel derrière.
-  **Bootstrap 5.3.3 choisi comme framework CSS** (2026-07-31, après un
-  comparatif Bootstrap/Bulma/Pico.css présenté en artifact à l'utilisateur —
-  Bootstrap retenu car l'écran le plus dense de clearr, une table avec
-  badges/actions par ligne + modal, est justement le terrain où ses
-  composants prêts à l'emploi rapportent le plus). `bootstrap.min.css`/
-  `bootstrap.min.js` (pas le bundle — Popper n'est utile qu'aux dropdowns/
-  tooltips/popovers, aucun utilisé ici) vendorés dans `static/`, récupérés
-  via `curl` sur `cdn.jsdelivr.net` (pas `WebFetch`, qui peut reformater du
-  contenu non-HTML — `curl` donne les octets exacts, intégrité vérifiée par
-  un second téléchargement + comparaison sha256 avant de committer). Table
-  resserrée (`table-sm` + padding réduit dans `clearr.css`) — compacité
-  demandée explicitement. Tri (`core.sort_items`, appelé sur les torrents
-  bruts avant mise en forme dans `torrent_view()`) vérifié explicitement
-  par un test sur des données qui feraient échouer un tri fait sur la
-  chaîne affichée plutôt que la valeur brute (tailles 900Mo/1.5Go/4.0Go,
-  âges 30j/3mois/5j — un tri alphabétique sur ces chaînes donne un ordre
-  différent de l'ordre numérique réel).
-  Web : suppression toujours confirmée par une modale — le composant Modal
-  natif de Bootstrap (`bootstrap.Modal.getOrCreateInstance()`/`.show()`/
-  `.hide()` dans `clearr.js`, bouton Annuler en `data-bs-dismiss="modal"`)
-  plutôt que le `<dialog>` natif fait main de la première version : focus
-  trap/Échap/clic-sur-le-fond déjà corrects dans son JS, les réimplémenter
-  aurait été strictement moins bien. Pas d'équivalent au raccourci `D` de
-  la TUI, jugé pas nécessaire pour une UI à la souris.
-  Clic sur un en-tête de colonne trie dessus (ascendant), reclique inverse
-  le sens — remplace les raccourcis séparés `s`/`S` de la TUI, plus direct
-  au clic. Groupes cross-seed : plus de `<details>`/`<summary>` (incompatible
-  avec de vraies lignes de `<table>` Bootstrap, un `<details>` ne peut pas
-  entourer des `<tr>`) — remplacés par le composant Collapse de Bootstrap
-  sur des `<tr class="collapse">`, un bouton `data-bs-toggle="collapse"
-  data-bs-target=".xseed-<id>"` ciblant une classe (partagée par toutes les
-  lignes enfants du groupe) plutôt qu'un id unique. Piège : l'animation de
-  hauteur de Bootstrap est pensée pour des blocs, pas des `tr`
-  (`display:table-row`) — sans `tr.collapsing { transition: none }`
-  (`clearr.css`) l'ouverture/fermeture d'un groupe clignote au lieu d'un
-  show/hide net ; comportement documenté de Bootstrap sur les tableaux, pas
-  un bug de leur côté.
-  Bootstrap 5.3 ne suit pas `prefers-color-scheme` tout seul — un script en
-  tête de `page.html` pose `data-bs-theme` selon `matchMedia("(prefers-
-  color-scheme: dark)")` avant le rendu du `<body>` pour éviter un flash
-  clair→sombre.
-
-- **Jaquette au survol + liens IMDb/TVDB/TMDB/Sonarr/Radarr dans les 3 vues de
-  `clearr`, sans aucun appel WAN côté serveur** (ajouté le 2026-08-03, contrainte
-  demandée explicitement) : les ids externes (`imdbId`/`tvdbId`/`tmdbId`/
-  `titleSlug`) sont déjà dans les objets `/api/v3/series`|`/movie` (vérifié :
-  0 manquant sur 21 séries / 24 films), et les jaquettes sont déjà en cache
-  disque sous `${DATA_ROOT}/.arr/{sonarr,radarr}/config/MediaCover/<id>/
-  poster-250.jpg` (~20 Ko), donc lisibles directement par `clearr` via son mount
-  `${DATA_ROOT}:/data_root` — servies par une route `/poster/{kind}/{arr_id}`
-  (`core.poster_file`, `arr_id` passé par `int()` = la garantie anti-traversal)
-  plutôt que proxifiées vers l'API arr, encore moins re-téléchargées chez
-  thetvdb/tmdb. Seuls les liens sortent, et c'est le navigateur qui les suit au
-  clic. TVDB adressé par `thetvdb.com/dereferrer/series/<tvdbId>` (Sonarr expose
-  l'id, pas le slug du site) ; Radarr par `<tmdbId>` (son `titleSlug` EST le
-  tmdbId).
-  Vue Torrents : un torrent n'est rattaché à un titre arr que via
-  `core.build_arr_meta_index()`/`torrent_meta()` (films par chemin exact de
-  `movieFile.path`, séries par préfixe de `series.path`, mêmes critères que
-  `plan_radarr_deletion`/`plan_sonarr_unmonitor`), en repartant des inodes déjà
-  calculés par `analyze_torrent_files()` — donc zéro `stat` supplémentaire et
-  symlinks cross-seed déjà résolus. Coût mesuré : +2 appels arr par rendu,
-  onglet Torrents toujours à ~50 ms sur 223 torrents. Best-effort : un torrent
-  jamais importé n'a ni jaquette ni lien (39 sur 168 parents au moment de
-  l'ajout), un arr injoignable dégrade la vue sans la casser.
-  Jaquette chargée seulement au premier survol (`data-poster` porte l'URL, pas
-  un `<img>` dans le HTML — sinon 45 images à chaque rendu de page alors qu'on
-  en regarde une), affichée dans un unique conteneur flottant attaché au
-  `<body>` : les lignes vivent dans `.table-responsive`, dont l'`overflow`
-  découperait une vignette positionnée dans le tableau. Ancrée sur la cellule
-  survolée et pas sur le curseur (pas de vignette qui suit la souris), `z-index`
-  sous celui de la modale Bootstrap. Pas de tooltip Bootstrap ici non plus
-  (exigerait Popper, non vendoré — voir plus haut).
-  Refacto au passage : `render_series_tab`/`render_films_tab` (squelettes
-  identiques) fusionnées en `render_arr_tab(tab, ...)` + un `ARR_TABS` de 3
-  valeurs par onglet, et la cellule titre des 3 vues passe par un seul macro
-  Jinja `templates/_meta.html` — sans quoi le même bloc jaquette/liens aurait
-  été écrit trois fois. `core.find_series_by_id`/`find_movie_by_id` remplacent
-  4 `next((... for ... if id == ...))` recopiés dans les routes.
-  Bouton de suppression réduit à **une croix ✕ (U+2715) dans les 3 vues**
-  (demandé le 2026-08-03, le sens passant par `title`/`aria-label`) — un emoji
-  (🗑, premier essai le même jour) a été rejeté par l'utilisateur : rendu par la
-  police couleur du système, donc ni monochrome ni cohérent d'un appareil à
-  l'autre, là où un glyphe texte hérite du rouge de `.btn-outline-danger`.
-  Et **colonne d'actions
-  figée à droite dans la vue Torrents** (`.table-sticky-actions`, `position:
-  sticky` sur le `:last-child`) : c'est la seule vue assez large pour que
-  `.table-responsive` défile horizontalement dès qu'on zoome, le bouton sortait
-  alors de l'écran. `background-color` explicite obligatoire sur la cellule
-  figée (`--bs-table-bg` est transparent, les cellules qui défilent dessous
-  resteraient visibles au travers) — le surlignage de survol de Bootstrap passe
-  par un `box-shadow` inset, donc peint par-dessus ce fond et continue de
-  marcher. Aucune bordure/ombre sur le bord gauche de cette colonne (essayée
-  puis retirée le même jour, demandé explicitement : visible en permanence, y
-  compris quand rien ne défile).
-  `DOMAIN` (nécessaire aux liens `sonarr.${DOMAIN}`/`radarr.${DOMAIN}`) vient de
-  `.env.shared`, donc hors du `env_file: .env` du service : injecté par un bloc
-  `environment:` dans `arr/docker-compose.yml`. Absent = pas de lien arr, le
-  reste fonctionne.
-
-- **Suppression d'un film/d'une série depuis le menu contextuel de Kodi**
-  (`kodi/context.clearr`, `make kodi-install`, ajouté le 2026-08-05 — voir
-  `kodi/README.md` pour le détail humain) : addon Kodi qui envoie les ids
-  externes du titre sélectionné à deux nouvelles routes JSON de clearr
-  (`POST /api/delete/{film,series}`), lesquelles réutilisent les mêmes helpers
-  `_delete_series`/`_delete_movie` que les routes web des vues Séries/Films
-  (extraits à cette occasion, la branche torrent/sans-torrent du film étant
-  sinon écrite deux fois). **Transport HTTP, pas la CLI** : la sous-commande
-  `python -m app delete-…` aurait été aussi courte à écrire, mais clearr tourne
-  en conteneur — l'atteindre depuis un client media supposerait soit SSH, soit
-  l'utilisateur Kodi dans le groupe `docker` (root-équivalent sur l'hôte, cf. la
-  décision « jamais de socket Docker monté » plus haut). Le conteneur écoute
-  déjà et est déjà joignable en LAN, l'addon n'a besoin que d'`urllib`.
-  Résolution par **id externe** (`core.find_series_by_external_ids`/
-  `find_movie_by_external_ids`), IMDb d'abord puis TVDB/TMDB : Kodi ne connaît
-  pas les ids Sonarr/Radarr, seulement les `ProviderIds` que jellyfin-kodi lui
-  recopie depuis Jellyfin. Un id qui matche **plusieurs** titres fait renvoyer
-  None (donc 404) plutôt que d'en deviner un — c'est une suppression de
-  fichiers. Vérifié le 2026-08-05 : les 21 séries et 24 films ont tous
-  `imdbId` **et** `tvdbId`/`tmdbId`, donc aucun repli à prévoir en pratique.
-  Le handler global `RuntimeError` de `webapp.py` teste désormais le préfixe
-  `/api/` et répond en JSON : sinon un `transmission-vpn` arrêté renvoyait à
-  l'addon le fragment Bootstrap destiné au navigateur, illisible pour lui.
-  **Repli par chemin pour les titres hors Sonarr/Radarr** (ajouté le 2026-08-06 à
-  la demande de l'utilisateur) : Jellyfin sert aussi `completed/` comme
-  bibliothèque (`jellyfin/docker-compose.override.yml`), donc Kodi affiche des
-  films/séries récupérés à la main qu'aucun id externe ne retrouve côté arr.
-  L'addon envoie désormais aussi le **chemin** (`file` de
-  `VideoLibrary.Get*Details`), et `_resolve_target` (`webapp.py`) essaie les ids
-  d'abord, le chemin ensuite. Le chemin est le seul identifiant commun à Kodi et
-  clearr pour ces titres — et il est plus discriminant que les ids : deux
-  dossiers peuvent porter le même `tvdbId` (les 2 saisons de Hell's Paradise,
-  téléchargées séparément, sont 2 séries pour Jellyfin) là où
-  `_find_by_external_ids` refuse — à raison — de trancher.
-  `core.resolve_media_path()` ne suppose **aucun** préfixe commun (Kodi voit
-  `/grosDur/...`, clearr `/data_root/...`, un client distant verrait un partage
-  réseau) : il cherche le plus long suffixe de composants qui existe réellement
-  sous `completed/` ou `library/`, **2 composants minimum** — sans ce plancher,
-  un chemin finissant par `film` résoudrait sur toute la catégorie. Introuvable
-  ou ambigu = rien de supprimé.
-  **Le repli s'interdit `library/`** (`is_arr_managed_path`) : un titre qui y vit
-  est presque toujours suivi par un arr, supprimer ses fichiers sans retirer son
-  entrée le ferait re-télécharger — et ça referme du même coup le cas « id
-  ambigu », dont les fichiers sont justement dans `library/`. Message renvoyant
-  vers l'UI web dans ce cas.
-  Supprime les torrents **et** les fichiers du dossier qu'aucun torrent ne couvre
-  (choix explicite de l'utilisateur) : cas réel rencontré le même jour,
-  `completed/anime/Noragami`, 2,6 Go, plus aucun torrent dans Transmission —
-  refuser aurait laissé ces titres insupprimables depuis Kodi. Aucun appel arr
-  dans ce mode, par construction.
-  **Routes `/api/preview/{film,series}`** ajoutées en même temps (demandées) :
-  l'addon les appelle avant sa boîte de confirmation, qui annonce donc
-  « 3 torrents — 15,6 Go » et plus seulement le titre. Elles servent aussi de
-  garde-fou — un titre non résolu est signalé *avant* la confirmation, pas après
-  un « Supprimer » qui n'aurait rien fait. Elles couvrent les deux modes (arr et
-  chemin), pas seulement le nouveau : deux comportements différents selon
-  l'origine du titre auraient été plus de code pour moins de cohérence.
-  Dépend de jellyfin-kodi en **chemins directs** (`useDirectPaths=1`, le cas
-  ici) : en mode addon Kodi ne connaît qu'une URL `plugin://`, inexploitable —
-  seuls les titres suivis par arr resteraient supprimables.
-  Vérifié le 2026-08-06 : prévisualisation correcte sur les 2 modes (séries et
-  films arr inchangés, titres manuels avec/sans torrent, les 2 Hell's Paradise
-  distingués par leur chemin, chemin à préfixe étranger résolu, racine de
-  catégorie et chemin inexistant refusés), suppression réelle exercée sur des
-  dossiers/fichiers jetables sous `completed/` (dossiers vides élagués jusqu'à
-  `completed/`, jamais au-delà) et branche « avec torrent » exercée avec un
-  client Transmission stubbé.
-  Pas de jeton d'authentification sur ces routes, décidé explicitement : le
-  service est LAN-only (`arr-lan-only`) et son UI web expose déjà les mêmes
-  suppressions en POST sans jeton — à revoir pour les deux ensemble, jamais
-  pour l'API seule.
-  **Le retrait de la ligne dans Kodi n'est pas fait par l'addon** (option
-  écartée après comparatif présenté à l'utilisateur, qui a choisi celle-ci) :
-  Kodi ne réplique pas le disque mais la bibliothèque Jellyfin, donc la chaîne
-  est `clearr supprime` → `Jellyfin rafraîchit et retire l'item` →
-  `KodiSyncQueue` → `jellyfin-kodi le retire de la base Kodi`. Un
-  `VideoLibrary.RemoveMovie` local aurait fait disparaître la ligne
-  instantanément mais aurait désynchronisé la table de correspondance de
-  jellyfin-kodi.
-  **Aucun `Container.Refresh` à la fin** (il y en avait un, différé de 6 s ;
-  retiré le 2026-08-05 après mesure, demandé par l'utilisateur — « le fait que
-  la suppression se fasse bien me suffit ») : la propagation prend
-  **1 min 38 s**, chronométrée sur une vraie suppression (série de 12 torrents,
-  15,6 Go) en recoupant `.clearr.log`, les logs uvicorn/Sonarr/Jellyfin et
-  `~/.kodi/temp/kodi.log` — moins d'1 s côté serveur, puis 65 s de
-  `LibraryMonitorDelay`, 5 s de KodiSyncQueue, 25 s avant que jellyfin-kodi
-  reçoive `LibraryChanged`, 3 s de retrait. Un refresh à 6 s rerendait donc
-  strictement la même liste.
-  Durées des notifications Kodi dans `NOTIFICATION_MS`/`NOTIFICATION_ERROR_MS`
-  (2,5 s / 5 s, abaissées de 5 s / 7 s le 2026-08-05 sur demande) — la
-  suppression est déjà terminée quand elles s'affichent, ce n'est qu'un accusé
-  de réception ; l'erreur reste plus longue, elle porte une information à lire.
-  À ne pas confondre avec les toasts de jellyfin-kodi (`newvideotime`, 5 s dans
-  ses propres réglages), qui ne viennent pas de cet addon. Ids lus par JSON-RPC (`VideoLibrary.Get*Details`, propriété
-  `uniqueid`) et non par les InfoLabels `ListItem.UniqueID(imdb)`/`IMDBNumber`,
-  qui ne remontent que l'id désigné par défaut alors qu'on veut pouvoir
-  retomber sur les autres.
-  L'URL de clearr est un **réglage d'addon** (`resources/settings.xml`), pas une
-  constante : elle contient `${DOMAIN}`, hors de question dans un fichier
-  versionné (repo public). `make kodi-install` la pré-remplit depuis
-  `.env.shared` — et n'écrase jamais un `settings.xml` existant, Kodi
-  réécrivant lui-même ce fichier. Addon **copié** et non symlinké (Kodi refuse
-  de charger un addon dont le dossier est un lien sortant de son `addons/`).
-
-- **Nom cliquable dans les 3 vues → fiche « toutes les informations connues »
-  en modale, et tag Sonarr/Radarr rendu comme le badge cross-seed** (ajouté le
-  2026-08-06, demandé) : `templates/details.html`, un seul gabarit alimenté par
-  des sections de paires libellé/valeur + des listes de fichiers, chaque vue ne
-  décidant que de SON contenu — même principe que `_meta.html` pour la cellule
-  titre, et pour la même raison (3 vues, un seul comportement à maintenir).
-  Routes `/{torrents,series,films}/{id}/details`, ouvertes par la mécanique
-  `data-get`/`#modal-body` déjà utilisée par les écrans de confirmation :
-  **aucun ajout dans `clearr.js`**. Purement descriptive, aucun bouton d'action
-  — la suppression reste sur la croix de la ligne, avec sa propre confirmation.
-  Les enfants cross-seed ont leur fiche eux aussi (vrais torrents, avec leur
-  tracker, leur ratio et leurs fichiers propres), contrairement aux liens
-  externes que leur ligne n'affiche toujours pas.
-  Contrainte habituelle respectée : zéro appel WAN, tout vient de l'état déjà
-  chargé — seule exception, `core.quality_profile_names()` (les objets arr ne
-  portent que `qualityProfileId`), sur le réseau interne. Coût mesuré : fiche
-  série/film ~10 ms, fiche torrent ~40 ms (elle refait
-  `build_arr_meta_index()`).
-  `seedRatioLimit`/`seedRatioMode` ajoutés aux champs demandés à `torrent-get`
-  pour cette fiche : afficher la limite sans le mode induirait en erreur, un
-  torrent en mode 0 traînant souvent un `seedRatioLimit` résiduel qui ne
-  s'applique pas (constaté le 2026-08-06) — d'où `_seed_limit_label()`.
-  La jaquette est un vrai `<img>` dans la fiche, à l'inverse des lignes de
-  tableau (`data-poster` + chargement au survol, voir plus haut) : une seule
-  fiche est ouverte à la fois, il n'y a rien à économiser.
-  **Informations de fichier incluses** (ajouté le 2026-08-06 dans la foulée,
-  demandé) — et traitées différemment selon le nombre de fichiers, seul choix
-  de fond de cette partie :
-  - Série : `core.fetch_episode_files()` (`/api/v3/episodefile?seriesId=`,
-    l'objet série ne portant que des compteurs agrégés dans `statistics`), puis
-    section **agrégée** — nombre, taille, puis valeurs *distinctes* de qualité /
-    groupe / langue / codec / résolution — plus la liste des fichiers
-    (chemin + taille + qualité). Empiler le `mediaInfo` des 12 épisodes aurait
-    noyé la fiche ; les valeurs distinctes disent en une ligne ce qu'on veut
-    vraiment savoir, c'est-à-dire s'il y a un mélange (vérifié : la série 21
-    ressort « Tsundere-Raws, GL0P » / « French, Japanese » / « h264, h265 »).
-    `_distinct()` préserve l'ordre de première apparition, pas l'ordre
-    alphabétique d'un `sorted(set(...))`. Fichiers triés par `relativePath`
-    (= ordre saison/épisode) et non par l'ordre de l'API, qui est celui des ids
-    donc des imports (E03 avant E01 sur cette bibliothèque).
-  - Film : un seul fichier, donc **détail complet** sans rien agréger (nom,
-    taille, qualité, édition, groupe, langues, date d'import, nom de release) +
-    une section Média issue de `mediaInfo` (durée, résolution, vidéo, audio,
-    sous-titres). Pas de custom formats côté film : contrairement à
-    l'`episodefile` de Sonarr, le `movieFile` imbriqué dans l'objet film de
-    Radarr ne porte ni `customFormats` ni `customFormatScore` (vérifié le
-    2026-08-06) — les afficher n'aurait donné que des tirets.
-  Une section sans lignes n'est pas rendue (`details.html`), donc un film sans
-  fichier ou une série sans épisode importé n'affiche simplement ni Fichier(s)
-  ni Média, sans cas particulier dans le code.
-  Le lien Sonarr/Radarr porte `arr: True` (`core.arr_link`) et se rend en badge
-  plein aux couleurs du badge « N cross-seeds » (`.text-bg-secondary` +
-  `.meta-link-arr`), là où IMDb/TVDB/TMDB restent des pastilles bordées : il
-  pointe vers notre propre infra, pas vers une base publique. Les couleurs
-  viennent de la classe Bootstrap elle-même (elle est en `!important`, donc elle
-  passe devant `.meta-link` malgré l'ordre de chargement des feuilles) ;
-  `.meta-link-arr` ne fait que neutraliser la bordure.
-  Piège CSS rencontré : `.title-link` (déclaré après `.has-poster`) effaçait
-  avec son `text-decoration: none` le souligné pointillé qui signale une
-  jaquette au survol — d'où la redéclaration explicite `.title-link.has-poster`.
-
-- **Les écrans de confirmation de suppression annoncent les fichiers sans
-  torrent, et marquent les torrents encore en seed** (ajouté le 2026-08-06,
-  demandé) : `execute_delete_series` supprime les torrents **puis** balaie le
-  dossier de la série (`cleanup_orphan_files`), mais la modale ne listait que
-  les torrents — elle promettait donc moins que ce qu'elle faisait. Déclencheur :
-  2 épisodes d'une série affichés comme téléchargés côté Sonarr n'apparaissaient
-  ni dans la vue Torrents ni dans la modale, Sonarr ayant retiré leur torrent du
-  client une fois le ratio atteint (voir l'entrée ratio ci-dessus) — le fichier
-  `library/` restait, seul son hardlink Transmission avait disparu.
-  `core.orphan_files_under()` factorise le calcul, déjà fait par
-  `plan_media_path_deletion` pour les titres hors arr ; `series_orphan_files()`
-  l'applique au dossier d'une série. Attention à la différence d'espace de
-  chemins entre les deux appelants : un titre hors arr a ses **données** sous le
-  dossier visé (les couverts sont les `host_files` du torrent), une série n'y a
-  que des **hardlinks** (les couverts sont les `lib_matches`, les données vivant
-  sous `.transmission/data`). Comparer les mauvais chemins ferait passer tous
-  les fichiers pour orphelins.
-  Les 3 consommateurs sont servis par le même calcul : modale web
-  (`confirm_series.html`, liste + tailles), résumé une-ligne de l'API
-  (`_summary`, déjà prévu pour `orphan_files`) et boîte de confirmation Kodi
-  (`orphan_lines()` dans `kodi/context.clearr/context.py`, plafonnée à 5 noms —
-  la boîte `yesno` de Kodi ne défile pas, au-delà le texte passe sous les
-  boutons). `status` a été ajouté aux champs demandés à `torrent-get` pour ça :
-  🌱 marque un torrent encore en seed, ⏸ un torrent arrêté (`SEEDING_STATUSES`)
-  — la distinction dit ce qui va réellement cesser d'être partagé.
-  Les films n'ont volontairement pas d'orphelins : `_delete_movie` ne balaie pas
-  le dossier du film (soit un torrent le couvre, soit Radarr supprime son propre
-  fichier), donc en annoncer serait promettre plus que ce qui est fait — l'écart
-  inverse de celui corrigé ici.
-
-- **Bouton « Orphelins library/ » dans la vue Torrents de `clearr`, à côté de
-  la purge des ABS** (ajouté le 2026-08-06, demandé) : `core.
-  library_orphan_files()`/`delete_library_orphans()` + routes
-  `/library/orphans{,/confirm}` + `templates/confirm_orphans.html`. Comble un
-  trou structurel constaté le même jour : les 3 vues partent des torrents
-  Transmission (`list_torrents`) ou des objets arr (`fetch_series_list`/
-  `fetch_movies_list`), et `build_library_index()` ne walke `library/` que pour
-  du *matching* par inode — un fichier ni lié à un torrent ni connu d'un arr
-  n'apparaissait donc nulle part, et n'était même pas supprimable depuis Kodi
-  (le repli par chemin s'interdit `library/`, cf. `is_arr_managed_path`).
-  **Un bouton et pas une 4e vue** (demandé explicitement) : le calcul coûte
-  `2 + N` appels arr (N = séries, un `/api/v3/episodefile?seriesId=` chacun —
-  l'objet série ne porte que des compteurs agrégés, même raison que la fiche
-  détail), mesuré à ~170 ms contre ~50 ms pour l'onglet Torrents. À la demande,
-  jamais au rendu d'un onglet. Modale unique pour les deux cas : liste +
-  confirmation s'il y a des orphelins, message explicatif + bouton Fermer sinon
-  — pas de bouton grisé ni de compteur dans l'onglet, qui aurait exigé ce calcul
-  à chaque rendu.
-  Couverture d'un fichier : un **torrent** le couvre s'il partage son inode
-  (hardlink, la seule relation existante entre `.transmission/data` et
-  `library/`) ; un **arr** le couvre si c'est un de ses `episodefile`/`movieFile`
-  **ou** un sidecar (`SIDECAR_EXTENSIONS`) sous le dossier d'un titre qu'il
-  connaît encore. Ce 2e volet est indispensable depuis l'activation du metadata
-  writer (241 `.nfo` + jaquettes, voir plus haut) : sans lui ils ressortaient
-  tous orphelins. Corollaire voulu — une vidéo posée dans le dossier d'une série
-  suivie mais jamais importée par Sonarr **est** un orphelin (c'est le cas qui a
-  motivé la demande), là où un `.nfo` au même endroit ne l'est pas ; dans un
-  dossier qu'aucun arr ne revendique, sidecars compris, tout est orphelin.
-  Couverture par **chemin de fichier exact**, pas par préfixe de dossier de
-  titre : un préfixe aurait rendu invisible exactement le cas cherché.
-  **`_arr_covered_paths()` n'est PAS best-effort**, seule exception du module :
-  elle lève `RuntimeError` si un appel arr échoue, plutôt que de dégrader comme
-  `arr_api` partout ailleurs. Sans la liste des fichiers d'un arr, tout ce qu'il
-  gère passerait pour orphelin — proposer de supprimer la moitié de `library/`
-  sur un timeout serait le pire échec possible de cette fonction. Le handler
-  global `RuntimeError` de `webapp.py` le rend déjà en bandeau lisible, aucun
-  code d'erreur à ajouter.
-  Le POST **recalcule** la liste au lieu de reprendre les chemins de la modale :
-  aucun chemin à supprimer ne vient du client.
-  Vérifié le 2026-08-06 : 0 orphelin sur la bibliothèque réelle (466 fichiers
-  indexés, 223 couverts par un torrent/arr, 242 sidecars — donc aucun `.nfo`
-  compté à tort) ; puis chemin positif exercé sur des fichiers jetables — vidéo
-  dans `Season 1` d'une série suivie **détectée**, `.nfo` dans le dossier de la
-  même série **non** détecté, dossier de film inconnu des arr détecté avec son
-  `.nfo`, suppression réelle (3 fichiers) suivie de l'élagage du dossier vide
-  jusqu'à `library/` sans toucher à la série témoin, et garde-fou vérifié en
-  passant une `SONARR_API_KEY` invalide (RuntimeError, 0 fichier proposé).
-  Web seulement, pas d'équivalent dans la TUI (comme le reste des ajouts
-  récents).
-
-- **Tag `pour-les-enfants` sur les deux arr, créé par `scripts/provision.py`**
-  (`ARR_TAGS`, ajouté le 2026-08-06, demandé) : posé depuis Seerr au moment de
-  la requête (Seerr a un override `tags` par requête — colonne `tags` de sa
-  table `media_request`, vérifié sur la 3.4.1), il ressort dans le `<tag>` du
-  `.nfo` écrit par l'arr, donc dans les `Tags` de l'item Jellyfin, donc dans la
-  table `tag` de Kodi, où il sert de filtre — chaîne décrite à l'entrée
-  suivante. `provision.py` et pas `apply-arr-overrides.py` : un tag est un
-  objet que l'utilisateur peut légitimement renommer/supprimer ensuite dans
-  l'UI, donc créé-si-absent et jamais réécrit.
-  **Libellé en tirets, pas en underscores** : Radarr valide `^[a-z0-9-]+$` et
-  refuse `pour_les_enfants` (demandé sous cette forme), là où Sonarr l'accepte
-  — divergence de validation entre les deux, à ne pas re-découvrir. Le même
-  libellé des deux côtés est ce qui permet de n'écrire qu'un seul filtre en
-  aval. Chemin de création exercé le 2026-08-06 en supprimant les deux tags
-  pour de vrai puis en relançant `make provision` (recréés, 2e passage sans
-  changement) ; les ids diffèrent d'un arr à l'autre, d'où le rattachement par
-  libellé.
-  Trou connu repéré à cette occasion, non traité : le tag **`fr-priority`**
-  (Sonarr, 3 séries) est la cible d'un **delay profile** (id 2 : 360 min de
-  délai, `bypassIfAboveCustomFormatScore` à 100) qui ne vit que dans la base
-  Sonarr — ni le tag ni le profil ne sont reproductibles depuis le repo, même
-  motif que le `seedRatio` Nyaa.si disparu tout seul.
-
-- **Metadata writer « Kodi (XBMC) / Emby » activé sur Sonarr et Radarr, porté
-  par `scripts/apply-arr-overrides.py`** (`XBMC_METADATA_*`, ajouté le
-  2026-08-06) : **Jellyfin n'apprend jamais les ids externes des arr** — la
-  connexion Emby/Jellyfin (ci-dessous) ne signale qu'un dossier à rescanner,
-  aucun identifiant ne circule, donc Jellyfin réidentifie chaque titre lui-même
-  par une recherche TMDB sur le nom de dossier + année. Deux erreurs réelles
-  constatées ce jour-là, toutes deux dues à un homonyme plus populaire :
-  `library/film/Dead Man (1995)` (Jarmusch) identifié comme *Dead Man Walking*
-  (Tim Robbins, même année, `tt0112818` vs `tt0112817`), et
-  `library/anime/One Piece` (dossier sans année) comme la série live-action
-  Netflix de 2023 au lieu de l'anime de 1999. Les `.nfo` écrits à côté des
-  fichiers portent les `uniqueid` imdb/tmdb/tvdb, et les 6 bibliothèques
-  Jellyfin ont déjà `Nfo` en tête de leur `LocalMetadataReaderOrder` :
-  l'identification devient déterministe. Vérifié par le test qui discrimine —
-  un `POST /Items/{id}/Refresh?replaceAllMetadata=true` (qui repart de zéro et
-  aurait re-cherché sur TMDB) laisse les bons ids en place.
-  **Ce n'est pas qu'un problème d'affichage** : c'est aussi ce qui rendait un
-  tel titre insupprimable depuis Kodi (`kodi/context.clearr` envoie les ids
-  externes vus par Jellyfin — un id faux ne matche aucun titre arr, et le repli
-  par chemin s'interdit `library/`, voir plus haut).
-  Images désactivées (`movieImages`/`seriesImages`/`seasonImages`/
-  `episodeImages`/`episodeImageThumb`), volontairement : Jellyfin télécharge
-  déjà ses jaquettes dans son propre cache, on ne veut que les identifiants
-  dans `library/`, pas des images dupliquées à côté de chaque vidéo. Vérifié
-  après coup : 241 `.nfo`, 0 image écrite.
-  **Contrepartie : le `.nfo` fait autorité sur le titre affiché**, Jellyfin
-  n'utilise donc plus la traduction TMDB (« Les Simpson » devenu « The
-  Simpsons » au premier rafraîchissement, 2026-08-06). D'où
-  `movieMetadataLanguage: 2` (French) côté Radarr — bibliothèque regardée en
-  français. Sonarr n'a **aucun champ équivalent** (vérifié champ par champ ;
-  son `uiLanguage=2` ne concerne que son interface), donc **les titres de
-  séries s'affichent en anglais/original** : 5 séries y sont passées
-  (Étincelles de demain → Sparks of Tomorrow, Villageois LVL 999 → The Villager
-  of Level 999, Les Simpson → The Simpsons, + 2 autres), écart **accepté
-  explicitement** le 2026-08-06 après avoir écarté les deux parades proposées —
-  renommer et verrouiller le champ titre dans Jellyfin (manuel), ou un script
-  reprenant le titre français depuis les `alternateTitles` de Sonarr (qui les
-  connaît, mais sans étiquette de langue : deviner lequel est le français est
-  exactement le genre d'heuristique qui a produit le bug d'identification
-  corrigé ici). Ne pas reproposer sans redemande.
-  Jellyfin **relit un `.nfo` modifié tout seul** (il en suit la date à son scan
-  de bibliothèque) : après un changement de réglage + rescan arr, les titres se
-  sont mis à jour sans qu'aucun `/Items/{id}/Refresh` soit nécessaire. Ce
-  refresh explicite ne sert qu'à ne pas attendre, ou à réidentifier un titre
-  déjà faux.
-  Les `.nfo` ne sont écrits qu'à l'import ou sur rescan — la bibliothèque
-  existante a été rattrapée une fois par les commandes `RescanMovie`/
-  `RescanSeries` sans argument (tous les titres) ; à refaire de la même façon
-  si un jour des `.nfo` manquent en masse.
-  Correction des deux titres déjà mal identifiés : `POST
-  /Items/RemoteSearch/{Movie,Series}` pour trouver le bon résultat puis `POST
-  /Items/RemoteSearch/Apply/{id}` (équivalent API du bouton « Identifier » de
-  l'UI Jellyfin) — le rescan arr seul ne suffit pas, Jellyfin ne relit un
-  `.nfo` que lors d'un rafraîchissement de métadonnées.
-  Audit fait à cette occasion (à refaire de la même façon si un doute
-  revient) : comparer `imdbId`/`tmdbId`/`tvdbId` des objets arr aux
-  `ProviderIds` des items Jellyfin appariés **par chemin** (`/library/...` côté
-  Jellyfin ↔ `/data_root/library/...` côté arr) — 17 films et 19 séries
-  appariables, ces 2 décalages et aucun autre.
-
-- **Déclencheurs de suppression activés sur les connexions Jellyfin de
-  Sonarr/Radarr** (2026-08-05), et **maintenus par
-  `scripts/apply-arr-overrides.py`** (`JELLYFIN_TRIGGERS`, élargi le même jour à
-  la demande de l'utilisateur — donc reproductibles depuis le repo, contrairement
-  au reste de ces connexions, cf. l'entrée `mapFrom`/`mapTo` plus bas) :
-  `onSeriesDelete`+`onEpisodeFileDelete` côté Sonarr,
-  `onMovieDelete`+`onMovieFileDelete` côté Radarr. Ils étaient **tous à
-  `False`** depuis la création des connexions le 2026-07-24 (seuls
-  download/upgrade/rename notifiaient) : Jellyfin ne découvrait donc une
-  suppression que par son propre watcher, et son `LibraryMonitorDelay` vaut 60
-  (`system.xml`) — soit jusqu'à une minute pendant laquelle un titre supprimé
-  restait affiché dans Jellyfin comme dans Kodi. Vrai aussi pour une
-  suppression faite dans l'UI web de clearr, pas seulement depuis Kodi.
-  Les `*ForUpgrade` restent volontairement à `False` : le remplacement est déjà
-  annoncé par `onUpgrade`, les activer ne ferait qu'ajouter un aller-retour
-  « retiré puis rajouté » à chaque upgrade.
-  **Toute la connexion est provisionnée, création incluse** (élargi le
-  2026-08-05 dans la même journée, en deux temps : d'abord les déclencheurs
-  seuls sur une connexion existante, puis la connexion entière sur demande de
-  l'utilisateur). `JELLYFIN_API_KEY` ajoutée à `arr/.env`/`.env.example` — même
-  clé que celle de Seerr, réutilisée plutôt que d'en générer une dédiée (cf.
-  ARCHITECTURE.md). Tout le reste (`JELLYFIN_FIELDS`, `JELLYFIN_*_TRIGGERS`)
-  est déclaré **dans le script** et non en `.env` : `jellyfin:8096` est un nom
-  de service Docker et `mapFrom`/`mapTo` découlent des montages du repo, donc
-  rien là-dedans n'identifie ce déploiement — seule la clé est un secret.
-  Déclaratif et faisant autorité, comme `arr/profiles/sonarr-anime.json` : tout
-  déclencheur `on*` booléen hors de la liste voulue est remis à `False`.
-  Deux niveaux de service selon que la clé est présente, et **`MissingIntegration`
-  → `note:` + exit 0** dans le cas le plus dégradé (corrigé le 2026-08-05 après
-  un premier jet qui levait une erreur) : `README.md` donne cette connexion pour
-  optionnelle, un déploiement sans Jellyfin verrait sinon le cron quotidien
-  sortir en échec pour une intégration qu'il n'utilise pas. D'où un 3e canal de
-  sortie dans `main()` (`notes`, à côté de `changed`/`errors`) — à réutiliser
-  pour toute future intégration optionnelle plutôt que de choisir entre
-  « silencieux » et « échec ». Sans clé mais avec une connexion existante, les
-  champs non secrets et les déclencheurs sont quand même maintenus.
-  **Piège central de ces objets : l'API Servarr renvoie les champs secrets
-  masqués en `********`** et les préserve quand on les repasse tels quels à
-  l'écriture — c'est ce qui rend possible le mode « sans clé », mais ça veut
-  aussi dire qu'une clé qui aurait dérivé est **indétectable** par comparaison
-  (elle est donc exclue de `jellyfin_signature()`, sinon chaque passage
-  réécrirait pour rien). `POST /api/v3/notification/testall` est le seul moyen
-  de vérifier qu'une clé stockée fonctionne encore — utilisé le 2026-08-05 pour
-  confirmer qu'un PUT reconstruit depuis un GET n'avait pas écrasé la clé par la
-  chaîne `********` (les 4 connexions ressortaient `isValid=True`).
-  Chemin de **création** testé le 2026-08-05 en supprimant pour de vrai la
-  connexion Jellyfin de Radarr **puis** celle de Sonarr et en laissant le script
-  les recréer : dans les deux cas l'objet recréé est identique à l'original
-  (nom, contrat, champs, déclencheurs — seul l'id change) et `testall` ressort
-  `isValid=True`, donc la clé de `.env` est la bonne. Même leçon que le bug de
-  `pg_dump` et que les profils anime : ce chemin-là est précisément celui qui
-  justifie l'exercice, il ne doit pas rester non exercé jusqu'au jour d'une
-  vraie réinstallation.
-  Contrairement au reste du script, ce n'est pas recyclarr qui fait dériver ces
-  champs (il ne touche pas aux notifications) : le réalignement quotidien ne sert
-  qu'à rattraper une modification par mégarde dans l'UI, la reproductibilité sur
-  une installation neuve étant l'objectif principal.
-  Trou connu : clearr supprime lui-même les fichiers dans la plupart des
-  chemins (Transmission + `library/`) et ne fait ensuite que retirer le titre
-  de Sonarr/Radarr — c'est donc `onSeriesDelete`/`onMovieDelete` qui porte la
-  notification. Une suppression qui ne retire pas le titre côté arr (vue
-  Torrents, où Sonarr se contente d'un `unmonitor`, voir
-  `plan_sonarr_unmonitor`) ne notifie rien et reste tributaire du watcher.
-  **Ces déclencheurs ne raccourcissent PAS le délai de Jellyfin** — affirmé à
-  tort le 2026-08-05 (« fait passer l'étape de ~60 s à immédiat »), démenti le
-  même jour par la mesure : `POST /Library/Media/Updated` (l'appel exact que
-  fait la connexion Emby/Jellyfin) émis à la main a déclenché le
-  rafraîchissement **60,04 s plus tard**. Jellyfin fait passer les mises à jour
-  *signalées* par le même temporisateur `LibraryMonitorDelay` (60 s,
-  `${DATA_ROOT}/.jellyfin/config/config/system.xml`) que les événements inotify.
-  Ce que les déclencheurs apportent réellement : le bon dossier est signalé
-  explicitement, sans dépendre d'inotify. Pour réduire le délai il faut baisser
-  `LibraryMonitorDelay` lui-même (non fait — réglage global qui affecte aussi
-  les imports, où les 60 s protègent d'un scan lancé sur un fichier encore en
-  écriture) et l'intervalle du plugin KodiSyncQueue.
-  À noter aussi : Sonarr logue deux `[Warn] MediaBrowserProxy: Unable to send
-  notification to Emby` par suppression alors que le champ `notify` est bien à
-  `false` — c'est la notification *à l'écran* des clients, pas le
-  rafraîchissement de bibliothèque, donc sans effet sur la chaîne. Non
-  diagnostiqué plus loin.
-
-- **`scripts/provision.py` (`make api-keys` / `make provision`)** automatise la
-  configuration d'installation qui se faisait à la main dans les UI (ajouté le
-  2026-08-05, liste demandée par l'utilisateur : bibliothèques Jellyfin, clés
-  API arr + cross-seed + Jellyfin, applications Prowlarr, client de
-  téléchargement, root folders, Connection cross-seed, config Seerr complète).
-  **Deux targets et pas un** parce que l'ordre est contraint dans les deux
-  sens : `api-keys` doit précéder `recyclarr-sync`/`arr-overrides` (qui ont
-  besoin des clés), et la config Seerr de `provision` doit les suivre (elle
-  désigne les profils qualité **par nom**). Une seule commande aurait dû être
-  lancée deux fois.
-  **Créé-si-absent, jamais réécrit** — l'inverse d'`apply-arr-overrides.py`,
-  déclaratif et faisant autorité. Volontaire : ce sont des objets
-  d'infrastructure que l'utilisateur peut légitimement ajuster ensuite dans les
-  UI, et ce script n'est donc PAS dans `scripts/crontab`. Piège évité de peu en
-  l'écrivant : un premier jet POSTait `/settings/jellyfin` de Seerr sans garde,
-  ce qui aurait remplacé l'adresse publique réglée à la main par le nom de
-  service interne sur une installation en service.
-  Best-effort par objet (`run_step`), imposé par un cas réel : **Sonarr valide
-  le client de téléchargement en s'y connectant au moment du POST**, donc un
-  `vpn/transmission-vpn` arrêté faisait échouer tout le provisioning. Deux
-  autres validations du même genre, découvertes en testant : la Connection
-  Custom Script exige que le fichier existe côté conteneur, et Prowlarr vérifie
-  que Sonarr/Radarr sait le joindre en retour sur `PROWLARR_INTERNAL_URL`.
-  `jellyfin/.env` (nouveau) porte `JELLYFIN_ADMIN_USER`/`PASSWORD`, nécessaires
-  aux deux seules opérations que Jellyfin refuse à une clé API : créer la
-  première clé (bootstrap) et créer le compte propriétaire de Seerr. Vérifié en
-  revanche qu'une **clé API suffit pour créer une bibliothèque** (test d'une
-  bibliothèque jetable créée puis supprimée), donc `make provision` ne dépend
-  que de `arr/.env` — ne pas y réintroduire une dépendance aux identifiants.
-  Chemins de création **tous testés** le 2026-08-05 contre des **conteneurs
-  jetables** (Sonarr, Prowlarr et Seerr neufs, config vide, rejoignant les mêmes
-  réseaux) plutôt qu'en cassant la config en service : root folders, client de
-  téléchargement, Connection cross-seed et application Prowlarr créés puis relus
-  conformes aux objets réels, 2e passage sans changement. La config Seerr, seul
-  chemin resté non exercé jusqu'à ce que l'utilisateur renseigne
-  `jellyfin/.env`, a été validée sur une instance vierge
-  (`public.initialized: false`) : les 7 étapes passent du premier coup et les
-  26 champs des serveurs Sonarr/Radarr obtenus sont **identiques** à ceux de
-  l'instance configurée à la main (dont `activeProfileId` 7/8/11 et les 3
-  dossiers), compte propriétaire importé depuis Jellyfin compris ; 2 relances
-  laissent le `settings.json` bit-à-bit identique. Création de clé API Jellyfin
-  idem (créée, réutilisée au 2e appel, fonctionnelle) — la clé de test a été
-  supprimée après coup pour ne pas laisser de clé orpheline.
-  Détail relevé au passage, sans conséquence : après suppression d'une
-  bibliothèque Jellyfin, celle-ci reste un moment listée par l'endpoint que
-  Seerr interroge pour sa synchronisation (cache côté Jellyfin) — elle arrive
-  simplement désactivée côté Seerr, `provision.py` n'activant que les 3
-  bibliothèques de `JELLYFIN_LIBRARIES`. Corollaire voulu : une bibliothèque
-  personnelle (ex. "Kids") n'est pas activée dans Seerr par le script, à faire à
-  la main si désiré.
-
-- **Limite de ratio 1.5 sur les indexeurs marqués publics, portée par
-  `scripts/apply-arr-overrides.py`** (`PUBLIC_INDEXER_SEED_RATIO`, ajouté le
-  2026-08-06) : `seedCriteria.seedRatio` posé sur tout indexeur Sonarr/Radarr
-  dont l'indexeur Prowlarr correspondant a `privacy: public`, jamais sur les
-  autres — un tracker privé compte le ratio comme une monnaie, un public n'en
-  tient aucun compte, donc y seeder au-delà du nécessaire n'immobilise que la
-  copie Transmission. Le rattachement se fait par le dernier segment du
-  `baseUrl` de l'indexeur synchronisé (`http://prowlarr:9696/<id>/`) : seul
-  Prowlarr porte l'information `privacy`, les arr n'en gardent que l'URL.
-  Remplace le `seedRatio=2` posé à la main sur Nyaa.si le 2026-07-28 (valeur
-  changée en 1.5 le 2026-08-06, demandé) — ce réglage n'avait jamais été
-  reproductible et **avait silencieusement disparu** (revenu à `None`,
-  probablement une resynchronisation Prowlarr → Sonarr), constaté le
-  2026-08-06 : 3 torrents seedaient sans limite propre, dont un à 13,25 de
-  ratio. C'est exactement le motif de la connexion Jellyfin — un réglage qui ne
-  vit que dans la base Sonarr n'est ni reproductible ni rattrapable.
-  **La valeur est posée sur l'indexeur PROWLARR** (`torrentBaseSettings.
-  seedRatio`, ajouté le 2026-08-07), pas seulement sur les indexeurs
-  synchronisés côté arr : l'hypothèse « probablement une resynchronisation » du
-  2026-08-06 est **confirmée et c'était bien la cause**. Les deux applications
-  Prowlarr sont en `syncLevel: fullSync` et sa tâche `ApplicationIndexerSync`
-  tourne **toutes les 6 h** (360 min) — elle réécrit alors l'indexeur de chaque
-  arr depuis la définition de Prowlarr, ce qui efface tout `seedCriteria` que
-  l'arr portait. Chronométré le 2026-08-07 dans les logs Sonarr : écriture du
-  script à 12:17:14 (`PUT /api/v3/indexer/4?forceSave=true`), remise à `None`
-  par Prowlarr à 12:20:41 (`PUT /api/v3/indexer/4`). Une valeur posée seulement
-  côté arr ne pouvait donc pas tenir plus de 6 h — la dérive de 2026-08-06
-  n'était pas un accident mais le comportement normal.
-  **Corrige au passage une affirmation fausse de ce fichier** (« Prowlarr n'a
-  aucun champ ratio/seed sur son propre objet indexeur », entrée du 2026-07-28
-  plus bas) : `/api/v1/indexer/<id>` expose bien
-  `torrentBaseSettings.seedRatio`, `seedTime`, `packSeedTime` et
-  `appMinimumSeeders`. C'est là qu'un réglage de seed doit vivre, puisque
-  Prowlarr fait autorité.
-  La passe côté arr est **conservée** comme filet : effet immédiat sans attendre
-  un sync, et seul recours si `syncLevel` passait un jour à `addOnly`/`disabled`
-  (Prowlarr ne pousserait alors plus rien). Vérifié le 2026-08-07 : après avoir
-  posé la valeur chez Prowlarr, un `ApplicationIndexerSync` déclenché à la main
-  laisse `1.5` en place sur Sonarr **et** Radarr (au lieu de le remettre à
-  `None`), 2e exécution du script idempotente, et seul Nyaa.si est touché —
-  C411/YggReborn sont `private` et TR4KER `semiPrivate`, tous trois laissés sans
-  limite, conforme à la décision.
-  `forceSave=true` sur le PUT : Sonarr/Radarr testent la connexion à l'indexeur
-  au moment de l'écriture, et ces trackers répondent régulièrement 520/530 —
-  sans ça une panne passagère ferait échouer un réalignement purement local.
-  Ne pas confondre avec la limite globale de Transmission
-  (`ratio-limit-enabled: false`, laissée telle quelle) : c'est bien une limite
-  **par torrent** (`seedRatioMode=1`) que les arr poussent au grab.
-  **Rétroactivité** : `seedCriteria.seedRatio` ne s'applique qu'au moment du
-  grab, jamais aux torrents déjà présents. Les 66 torrents Nyaa.si existants ont
-  donc été repris une fois à la main (`torrent-set` en masse, 2026-08-06) — 14
-  d'entre eux, déjà au-dessus de 1.5, se sont arrêtés aussitôt puis ont été
-  retirés du client par Sonarr (`removeCompletedDownloads`), les fichiers
-  `library/` survivant par leur hardlink (vérifié : 7/7 fichiers intacts sur la
-  série témoin, ~5,8 Go de copies Transmission libérés). Un torrent annonçant
-  **aussi** à un tracker privé est exclu de ce traitement (1 cas, cross-seed
-  Nyaa.si + YggReborn) : lui couper le seed coûterait du ratio là où il compte.
-  Refaire ce rattrapage à la main si un jour un indexeur public est ajouté avec
-  des torrents déjà en place — le script ne gère que le réglage côté arr.
+### Socle
 
 - **Rootless par container**, pas de daemon Docker rootless. `cap_drop:
   ALL` + `security_opt: no-new-privileges:true` partout ; `cap_add` ciblé
   seulement sur `db-next` et `vpn/transmission-vpn` (démarrent root puis
   descendent en privilège), justifié en commentaire dans leur compose
   file — ne pas en ajouter ailleurs sans le même genre de nécessité.
+  **Jamais de socket Docker monté dans un conteneur** : un accès au socket
+  est root-équivalent sur l'hôte, pire que n'importe quel `cap_add` déjà
+  accepté ici. C'est ce qui a décidé le transport de `clearr` et de l'addon
+  Kodi (voir plus bas).
 - **Images toujours en `:latest`** (jamais de tag figé) — voulu
   explicitement, l'utilisateur accepte le risque de casse pour avoir
   toujours les dernières versions. La reproductibilité d'une restauration
@@ -701,15 +34,9 @@ explicitement :
   (gitignoré) + `.env.example` versionné — même chose pour les valeurs
   partagées entre stacks (`PUID`/`PGID`/`RENDER_GID`/`DOMAIN`/
   `DATA_ROOT`/`LAN_CIDR`/`DNS_PRIMARY`/`DNS_SECONDARY`) dans
-  `.env.shared`/`.env.shared.example` à la racine (`.env.shared` gitignoré
-  depuis le 2026-07-18, il identifiait ce déploiement — domaine, chemins).
-  `LAN_CIDR` (ajouté le 2026-07-23) alimente le middleware Traefik
-  `ipallowlist.sourcerange` dans `vpn/` et `arr/` (plus dans
-  `traefik/docker-compose.yml` depuis le 2026-07-24, voir dashboard
-  ci-dessous) — ne jamais remettre ce CIDR en dur dans un compose file,
-  toujours `${LAN_CIDR}`. `DNS_PRIMARY`/`DNS_SECONDARY`
-  (ajoutés le 2026-07-23, mêmes valeurs Cloudflare par défaut qu'avant —
-  pas un secret, juste une valeur dupliquée à ne pas refaire diverger)
+  `.env.shared`/`.env.shared.example` à la racine. `LAN_CIDR` alimente les
+  middlewares `ipAllowList` — ne jamais remettre ce CIDR en dur dans un
+  compose file. `DNS_PRIMARY`/`DNS_SECONDARY` (Cloudflare par défaut)
   alimentent les blocs `dns:` de `arr/`, `vpn/` et `jellyfin/`. Toujours
   passer par le `Makefile` (`make <target> STACK=<nom>`), jamais `docker
   compose` en direct dans un dossier de stack (il ne chargerait pas
@@ -720,94 +47,40 @@ explicitement :
   versionné à côté. Jamais dans le compose file de base — objectif :
   qu'un autre déploiement puisse reprendre la stack sans dépendre des
   chemins de cette machine.
+- **Timezone de tous les containers alignée sur l'hôte** via bind-mount
+  `/etc/localtime:/etc/localtime:ro`, préféré à une variable d'env `TZ` :
+  ne dépend pas d'un paquet `tzdata` présent dans chaque image et suit
+  automatiquement les changements d'heure. Ajouter ce montage à tout
+  nouveau service plutôt que `TZ=...`.
+- **`max-file: "3"` sur tous les blocs `logging` json-file** — sans lui, un
+  seul fichier de logs par service : dès qu'il atteint `max-size`, tout
+  l'historique disparaît au lieu d'être conservé dans un fichier tourné.
+  Toujours ajouter les deux ensemble sur tout nouveau service, jamais
+  `max-size` seul.
+- **Healthcheck sur tous les services** : check HTTP réel quand un endpoint
+  non authentifié existe (`/ping` Servarr, `/status.php` pour `web`,
+  `/api/v1/status` pour `seerr`) ; simple connect TCP sinon (`nc -z` pour
+  `app` sur le fastcgi 9000, `cross-seed`, `dashboard`/
+  `transmission-proxy`) ; `pgrep supercronic` pour `recyclarr`. `traefik` a
+  un entrypoint statique dédié `healthcheck` sur `127.0.0.1:8082`
+  (`traefik.yml`, jamais publié dans `ports:`) plutôt que de réutiliser
+  `web`/`websecure` — sinon la redirection http→https s'appliquerait aussi
+  à la sonde. Aucune auto-remédiation volontairement (pas de watcher type
+  `autoheal` sur le socket Docker), juste de la visibilité.
+- **Hôte Linux natif requis, pas de support Windows/WSL2** (évalué le
+  2026-07-23, cf. ISSUES.md) : noyau WSL2 sans chargement de module (casse
+  le fix `ip_tables`), NAT cassant la joignabilité 80/443 pour Let's
+  Encrypt, VM non persistante (casse le cron de backup), hardlinks
+  Sonarr/Radarr cassés sur un disque Windows en drvfs, pas de passthrough
+  VAAPI pour Jellyfin. Ne pas proposer WSL2 sans que ces points soient
+  résolus.
 - **Nextcloud** : image communautaire (pas AIO — incompatible avec
   rootless/infra-as-code, cf. ARCHITECTURE.md).
-- **Hôte Linux natif requis, pas de support Windows/WSL2** (évalué le
-  2026-07-23, cf. ISSUES.md section "Windows / WSL2") : noyau WSL2 sans
-  chargement de module (casse le fix `ip_tables`), NAT cassant la
-  joignabilité 80/443 pour Let's Encrypt, VM non persistante (casse le
-  cron de backup), hardlinks Sonarr/Radarr cassés sur un disque Windows
-  monté en drvfs, pas de passthrough VAAPI pour Jellyfin. Ne pas proposer
-  WSL2 comme option de déploiement sans que ces points soient résolus.
 - **Seerr (`seerr/`, image `ghcr.io/seerr-team/seerr`)** pour la recherche/
   requête unifiée, pas Jellyseerr/Overseerr — les deux projets ont fusionné
-  dans Seerr et sont dépréciés depuis (voir docs.seerr.dev). Ne pas proposer
-  de revenir sur l'ancienne image.
-  **Seerr parle à Jellyfin en direct (`jellyfin:8096`, réseau `traefik-public`
-  partagé), pas par le domaine public** (changé le 2026-08-24) : il était réglé
-  sur `https://jellyfin.${DOMAIN}:443`, donc chaque requête traversait Traefik
-  et son middleware `rate-limit` (average 50 / burst 100 par IP, voir plus bas)
-  — que son propre `AvailabilitySync` fait sauter. Constaté : 13 × `429` pendant
-  le sync de 03:00, dont 12 titres que Seerr n'a alors **pas** pu retrouver
-  côté Jellyfin. `AvailabilitySync` retire la disponibilité d'un média qu'il ne
-  retrouve plus : un 429 est donc indiscernable d'une suppression réelle, et le
-  job se déclarait quand même « complete ». Même schéma que les connexions
-  Sonarr/Radarr → Jellyfin, qui visent `jellyfin:8096` en direct depuis le
-  début. Vérifié le 2026-08-24 après bascule : 0 × 429, et les mêmes titres
-  ressortent en « still exists. Preventing removal. ».
-  **Piège : il faut renseigner `externalHostname` en même temps.** Les liens
-  « Lire sur Jellyfin » sont construits dans `server/entity/Media.ts`, qui
-  retombe sur `getHostname()` (= `ip`/`port`/`useSsl`, donc l'adresse *interne*)
-  quand `externalHostname` est vide — tous les liens montrés aux utilisateurs
-  seraient devenus `http://jellyfin:8096/...`, injoignables depuis un
-  navigateur. Il porte donc l'ancienne URL publique complète, schéma inclus et
-  sans slash final (`Media.ts` concatène `${jellyfinHost}/web/...`). `mediaUrl`
-  est recalculé en `@AfterLoad()`, donc les entrées déjà en base reprennent la
-  bonne URL sans retraitement.
-  Édité **conteneur arrêté** (`docker stop`/`start`, pas de recréation) : Seerr
-  réécrit `settings.json` lui-même, une édition à chaud est perdue. Sauvegarde
-  laissée à côté (`settings.json.bak-2026-08-24`). Les 4 bibliothèques activées
-  (dont « Kids », activée à la main — `provision.py` n'active que les 3 de
-  `JELLYFIN_LIBRARIES`) sont intactes.
-  `provision.py` écrivait **déjà** `jellyfin:8096` sur une installation neuve —
-  l'adresse publique de cette instance avait été mise à la main dans l'assistant
-  Seerr, et c'est précisément ce que sa garde « ne réécrit pas une connexion
-  déjà configurée » protégeait. La dérive venait donc de l'UI, pas du script.
-  En revanche il ne posait **pas** `externalHostname` (ajouté le 2026-08-24,
-  `https://jellyfin.${DOMAIN}` depuis `.env.shared`) : une installation neuve
-  avait donc bien l'accès serveur correct, mais tous ses liens « Lire sur
-  Jellyfin » pointaient sur `http://jellyfin:8096/...`. Sans `DOMAIN`, le script
-  le signale en `skipped` plutôt que d'écrire une URL fausse.
-- **Timezone de tous les containers alignée sur l'hôte** via bind-mount
-  `/etc/localtime:/etc/localtime:ro` (déjà en place sur `vpn/transmission-vpn`
-  depuis le début, généralisé à tous les services le 2026-07-23) — préféré à
-  une variable d'env `TZ` : ne dépend pas d'un paquet `tzdata` présent dans
-  chaque image et suit automatiquement les changements d'heure d'été/hiver
-  de l'hôte. Ajouter ce montage à tout nouveau service plutôt que `TZ=...`.
-- **Historique git réécrit le 2026-08-09 (force-push)** pour retirer l'adresse
-  e-mail personnelle qui y traînait : dans `traefik/traefik.yml` (committée le
-  2026-07-14, retirée du fichier le 2026-07-18 — mais toujours lisible dans 21
-  révisions) **et surtout comme auteur/committer des 141 commits**. Le nettoyage
-  de juillet n'avait donc rien masqué : réécrire le seul fichier laissait
-  l'adresse dans les métadonnées de chaque commit. Les deux volets sont
-  indissociables, ne jamais refaire l'un sans l'autre.
-  Fait avec `git-filter-repo` (`--mailmap` pour les métadonnées,
-  `--replace-text` pour le contenu), vers l'adresse `noreply` GitHub du compte.
-  `git config --local user.email` a été posé sur la même adresse : sans ça le
-  commit suivant réintroduisait l'ancienne. Vérifié par un clone frais depuis
-  GitHub — 0 occurrence dans les métadonnées comme dans le contenu, 137 commits
-  et 6 tags préservés, et l'arbre suivi à HEAD **identique au bit près** (même
-  sha de tree qu'avant réécriture).
-  Conséquences à connaître : tous les SHA ont changé, donc les tags
-  `backup-YYYY-MM-DD` ont été force-poussés eux aussi, et les **tags
-  `commit-<sha>` des snapshots restic existants pointent désormais vers des
-  commits qui n'existent plus** (idem pour les SHA cités dans
-  `sauvegarde/backup.log` et dans `infra-commit.txt` des anciens snapshots) —
-  sans gravité, mais un `git checkout` de ces SHA lors d'une restauration
-  échouera : reprendre le tag `backup-*` correspondant à la place.
-  Piège relevé juste après l'opération : ces anciens commits **survivaient
-  encore localement** comme objets orphelins (git garde deux semaines les
-  objets non référencés), donc `git cat-file -e <ancien sha>` réussissait et
-  l'ancienne adresse restait lisible dans la base d'objets du checkout — alors
-  qu'un clone frais depuis GitHub était bien propre. Purgés par
-  `git reflog expire --expire=now --expire-unreachable=now --all` puis
-  `git gc --prune=now`. À refaire après toute réécriture : le force-push ne
-  nettoie que le distant. GitHub
-  conserve par ailleurs les objets orphelins accessibles par SHA tant qu'on ne
-  demande pas leur purge au support, et tout clone ou fork antérieur garde
-  l'ancien historique.
-  Ne pas relancer ce nettoyage : il est fait, et le refaire ne ferait que
-  changer tous les SHA une nouvelle fois.
+  dans Seerr et sont dépréciés depuis. Ne pas proposer l'ancienne image.
+
+### Repo public et historique git
 
 - **Repo public** sur GitHub (`nattyebola/home-server-services`, remote
   `origin` via deploy key dédiée `~/.ssh/id_ed25519_server_backup` / alias
@@ -815,1400 +88,1152 @@ explicitement :
   jamais committer un secret ou une info identifiante en dur (email,
   domaine, chemin perso...) dans un fichier versionné — toujours via
   `.env`/`.env.shared` (gitignorés) + leur `.example` (placeholders
-  génériques). Le vrai username Unix de la machine reste en clair dans les
-  `docker-compose.override.yml` gitignorés (pas versionnés, donc pas
-  concernés) — décision explicite de l'utilisateur. Ne pas l'écrire en
-  clair ici pour autant (ce fichier-ci est versionné) : voir `whoami`/`$USER`
-  sur la machine si besoin de le retrouver.
-- **`scripts/torrent-cleanup.py` (`make cleanup`)** : TUI maison pour
-  supprimer un torrent + ses fichiers Transmission + les fichiers
-  `library/` correspondants en une seule action. Écrit sur mesure plutôt
-  que d'ajouter un service tiers (Decluttarr, Removarr...) : aucun ne
-  couvre ce cas précis (suppression Sonarr/Radarr → nettoyage automatique
-  du client torrent), c'est un trou connu et non résolu de l'écosystème
-  *arr (vérifié le 2026-07-23, cf. issue GitHub ManiMatter/decluttarr#292).
-  Le matching bibliothèque se fait par inode (device+inode), donc ne
-  fonctionne que grâce au fix hardlink ci-dessus — sans lui, `library/` et
-  `.transmission/data/` étaient des copies distinctes, pas des liens.
-  Synchronise aussi Sonarr/Radarr (ajouté le 2026-07-23) pour éviter qu'un
-  titre encore monitored soit re-téléchargé à la prochaine recherche : film
-  Radarr → retiré complètement (+ import exclusion) ; épisode/saison
-  Sonarr → saison désactivée seulement si elle est *terminée* (aucun
-  épisode à venir, `totalEpisodeCount == episodeCount` côté API) et
-  entièrement supprimée, sinon seuls les épisodes concernés sont
-  désactivés — pour ne jamais couper le monitoring d'une saison en cours
-  de diffusion. Matching par chemin (`movieFile.path`/`episodefile.path`
-  vus par les conteneurs arr, donc traduits via le même montage
-  `/data_root` que le fix hardlink), pas par nom — fiable même si le titre
-  affiché diffère (VO/VF, ponctuation...). Best-effort : une instance arr
-  injoignable ou un fichier jamais importé ne bloque jamais la suppression
-  des fichiers eux-mêmes.
-  Marqueur `'M'` dans le listing (ajouté le 2026-07-28, suite à 11 torrents
-  antérieurs à la stack arr repérés avec un fichier disparu — cas
-  Transmission `"No data found!"`, jamais nettoyé tout seul : `make cleanup`
-  synchronise Sonarr/Radarr mais ne supprime rien de son propre chef) +
-  raccourci `Maj+P` pour les purger tous de Transmission en une fois après
-  confirmation. Détection via `resolved_stat()` plutôt qu'un `os.stat()` nu
-  — piège rencontré en l'écrivant, voir ci-dessous. Footer devenu trop long
-  une fois ce raccourci ajouté : liste des touches déplacée dans un écran
-  d'aide dédié (touche `?`) plutôt que condensée sur une ou deux lignes.
-  Mode non-interactif `delete-by-inode <dev> <ino> [--dry-run]` (ajouté le
-  2026-07-28) réutilisé par le skill `anime-vf` (voir plus bas) : retrouve
-  et supprime un torrent Transmission par `(dev, ino)` déjà connu — capturé
-  par l'appelant *avant* qu'un import Sonarr/Radarr ne remplace le fichier
-  `library/` correspondant, un stat a posteriori échouerait sinon.
-  Réutilise `resolved_stat()`/`torrent_host_files()`/`TransmissionClient`
-  tels quels plutôt que de redupliquer la logique de matching par inode
-  dans le skill — mêmes pièges (symlinks cross-seed) que le reste du
-  script. Contrairement à une suppression dans la TUI, ne déclenche
-  délibérément PAS `plan_sonarr_unmonitor`/`plan_radarr_deletion` :
-  l'épisode reste monitored, il vient d'être remplacé par une meilleure
-  release, pas retiré. Sortie JSON sur stdout (`{"found", "deleted",
-  "torrent"}`) pour être consommée par un appelant scripté plutôt que lue
-  dans le log.
-  Vues **Séries**/**Films** (ajoutées le 2026-07-31, touche `Tab` pour
-  cycler Torrents → Séries → Films) : pour un titre qui n'intéresse plus
-  du tout, plutôt que de supprimer torrent par torrent puis gérer
-  manuellement Sonarr/Radarr. `Entrée` sur une série retrouve tous ses
-  torrents (préfixe du dossier de la série, comme `plan_sonarr_unmonitor`
-  mais sans sa condition "saison terminée" — ici on supprime tout, peu
-  importe l'état de diffusion), les supprime, nettoie aussi tout fichier
-  résiduel du dossier sans torrent correspondant
-  (`cleanup_orphan_series_files`), puis retire la série de Sonarr
-  (`DELETE /api/v3/series/{id}`, `addImportListExclusion=true`) — retrait
-  complet, pas juste `monitored=false`, symétrique avec le comportement
-  film existant (`plan_radarr_deletion`). `Entrée` sur un film réutilise
-  directement le flux de suppression normal d'un torrent quand un
-  correspond (le `radarr_delete` de `plan_arr_actions` s'en charge déjà) ;
-  sans torrent correspondant (jamais téléchargé, ou fichier orphelin hors
-  suivi), Radarr supprime lui-même son fichier (`deleteFiles=true`).
-  Piège rencontré en testant en lecture seule avant d'activer quoi que ce
-  soit côté destructif : `series["path"]` (API Sonarr) est vu par le
-  **conteneur** (`/data_root/library/...`), pas par l'hôte — sans passer
-  par `arr_path_to_host()` (symétrique de `host_to_arr_path()`) avant de
-  comparer aux chemins de `library_index`/`find_library_matches` (en
-  espace hôte), aucun torrent n'aurait jamais matché une série et
-  `cleanup_orphan_series_files` aurait cherché un dossier inexistant sur
-  le disque. Pas de jaquette dans ces vues (demandé explicitement) :
-  `curses` ne sait afficher que du texte, une vraie image nécessiterait
-  un protocole terminal (Kitty/iTerm2/Sixel, marche seulement si le
-  terminal SSH le supporte) ou une dépendance externe (`chafa`, rendu
-  approximatif) — reporté à plus tard.
-- **`dashboard` (`traefik/docker-compose.yml`) accessible en WAN comme en
-  LAN** (changé le 2026-07-24, avant restreint par `ipallowlist`) — les
-  sous-domaines qu'elle liste sont de toute façon publics via Certificate
-  Transparency dès qu'un certificat Let's Encrypt leur a été émis, donc
-  restreindre l'accès à la page n'apportait pas de confidentialité réelle.
-  Les cartes des services LAN-only (Transmission/Prowlarr/Sonarr/Radarr)
-  restent dans le HTML généré et cliquables, mais un script côté client
-  (dans `scripts/generate-dashboard.py`) les grise dynamiquement pour un
-  visiteur WAN : il sonde une image réelle de chaque service via `<img>`
-  (`onload`/`onerror`, pas `fetch`/`XHR` — ceux-ci échouent pareil, bloqués
-  ou non par CORS, donc ne distinguent pas un 403 ipallowlist d'un succès).
-  Chemin de la sonde dans `PROBE_PATH` — ne pas supposer `/favicon.ico`
-  générique : `transmission-proxy` le redirige vers du HTML, chemin
-  overridé vers `/transmission/web/images/favicon.ico`. Ne pas proposer de
-  revenir à un dashboard LAN-only sans redemande explicite.
-- **Le dashboard vit sur le domaine nu et `www.${DOMAIN}`, pas
-  `dashboard.${DOMAIN}`** (changé le 2026-07-24, en même temps que le
-  passage de Nextcloud sur `nextcloud.${DOMAIN}` — avant sur
-  `www.${DOMAIN}`, ce qui bloquait ces deux domaines pour le dashboard).
-  Routeur Traefik : `Host(\`${DOMAIN}\`) || Host(\`www.${DOMAIN}\`)` dans
-  `traefik/docker-compose.yml`. Le changement de domaine de Nextcloud
-  n'est pas qu'un label Traefik : `trusted_domains`/`overwrite.cli.url`
-  sont aussi dans `config/config.php` (persisté, hors compose) — à mettre
-  à jour via `occ config:system:set` dans le container `app` (pas en
-  éditant le fichier à la main), sinon Nextcloud rejette le nouveau nom
-  d'hôte avec une erreur "domaine non fiable".
-- **Les deux middlewares LAN-only vivent dans le provider `file` de Traefik, pas
-  dans des labels Docker — pour pouvoir être ouverts au WAN et refermés sans
-  recréer un seul conteneur** (`make switch-lan-only-middleware`, ajouté le
-  2026-08-07 à la demande de l'utilisateur : « tester/corriger vite fait si je ne
-  suis pas chez moi mais que j'ai un accès SSH »). `arr-lan-only` (prowlarr,
-  sonarr, radarr, clearr) et `transmission-lan-only` (transmission-proxy) étaient
-  déclarés par labels, la même définition répétée 5 fois ; **un label ne peut
-  changer qu'en recréant le conteneur qui le porte**, donc basculer aurait voulu
-  dire redémarrer les 4 arr + le proxy à chaque aller-retour. Ils sont désormais
-  définis dans `traefik/dynamic/lan-only.yml` (provider `file`, `watch: true`) et
-  référencés en `arr-lan-only@file`/`transmission-lan-only@file` ; réécrire le
-  fichier suffit, Traefik recharge à chaud. Vérifié le 2026-08-07 : bascule
-  403 → 200 sur les 5 services, `StartedAt` des 6 conteneurs concernés
-  (traefik inclus) **inchangé**.
-  **Le middleware est rendu inopérant, pas retiré des routeurs** (c'est la
-  demande explicite) : il reste référencé, seule sa plage change — `LAN_CIDR` ↔
-  `0.0.0.0/0` + `::/0`. `::/0` n'est pas décoratif : sans lui un client IPv6
-  resterait bloqué et l'ouverture serait silencieusement partielle. Le retirer
-  des routeurs aurait demandé d'éditer 5 déclarations et de les recréer, soit
-  exactement ce qu'on voulait éviter.
-  **Un dossier monté, pas un fichier** : un bind-mount de *fichier* garde l'inode
-  qu'il avait au démarrage du conteneur, donc un remplacement côté hôte
-  passerait inaperçu dedans (piège déjà rencontré sur `recyclarr.yml`, voir plus
-  bas). Le script écrit d'ailleurs par `mktemp` + `mv` atomique, pour que Traefik
-  — qui surveille le dossier — ne puisse pas lire un fichier à moitié écrit.
-  **Refermeture automatique après 1 h, par un garde cron** (`rearm`, toutes les
-  5 min) et non par un `sleep 3600` détaché : le cron survit à la déconnexion SSH
-  qui a servi à ouvrir et à un redémarrage de la machine, ce qu'un processus en
-  arrière-plan ne fait pas — et l'oubli est le vrai risque de cette commande, pas
-  l'ouverture. Contrepartie assumée : la refermeture tombe entre 60 et 65 min.
-  L'échéance vit dans `${DATA_ROOT}/.lan-only-open-until` (même convention de
-  dotfile que `.cron-status/`), son absence = fermé.
-  **Pas de marqueur `.cron-status` ni d'entrée « Tâches planifiées »** pour ce
-  garde : muet en permanence, il ne serait jamais que vert. C'est le **bandeau
-  rouge du dashboard** (`render_lan_only_banner()`, avec l'heure de refermeture)
-  qui porte la visibilité, et c'est pour lui que la bascule régénère le dashboard
-  dans les deux sens. Il fallait un signal serveur : les cartes de service sont
-  grisées côté client par une sonde `<img>` (voir `PROBE_PATH`), qui verrait
-  justement ces services répondre — un visiteur WAN ne pourrait donc pas
-  distinguer « ouvert exprès » de « toujours restreint ».
+  génériques). Le vrai username Unix reste en clair dans les
+  `docker-compose.override.yml` gitignorés (décision explicite) — ne pas
+  l'écrire ici pour autant, ce fichier est versionné : `whoami` sur la
+  machine si besoin.
+- **Historique git réécrit le 2026-08-09 (force-push)** pour retirer une
+  adresse e-mail personnelle, présente à la fois dans `traefik/traefik.yml`
+  et **comme auteur/committer de tous les commits**. Les deux volets sont
+  indissociables : réécrire le seul fichier laisse l'adresse dans les
+  métadonnées. Fait avec `git-filter-repo` (`--mailmap` +
+  `--replace-text`), et `git config --local user.email` posé sur l'adresse
+  `noreply` — sans ça le commit suivant réintroduit l'ancienne.
+  Conséquences vivantes : les tags `commit-<sha>` des snapshots restic
+  antérieurs pointent vers des commits disparus (idem les SHA dans
+  `sauvegarde/backup.log` et `infra-commit.txt`) — lors d'une restauration,
+  reprendre le tag `backup-*` correspondant plutôt que le SHA.
+  **Après toute réécriture, purger aussi les objets orphelins locaux** :
+  le force-push ne nettoie que le distant, et git garde deux semaines les
+  objets non référencés — l'ancienne adresse reste donc lisible dans la
+  base d'objets du checkout. `git reflog expire --expire=now
+  --expire-unreachable=now --all` puis `git gc --prune=now`.
+  Ne pas relancer ce nettoyage : il est fait, le refaire ne changerait que
+  tous les SHA une nouvelle fois.
+
+### clearr (`arr/clearr/`) — nettoyage torrents/bibliothèque
+
+- **Remplace l'ancien `scripts/torrent-cleanup.py` / `make cleanup`**
+  (2026-07-31) : web LAN-only (`clearr.${DOMAIN}`, middleware
+  `arr-lan-only`) **et** TUI d'origine (`make clearr`), toutes deux
+  appuyées sur le même `arr/clearr/app/core.py`. `webapp.py` (FastAPI +
+  Jinja2 + Bootstrap) et `tui.py`/`cli.py` (curses / `delete-by-inode`)
+  importent `core.py`, **jamais l'inverse**.
+  Tourne en conteneur et rejoint `vpn-internal` (externe,
+  `vpn_vpn-internal`) + le réseau `default` d'arr : HTTP direct vers
+  `transmission-vpn:9091`, `sonarr:8989`, `radarr:7878`, `prowlarr:9696`.
+  L'ancienne TUI passait par `docker exec <container> curl` depuis l'hôte —
+  plus besoin, et surtout pas de socket Docker (voir Socle).
+  Monte `${DATA_ROOT}:/data_root` en lecture-écriture, exactement comme
+  sonarr/radarr (même mount unique, même raison hardlink) : core.py et arr
+  partagent donc le même référentiel de chemins, **il n'y a plus de
+  traduction de chemin à faire** (les `host_to_arr_path()`/
+  `arr_path_to_host()` de l'ancien script ont disparu avec).
+  1er service du repo avec des dépendances Python tierces
+  (`arr/clearr/requirements.txt`) et 2e avec un build custom après
+  `nextcloud/app`/`web` (`build: ./clearr`, `python:3-slim`, tag flottant) —
+  `make update STACK=arr` doit donc aussi rebuilder.
+  Chaque requête recalcule tout (`core.load_full_state()`), **jamais de
+  cache ni d'état en mémoire entre deux requêtes** — contrairement à la TUI
+  qui ne recharge qu'au démarrage. Mesuré acceptable à l'échelle de cette
+  bibliothèque, à revoir si ça dérive.
+- **Pas de HTMX ni de Popper**, malgré la validation initiale de
+  « FastAPI + HTMX » : `static/clearr.js` est un petit JS maison
+  (`data-get`/`data-post`/`data-live`). Bootstrap est vendoré en
+  `bootstrap.min.css`/`.min.js` **sans le bundle** — donc pas de Popper,
+  donc **aucun tooltip / dropdown / popover Bootstrap n'est disponible**
+  (les infobulles passent par un `title=` natif).
+  Pour vendorer un asset : `curl`, **jamais `WebFetch`** (qui peut reformater
+  du contenu non-HTML — `curl` donne les octets exacts), et vérifier
+  l'intégrité par un second téléchargement + comparaison sha256 avant de
+  committer.
+- **Zéro appel WAN côté serveur**, contrainte demandée explicitement. Les
+  jaquettes viennent du cache disque des arr
+  (`${DATA_ROOT}/.arr/{sonarr,radarr}/config/MediaCover/<id>/poster-250.jpg`)
+  servi par `/poster/{kind}/{arr_id}` — `arr_id` passé par `int()`, c'est
+  **la** garantie anti-traversal. Les ids externes
+  (`imdbId`/`tvdbId`/`tmdbId`) sont déjà dans les objets arr. Seuls les
+  liens sortent, suivis par le navigateur. TVDB adressé par
+  `thetvdb.com/dereferrer/series/<tvdbId>` (Sonarr n'expose pas le slug) ;
+  Radarr par `<tmdbId>` (son `titleSlug` EST le tmdbId).
+  Seule exception au « zéro WAN » : `core.quality_profile_names()`, sur le
+  réseau interne.
+  `DOMAIN` (liens `sonarr.${DOMAIN}`/`radarr.${DOMAIN}`) vient de
+  `.env.shared`, hors du `env_file: .env` du service : injecté par un bloc
+  `environment:` dans `arr/docker-compose.yml`. Absent = pas de lien arr,
+  le reste fonctionne.
+- **Rattachement torrent → titre arr** (`core.build_arr_meta_index()`/
+  `torrent_meta()`) : films par chemin exact de `movieFile.path`, séries
+  par préfixe de `series.path` — mêmes critères que
+  `plan_radarr_deletion`/`plan_sonarr_unmonitor`, en repartant des inodes
+  déjà calculés par `analyze_torrent_files()` (donc zéro `stat`
+  supplémentaire, symlinks cross-seed déjà résolus). Best-effort : un
+  torrent jamais importé n'a ni jaquette ni lien, un arr injoignable dégrade
+  la vue sans la casser.
+- **Un seul gabarit par comportement partagé entre les 3 vues** :
+  `templates/_meta.html` (cellule titre : jaquette + liens),
+  `templates/details.html` (fiche « toutes les informations connues », en
+  modale, purement descriptive), `render_arr_tab(tab, ...)` + `ARR_TABS`
+  pour Séries/Films. Sans ça le même bloc serait écrit deux ou trois fois.
+  `core.find_series_by_id`/`find_movie_by_id` plutôt que des `next((...))`
+  recopiés dans les routes.
+- **Erreur réseau rendue en bandeau lisible**
+  (`@app.exception_handler(RuntimeError)`) plutôt qu'un 500 brut — la TUI
+  avait déjà ce filet dans `run()`, le web non (chaque route peut lever
+  indépendamment). Le handler teste le préfixe `/api/` et répond en **JSON**
+  dans ce cas : sinon l'addon Kodi recevait le fragment Bootstrap destiné au
+  navigateur.
+- **Mise en page réglée au détail près, demandée ainsi — ne pas
+  « nettoyer » le CSS de `clearr.css` sans redemande** : table resserrée
+  (`table-sm`), suppression via une **croix ✕ (U+2715)** et pas un emoji
+  (rendu par la police couleur du système, donc ni monochrome ni cohérent
+  d'un appareil à l'autre, là où un glyphe texte hérite du rouge de
+  `.btn-outline-danger`), colonne d'actions figée à droite dans la vue
+  Torrents (`.table-sticky-actions`) sans bordure ni ombre sur son bord
+  gauche, tri au clic sur l'en-tête de colonne (reclic = sens inverse).
+  Trois pièges CSS à ne pas re-découvrir :
+  - `tr.collapsing { transition: none }` est **obligatoire** : les groupes
+    cross-seed sont des `<tr class="collapse">` (un `<details>` ne peut pas
+    entourer des `<tr>`), et l'animation de hauteur de Bootstrap est pensée
+    pour des blocs — sans ça l'ouverture clignote. Comportement documenté
+    de Bootstrap sur les tableaux, pas un bug.
+  - `background-color` explicite sur la cellule figée : `--bs-table-bg` est
+    transparent, les cellules qui défilent dessous resteraient visibles au
+    travers. Le surlignage de survol de Bootstrap passe par un `box-shadow`
+    inset, donc peint par-dessus et continue de marcher.
+  - `.title-link.has-poster` redéclaré explicitement : `.title-link` étant
+    déclaré après `.has-poster`, son `text-decoration: none` effaçait le
+    souligné pointillé qui signale une jaquette au survol.
+  Jaquette chargée seulement au premier survol dans les tableaux
+  (`data-poster` porte l'URL, pas un `<img>` — sinon 45 images par rendu
+  alors qu'on en regarde une), dans un conteneur flottant attaché au
+  `<body>` (les lignes vivent dans `.table-responsive`, dont l'`overflow`
+  découperait une vignette). Dans la fiche détail c'est un vrai `<img>` :
+  une seule fiche ouverte à la fois, rien à économiser.
+  Bootstrap 5.3 ne suit pas `prefers-color-scheme` tout seul — un script en
+  tête de `page.html` pose `data-bs-theme` avant le rendu du `<body>` pour
+  éviter un flash clair→sombre.
+- **Suppression toujours confirmée par une modale**, composant Modal natif
+  de Bootstrap plutôt qu'un `<dialog>` fait main : focus trap / Échap /
+  clic-sur-le-fond déjà corrects, les réimplémenter aurait été strictement
+  moins bien.
+- **Les écrans de confirmation annoncent aussi les fichiers sans torrent**
+  et marquent les torrents encore en seed (🌱) ou arrêtés (⏸,
+  `SEEDING_STATUSES`) : `execute_delete_series` supprime les torrents
+  **puis** balaie le dossier (`cleanup_orphan_files`), la modale promettait
+  donc moins que ce qu'elle faisait. Déclencheur : un fichier `library/`
+  dont Sonarr avait retiré le torrent du client après le ratio atteint — le
+  hardlink Transmission disparu, le fichier restant.
+  `core.orphan_files_under()` factorise le calcul, `series_orphan_files()`
+  l'applique au dossier d'une série. **Piège : les deux appelants ne
+  raisonnent pas dans le même espace de chemins** — un titre hors arr a ses
+  *données* sous le dossier visé (les couverts sont les `host_files` du
+  torrent), une série n'y a que des *hardlinks* (les couverts sont les
+  `lib_matches`, les données vivant sous `.transmission/data`). Comparer les
+  mauvais chemins ferait passer tous les fichiers pour orphelins.
+  Les films n'ont volontairement pas d'orphelins : `_delete_movie` ne balaie
+  pas le dossier du film (soit un torrent le couvre, soit Radarr supprime son
+  propre fichier), donc en annoncer serait promettre plus que ce qui est fait.
+- **Bouton « Orphelins library/ »**, pas une 4e vue (demandé) :
+  `core.library_orphan_files()`/`delete_library_orphans()`. Comble un trou
+  structurel — les 3 vues partent des torrents ou des objets arr, donc un
+  fichier ni lié à un torrent ni connu d'un arr n'apparaissait nulle part.
+  Le calcul coûte `2 + N` appels arr (~170 ms contre ~50 ms pour l'onglet
+  Torrents) : à la demande, jamais au rendu d'un onglet — d'où l'absence de
+  compteur ou de bouton grisé.
+  Couverture d'un fichier : un **torrent** le couvre s'il partage son inode ;
+  un **arr** le couvre si c'est un de ses `episodefile`/`movieFile` **ou** un
+  sidecar (`SIDECAR_EXTENSIONS`) sous le dossier d'un titre qu'il connaît
+  encore. Ce 2e volet est indispensable depuis le metadata writer (241
+  `.nfo`), sans lui ils ressortaient tous orphelins. Corollaire voulu : une
+  vidéo posée dans le dossier d'une série suivie mais jamais importée **est**
+  un orphelin (c'est le cas qui a motivé la demande), là où un `.nfo` au même
+  endroit ne l'est pas. Couverture par **chemin de fichier exact**, pas par
+  préfixe de dossier de titre — un préfixe aurait rendu invisible exactement
+  le cas cherché.
+  **`_arr_covered_paths()` n'est PAS best-effort**, seule exception du
+  module : elle lève `RuntimeError` si un appel arr échoue au lieu de
+  dégrader. Sans la liste des fichiers d'un arr, tout ce qu'il gère passerait
+  pour orphelin — proposer de supprimer la moitié de `library/` sur un
+  timeout serait le pire échec possible de cette fonction.
+  Le POST **recalcule** la liste au lieu de reprendre les chemins de la
+  modale : aucun chemin à supprimer ne vient du client.
+- **Fiche détail : agrégé pour une série, complet pour un film.** Série →
+  `core.fetch_episode_files()` puis valeurs *distinctes* de qualité /
+  groupe / langue / codec / résolution (empiler le `mediaInfo` de 12
+  épisodes noierait la fiche ; ce qu'on veut savoir c'est s'il y a un
+  mélange). `_distinct()` préserve l'ordre de première apparition, pas
+  l'ordre alphabétique. Fichiers triés par `relativePath` (= ordre
+  saison/épisode) et non par l'ordre de l'API, qui est celui des ids donc
+  des imports. Film → un seul fichier, détail complet, **sans custom
+  formats** : le `movieFile` imbriqué dans l'objet film de Radarr n'en porte
+  pas (contrairement à l'`episodefile` de Sonarr), les afficher n'aurait
+  donné que des tirets.
+  `seedRatioLimit` **et** `seedRatioMode` demandés ensemble à `torrent-get`
+  (`_seed_limit_label()`) : afficher la limite sans le mode induit en
+  erreur, un torrent en mode 0 traînant souvent un `seedRatioLimit` résiduel
+  qui ne s'applique pas.
+  Une section sans lignes n'est pas rendue — un film sans fichier n'affiche
+  simplement ni Fichier(s) ni Média, sans cas particulier dans le code.
+- **Mode CLI `delete-by-inode <dev> <ino> [--dry-run]`**, réutilisé par le
+  skill `anime-vf` : retrouve et supprime un torrent par `(dev, ino)` déjà
+  connu — capturé par l'appelant *avant* qu'un import ne remplace le fichier
+  `library/`, un stat a posteriori échouerait. Ne déclenche délibérément
+  **pas** `plan_sonarr_unmonitor`/`plan_radarr_deletion` : l'épisode reste
+  monitored, il vient d'être remplacé par une meilleure release, pas retiré.
+  Sortie JSON sur stdout pour un appelant scripté.
+- **Synchronisation arr à la suppression**, pour éviter qu'un titre encore
+  monitored soit re-téléchargé : film Radarr → retiré complètement (+ import
+  exclusion) ; épisode/saison Sonarr → saison désactivée seulement si elle
+  est *terminée* (`totalEpisodeCount == episodeCount`) et entièrement
+  supprimée, sinon seuls les épisodes concernés — pour ne jamais couper le
+  monitoring d'une saison en cours de diffusion. Depuis les vues
+  Séries/Films, retrait complet du titre (`DELETE /api/v3/series/{id}`,
+  `addImportListExclusion=true`), sans la condition « saison terminée » :
+  ici on supprime tout. Matching par chemin, pas par nom — fiable même si le
+  titre affiché diffère (VO/VF, ponctuation).
+  Best-effort : un arr injoignable ou un fichier jamais importé ne bloque
+  jamais la suppression des fichiers eux-mêmes.
+- Écrit sur mesure plutôt que d'ajouter un service tiers (Decluttarr,
+  Removarr...) : aucun ne couvre « suppression Sonarr/Radarr → nettoyage
+  automatique du client torrent », trou connu et non résolu de l'écosystème
+  *arr (cf. issue ManiMatter/decluttarr#292).
+- TUI seulement : marqueur `'M'` pour un torrent dont le fichier a disparu
+  (cas Transmission « No data found! », jamais nettoyé tout seul) +
+  `Maj+P` pour les purger en masse, et un écran d'aide (`?`) plutôt qu'un
+  footer surchargé. Pas de jaquette (curses ne fait que du texte ; une vraie
+  image demanderait un protocole terminal ou `chafa`). Les ajouts récents
+  sont **web seulement**.
+
+### Addon Kodi « Supprimer avec clearr » (`kodi/context.clearr`)
+
+- `make kodi-install`, ajouté le 2026-08-05 — détail humain dans
+  `kodi/README.md`. Envoie les ids externes + le chemin du titre sélectionné
+  à `POST /api/{preview,delete}/{film,series}` de clearr, qui réutilisent les
+  mêmes helpers `_delete_series`/`_delete_movie` que les routes web.
+- **Transport HTTP, pas la CLI** : `python -m app delete-…` aurait été aussi
+  court, mais clearr tourne en conteneur — l'atteindre depuis un client media
+  supposerait SSH ou l'utilisateur Kodi dans le groupe `docker`
+  (root-équivalent, cf. Socle). Le conteneur écoute déjà et est joignable en
+  LAN, l'addon n'a besoin que d'`urllib`.
+- **Résolution par id externe puis par chemin** (`_resolve_target`) : Kodi ne
+  connaît pas les ids Sonarr/Radarr, seulement les `ProviderIds` que
+  jellyfin-kodi recopie depuis Jellyfin. IMDb d'abord, puis TVDB/TMDB. **Un
+  id qui matche plusieurs titres renvoie None (404) plutôt que d'en deviner
+  un** — c'est une suppression de fichiers.
+  Le repli par chemin sert les titres hors arr (Jellyfin sert aussi
+  `completed/` comme bibliothèque), et il est **plus discriminant** que les
+  ids : deux dossiers peuvent porter le même `tvdbId` (2 saisons téléchargées
+  séparément = 2 séries pour Jellyfin) là où la résolution par id refuse — à
+  raison — de trancher.
+  `core.resolve_media_path()` ne suppose **aucun préfixe commun** (Kodi voit
+  `/grosDur/...`, clearr `/data_root/...`, un client distant verrait un
+  partage réseau) : il cherche le plus long suffixe de composants qui existe
+  réellement sous `completed/` ou `library/`, **2 composants minimum** — sans
+  ce plancher, un chemin finissant par `film` résoudrait sur toute la
+  catégorie. Introuvable ou ambigu = rien de supprimé.
+- **Le repli par chemin s'interdit `library/`** (`is_arr_managed_path`) : un
+  titre qui y vit est presque toujours suivi par un arr, supprimer ses
+  fichiers sans retirer son entrée le ferait re-télécharger — et ça referme
+  du même coup le cas « id ambigu », dont les fichiers sont justement là.
+  Message renvoyant vers l'UI web dans ce cas.
+- Supprime les torrents **et** les fichiers du dossier qu'aucun torrent ne
+  couvre (choix explicite) : sans ça un titre récupéré à la main, sans
+  torrent, serait insupprimable depuis Kodi. Aucun appel arr dans ce mode,
+  par construction.
+- **Routes `/api/preview/...` appelées avant la confirmation** : la boîte
+  annonce « 3 torrents — 15,6 Go » et pas seulement le titre, et un titre non
+  résolu est signalé *avant* la confirmation. Elles couvrent les deux modes,
+  pas seulement le repli — deux comportements selon l'origine du titre
+  auraient été plus de code pour moins de cohérence. `orphan_lines()` plafonne
+  à 5 noms : la boîte `yesno` de Kodi ne défile pas, au-delà le texte passe
+  sous les boutons.
+- **Dépend de jellyfin-kodi en chemins directs** (`useDirectPaths=1`) : en
+  mode addon, Kodi ne connaît qu'une URL `plugin://`, inexploitable — seuls
+  les titres suivis par arr resteraient supprimables.
+- **Ids lus par JSON-RPC** (`VideoLibrary.Get*Details`, propriété `uniqueid`)
+  et non par les InfoLabels `ListItem.UniqueID(imdb)`/`IMDBNumber`, qui ne
+  remontent que l'id désigné par défaut alors qu'on veut pouvoir retomber sur
+  les autres.
+- **Le retrait de la ligne dans Kodi n'est pas fait par l'addon** (option
+  choisie par l'utilisateur après comparatif) : Kodi ne réplique pas le disque
+  mais la bibliothèque Jellyfin, donc la chaîne est `clearr supprime` →
+  `Jellyfin rafraîchit` → `KodiSyncQueue` → `jellyfin-kodi retire`. Un
+  `VideoLibrary.RemoveMovie` local aurait fait disparaître la ligne
+  instantanément mais désynchronisé la table de correspondance de
+  jellyfin-kodi.
+  **Aucun `Container.Refresh` à la fin** : la propagation prend **1 min 38 s**
+  (chronométré — <1 s côté serveur, puis 65 s de `LibraryMonitorDelay`, 5 s de
+  KodiSyncQueue, 25 s avant `LibraryChanged`, 3 s de retrait). Un refresh
+  différé de 6 s rerendait strictement la même liste.
+- Durées de notification dans `NOTIFICATION_MS`/`NOTIFICATION_ERROR_MS`
+  (2,5 s / 5 s) : la suppression est déjà terminée quand elles s'affichent,
+  ce n'est qu'un accusé de réception ; l'erreur reste plus longue, elle porte
+  une information à lire. À ne pas confondre avec les toasts de jellyfin-kodi
+  (`newvideotime`), qui ne viennent pas de cet addon.
+- **L'URL de clearr est un réglage d'addon** (`resources/settings.xml`), pas
+  une constante : elle contient `${DOMAIN}`, hors de question dans un fichier
+  versionné. `make kodi-install` la pré-remplit depuis `.env.shared` et
+  **n'écrase jamais un `settings.xml` existant**, Kodi réécrivant lui-même ce
+  fichier. Addon **copié** et non symlinké (Kodi refuse un addon dont le
+  dossier est un lien sortant de son `addons/`).
+- **Pas de jeton d'authentification sur ces routes**, décidé explicitement :
+  le service est LAN-only et son UI web expose déjà les mêmes suppressions en
+  POST sans jeton — à revoir pour les deux ensemble, jamais pour l'API seule.
+
+### Chaîne arr → Jellyfin → Kodi
+
+- **Metadata writer « Kodi (XBMC) / Emby » activé sur Sonarr et Radarr**,
+  porté par `scripts/apply-arr-overrides.py` (`XBMC_METADATA_*`, 2026-08-06) :
+  **Jellyfin n'apprend jamais les ids externes des arr** — la connexion
+  Emby/Jellyfin ne signale qu'un dossier à rescanner, aucun identifiant ne
+  circule, donc Jellyfin réidentifie chaque titre par une recherche TMDB sur
+  le nom de dossier + année. Deux erreurs réelles constatées, toutes deux dues
+  à un homonyme plus populaire (`Dead Man (1995)` pris pour *Dead Man
+  Walking*, `One Piece` sans année pris pour la série live-action de 2023).
+  Les `.nfo` écrits à côté des fichiers portent les `uniqueid`
+  imdb/tmdb/tvdb, et les bibliothèques Jellyfin ont `Nfo` en tête de leur
+  `LocalMetadataReaderOrder` : l'identification devient déterministe.
+  **Ce n'est pas qu'un problème d'affichage** : un id faux rendait le titre
+  insupprimable depuis Kodi (l'addon envoie les ids vus par Jellyfin, et le
+  repli par chemin s'interdit `library/`).
+  Images désactivées volontairement (`movieImages`/`seriesImages`/
+  `seasonImages`/`episodeImages`/`episodeImageThumb`) : Jellyfin télécharge
+  déjà ses jaquettes dans son cache, on ne veut que les identifiants dans
+  `library/`.
+  **Contrepartie : le `.nfo` fait autorité sur le titre affiché**, Jellyfin
+  n'utilise donc plus la traduction TMDB. D'où `movieMetadataLanguage: 2`
+  (French) côté Radarr. **Sonarr n'a aucun champ équivalent** (vérifié champ
+  par champ ; son `uiLanguage` ne concerne que son interface), donc **les
+  titres de séries s'affichent en anglais/original** — écart **accepté
+  explicitement** après avoir écarté les deux parades : renommer et
+  verrouiller le titre dans Jellyfin (manuel), ou reprendre le titre français
+  depuis les `alternateTitles` de Sonarr (qui les connaît, mais sans étiquette
+  de langue — deviner lequel est le français est exactement le genre
+  d'heuristique qui a produit le bug corrigé ici). Ne pas reproposer sans
+  redemande.
+  Jellyfin **relit un `.nfo` modifié tout seul** (il en suit la date à son
+  scan) ; un `/Items/{id}/Refresh` explicite ne sert qu'à ne pas attendre.
+  Les `.nfo` ne sont écrits qu'à l'import ou sur rescan — rattraper une
+  bibliothèque existante avec `RescanMovie`/`RescanSeries` sans argument.
+  Pour **réidentifier** un titre déjà faux : `POST
+  /Items/RemoteSearch/{Movie,Series}` puis `POST /Items/RemoteSearch/Apply/{id}`
+  (équivalent API du bouton « Identifier ») — un rescan arr seul ne suffit
+  pas, Jellyfin ne relit un `.nfo` qu'à un rafraîchissement de métadonnées.
+  Audit à refaire de la même façon en cas de doute : comparer
+  `imdbId`/`tmdbId`/`tvdbId` des objets arr aux `ProviderIds` des items
+  Jellyfin **appariés par chemin** (`/library/...` côté Jellyfin ↔
+  `/data_root/library/...` côté arr).
+- **Connexion Sonarr/Radarr → Jellyfin entièrement provisionnée**
+  (`JELLYFIN_FIELDS`/`JELLYFIN_TRIGGERS` dans
+  `scripts/apply-arr-overrides.py`), création incluse.
+  `mapFrom=/data_root/library` / `mapTo=/library` est **obligatoire** : les
+  arr voient la bibliothèque sous `/data_root/library/...` (mount unique du
+  fix hardlink), Jellyfin sous `/library/...` — sans ça le refresh ciblé ne
+  trouve pas le bon dossier. Cible `jellyfin:8096` en direct (réseau
+  `traefik-public` partagé, pas de passage par Traefik).
+  Déclencheurs voulus : `onSeriesDelete`+`onEpisodeFileDelete` côté Sonarr,
+  `onMovieDelete`+`onMovieFileDelete` côté Radarr. Ils étaient **tous à
+  `False`** depuis la création des connexions : Jellyfin ne découvrait une
+  suppression que par son propre watcher. Les `*ForUpgrade` restent
+  volontairement à `False` — le remplacement est déjà annoncé par `onUpgrade`,
+  les activer ajouterait un « retiré puis rajouté » à chaque upgrade.
+  **Déclaratif et faisant autorité** : tout déclencheur `on*` hors de la liste
+  voulue est remis à `False`.
+  `JELLYFIN_API_KEY` dans `arr/.env` — même clé que celle de Seerr, réutilisée
+  plutôt qu'une clé dédiée. Le reste (`JELLYFIN_FIELDS`, triggers) est déclaré
+  **dans le script** et non en `.env` : `jellyfin:8096` est un nom de service
+  Docker et `mapFrom`/`mapTo` découlent des montages du repo, rien là-dedans
+  n'identifie ce déploiement.
+  **`MissingIntegration` → `note:` + exit 0**, pas une erreur : `README.md`
+  donne cette connexion pour optionnelle, un déploiement sans Jellyfin verrait
+  sinon le cron quotidien sortir en échec. D'où un 3e canal de sortie dans
+  `main()` (`notes`, à côté de `changed`/`errors`) — à réutiliser pour toute
+  future intégration optionnelle plutôt que de choisir entre « silencieux » et
+  « échec ». Sans clé mais avec une connexion existante, les champs non
+  secrets et les déclencheurs sont quand même maintenus.
+  **Piège central : l'API Servarr renvoie les champs secrets masqués en
+  `********`** et les préserve quand on les repasse tels quels. C'est ce qui
+  rend possible le mode « sans clé », mais ça veut aussi dire qu'une clé qui
+  aurait dérivé est **indétectable** par comparaison (elle est donc exclue de
+  `jellyfin_signature()`, sinon chaque passage réécrirait pour rien).
+  `POST /api/v3/notification/testall` est le seul moyen de vérifier qu'une clé
+  stockée fonctionne encore.
+  Ce n'est pas recyclarr qui fait dériver ces champs (il ne touche pas aux
+  notifications) : le réalignement quotidien ne sert qu'à rattraper une
+  modification par mégarde dans l'UI, la reproductibilité sur une installation
+  neuve étant l'objectif principal.
+  **Ces déclencheurs ne raccourcissent PAS le délai de Jellyfin** (affirmé à
+  tort puis démenti par la mesure) : `POST /Library/Media/Updated` émis à la
+  main déclenche le rafraîchissement **60 s plus tard** — Jellyfin fait passer
+  les mises à jour *signalées* par le même temporisateur `LibraryMonitorDelay`
+  (60 s, `${DATA_ROOT}/.jellyfin/config/config/system.xml`) que les événements
+  inotify. Ce qu'ils apportent : le bon dossier est signalé explicitement,
+  sans dépendre d'inotify. Réduire le délai demanderait de baisser
+  `LibraryMonitorDelay` lui-même — **non fait**, réglage global qui protège
+  aussi les imports d'un scan lancé sur un fichier encore en écriture.
+  Trou connu : une suppression qui ne retire pas le titre côté arr (vue
+  Torrents, où Sonarr se contente d'un `unmonitor`) ne notifie rien et reste
+  tributaire du watcher.
+  Bruit connu : Sonarr logue deux `[Warn] MediaBrowserProxy: Unable to send
+  notification to Emby` par suppression alors que `notify` est à `false` —
+  c'est la notification *à l'écran* des clients, pas le rafraîchissement de
+  bibliothèque. Sans effet, non diagnostiqué plus loin.
+- **Tag `pour-les-enfants` sur les deux arr**, créé par `scripts/provision.py`
+  (`ARR_TAGS`) : posé depuis Seerr au moment de la requête (override `tags`
+  par requête), il ressort dans le `<tag>` du `.nfo`, donc dans les `Tags` de
+  l'item Jellyfin, donc dans la table `tag` de Kodi, où il sert de filtre.
+  Dans `provision.py` et pas `apply-arr-overrides.py` : un tag est un objet
+  que l'utilisateur peut légitimement renommer, donc créé-si-absent et jamais
+  réécrit. Rattachement **par libellé**, les ids diffèrent d'un arr à l'autre.
+  **Libellé en tirets, pas en underscores** : Radarr valide `^[a-z0-9-]+$` et
+  refuse `pour_les_enfants`, là où Sonarr l'accepte — divergence de validation
+  entre les deux, à ne pas re-découvrir. Le même libellé des deux côtés est ce
+  qui permet de n'écrire qu'un seul filtre en aval.
+  Trou connu, non traité : le tag **`fr-priority`** (Sonarr) est la cible d'un
+  **delay profile** qui ne vit que dans la base Sonarr — ni le tag ni le profil
+  ne sont reproductibles depuis le repo.
+- **Seerr parle à Jellyfin en direct (`jellyfin:8096`)**, pas par le domaine
+  public (2026-08-24) : il était réglé sur `https://jellyfin.${DOMAIN}:443`,
+  donc chaque requête traversait Traefik et son middleware `rate-limit` — que
+  son propre `AvailabilitySync` fait sauter (13 × `429` pendant le sync de
+  03:00, dont 12 titres non retrouvés). Comme ce job retire la disponibilité
+  d'un média introuvable, **un 429 y est indiscernable d'une suppression
+  réelle**, et le job se déclare quand même « complete ».
+  **Piège : renseigner `externalHostname` en même temps.** Les liens « Lire
+  sur Jellyfin » sont construits dans `server/entity/Media.ts`, qui retombe
+  sur `getHostname()` (= l'adresse *interne*) quand il est vide — tous les
+  liens montrés aux utilisateurs deviendraient `http://jellyfin:8096/...`. Il
+  porte donc l'URL publique complète, schéma inclus et **sans slash final**
+  (`Media.ts` concatène `${jellyfinHost}/web/...`). `mediaUrl` est recalculé
+  en `@AfterLoad()`, les entrées déjà en base reprennent la bonne URL seules.
+  **Éditer `settings.json` conteneur arrêté** (`docker stop`/`start`, pas de
+  recréation) : Seerr le réécrit lui-même, une édition à chaud est perdue.
+  `provision.py` écrit déjà l'adresse interne **et** `externalHostname` dérivé
+  de `DOMAIN` — la dérive venait de l'assistant web, pas du script.
+
+### Scripts de provisioning arr
+
+- **`scripts/provision.py` (`make api-keys` / `make provision`)** automatise
+  la configuration d'installation qui se faisait à la main dans les UI :
+  bibliothèques Jellyfin, clés API arr + cross-seed + Jellyfin, applications
+  Prowlarr, client de téléchargement, root folders, remote path mapping,
+  Connection cross-seed, tags, config Seerr complète.
+  **Deux targets et pas un** parce que l'ordre est contraint dans les deux
+  sens : `api-keys` doit précéder `recyclarr-sync`/`arr-overrides` (qui ont
+  besoin des clés), et la config Seerr de `provision` doit les suivre (elle
+  désigne les profils qualité **par nom**).
+  **Créé-si-absent, jamais réécrit** — l'inverse d'`apply-arr-overrides.py`.
+  Volontaire : ce sont des objets d'infrastructure que l'utilisateur peut
+  légitimement ajuster ensuite dans les UI, et ce script n'est donc **pas**
+  dans `scripts/crontab`. Piège évité de peu : un premier jet POSTait
+  `/settings/jellyfin` de Seerr sans garde, ce qui aurait remplacé l'adresse
+  réglée à la main sur une installation en service.
+  **Best-effort par objet (`run_step`)**, imposé par des validations
+  synchrones côté serveur : Sonarr valide le client de téléchargement en s'y
+  connectant au moment du POST (un `transmission-vpn` arrêté faisait échouer
+  tout le provisioning) ; la Connection Custom Script exige que le fichier
+  existe côté conteneur ; Prowlarr vérifie que Sonarr/Radarr sait le joindre
+  en retour sur `PROWLARR_INTERNAL_URL`.
+  `jellyfin/.env` porte `JELLYFIN_ADMIN_USER`/`PASSWORD`, nécessaires aux deux
+  seules opérations que Jellyfin refuse à une clé API : créer la première clé
+  (bootstrap) et créer le compte propriétaire de Seerr. **Une clé API suffit
+  en revanche pour créer une bibliothèque** — ne pas réintroduire de
+  dépendance aux identifiants dans `make provision`.
+  Détail sans conséquence : après suppression d'une bibliothèque Jellyfin,
+  celle-ci reste un moment listée par l'endpoint que Seerr interroge (cache
+  côté Jellyfin) — elle arrive désactivée côté Seerr. Corollaire voulu : une
+  bibliothèque personnelle (ex. « Kids ») n'est pas activée dans Seerr par le
+  script, `JELLYFIN_LIBRARIES` seul l'est.
+- **`scripts/apply-arr-overrides.py` (`make arr-overrides`)**, enchaîné par
+  cron quotidien juste après `make recyclarr-sync` : **déclaratif et faisant
+  autorité**, il réapplique tout ce que recyclarr écrase ou ne couvre pas.
+  Périmètre : tailles de palier « Quality Definition » et champ `language` des
+  deux profils principaux (Sonarr `WEB-2160p (Combined)`, Radarr `[SQP] SQP-1
+  WEB (2160p)`), config anime (`arr/profiles/sonarr-anime.json`), connexions
+  Jellyfin, metadata writer, ratio des indexeurs publics.
+  Résout les profils **par nom, jamais par id** (propres à chaque instance —
+  c'est précisément pourquoi un dump d'API brut ne serait pas reproductible).
+  Idempotent et best-effort par arr.
+  `arr/profiles/sonarr-anime.json` couvre les 2 custom formats qui nous
+  appartiennent (`FRENCH`, `VOSTFR (hors suffixe)`) et les profils
+  `Anime (Fansub)*` : aucun `trash_id` ne les couvrait, donc rien ne les
+  recréait sur une installation neuve et rien ne rattrapait leur dérive.
+  **Le JSON fait autorité** : tout custom format absent de `scores` est remis
+  à 0 sur le profil concerné. Un profil absent est créé depuis
+  `/api/v3/qualityprofile/schema` plutôt qu'en versionnant tout l'arbre des
+  paliers.
+  **Ordre imposé** : custom formats d'abord, profils ensuite (qui les
+  référencent par nom) — et surtout `make recyclarr-sync` AVANT tout le
+  script, sinon les CF du guide scorés par les profils anime (`MULTi`, `LQ`,
+  `Upscaled`...) n'existent pas encore ; ce cas lève une erreur explicite
+  plutôt que de créer un profil silencieusement dépourvu de la moitié de ses
+  scores.
+  `api_put` passe par un `api_write` commun qui **vérifie la réponse** :
+  `curl -s` sort 0 même sur un 400, sans ça une écriture refusée par la
+  validation Sonarr était comptée comme réussie.
+  **`settle()` : relecture jusqu'à 2 passes consécutives sans rien à
+  corriger** (bornées à 6 tentatives × 5 s), appliqué aux seules étapes que
+  recyclarr fait dériver. Nécessaire à cause des écritures Servarr asynchrones
+  — voir le piège dédié plus bas. Une passe qui corrige remet le compteur à
+  zéro, donc une écriture en deux temps ne conclut pas sur la première
+  accalmie.
+- **Le scheduler interne de recyclarr est désactivé**, le service passe en
+  mode manuel pur (`arr/docker-compose.yml` : plus de `restart:`/healthcheck,
+  `profiles: [manual]` pour rester absent de `make up STACK=arr`), déclenché
+  uniquement par `make recyclarr-sync` (`docker compose run --rm recyclarr
+  sync` — passer un argument à l'entrypoint bascule du mode cron au mode CLI
+  one-shot). Aucune valeur de `CRON_SCHEDULE` ne le désactive proprement, et
+  son `@daily` créait une fenêtre pendant laquelle les overrides étaient dans
+  l'état par défaut du guide TRaSH. `scripts/crontab` enchaîne donc
+  `recyclarr-sync && apply-arr-overrides.py` sur une seule ligne.
+  Recyclarr est gardé pour sa vraie valeur — les MAJ communautaires des ~120
+  regex, listes LQ, groupes de release, tags de plateformes — mais **toute la
+  config custom doit vivre dans le repo**.
+- **Limite de ratio 1.5 sur les indexeurs marqués publics**
+  (`PUBLIC_INDEXER_SEED_RATIO`) : `seedCriteria.seedRatio` posé sur tout
+  indexeur dont
+  l'indexeur Prowlarr correspondant a `privacy: public`, jamais sur les
+  autres — un tracker privé compte le ratio comme une monnaie, un public n'en
+  tient aucun compte, donc y seeder au-delà du nécessaire n'immobilise que la
+  copie Transmission. Rattachement par le dernier segment du `baseUrl` de
+  l'indexeur synchronisé (`http://prowlarr:9696/<id>/`) : seul Prowlarr porte
+  l'information `privacy`, les arr n'en gardent que l'URL.
+  **La valeur fait autorité sur l'indexeur PROWLARR**
+  (`torrentBaseSettings.seedRatio`), pas seulement côté arr : les deux
+  applications Prowlarr sont en `syncLevel: fullSync` et sa tâche
+  `ApplicationIndexerSync` tourne **toutes les 6 h**, réécrivant l'indexeur de
+  chaque arr depuis la définition de Prowlarr — ce qui efface tout
+  `seedCriteria` que l'arr portait. Une valeur posée seulement côté arr ne
+  peut donc pas tenir plus de 6 h. La passe côté arr est **conservée** comme
+  filet : effet immédiat sans attendre un sync, et seul recours si `syncLevel`
+  passait à `addOnly`/`disabled`.
+  Prowlarr expose bien `torrentBaseSettings.seedRatio`, `seedTime`,
+  `packSeedTime` et `appMinimumSeeders` sur son propre objet indexeur (une
+  version antérieure de ce fichier affirmait le contraire, à tort).
+  `forceSave=true` sur le PUT côté arr : Sonarr/Radarr testent la connexion à
+  l'indexeur au moment de l'écriture, et ces trackers répondent régulièrement
+  520/530 — sans ça une panne passagère ferait échouer un réalignement
+  purement local.
+  Ne pas confondre avec la limite globale de Transmission
+  (`ratio-limit-enabled: false`, laissée telle quelle) : c'est bien une limite
+  **par torrent** (`seedRatioMode=1`) que les arr poussent au grab.
+  **Non rétroactif** : `seedRatio` ne s'applique qu'au moment du grab. Les
+  torrents déjà présents ont été repris une fois à la main (`torrent-set` en
+  masse). Refaire ce rattrapage si un indexeur public est ajouté avec des
+  torrents déjà en place. Un torrent annonçant **aussi** à un tracker privé
+  est exclu : lui couper le seed coûterait du ratio là où il compte.
+- **Deux profils anime plutôt qu'un scoring global** : `Anime (Fansub) VF`
+  (audio français préféré) et `Anime (Fansub) VOSTFR` (japonais + sous-titres).
+  La bascule par série fait elle-même office de sélection explicite — un
+  premier essai avait modifié un profil partagé en place, corrigé après retour
+  de l'utilisateur. Custom Format `FRENCH` (`\b(TRUEFRENCH|FRENCH|VFF|VFQ)\b`,
+  résoudre son id **par nom**, ne pas le supposer fixe) scoré 200 sur le profil
+  VF. `VOSTFR` veut dire japonais + sous-titres français, **pas** de l'audio
+  français — à ne pas confondre.
+  Profils Sonarr existants : les 6 par défaut (aucun utilisé),
+  `WEB-2160p (Combined)`, `Anime (Fansub) VF`, `Anime (Fansub) VOSTFR`.
+  Skill `.claude/skills/anime-vf/SKILL.md` : bascule la série sur le profil
+  VF, relance `SeriesSearch`, rapporte ce qui a été grabé — le remplacement
+  du fichier reste automatique côté Sonarr (`upgradeAllowed: true`). Le skill
+  capture le `(dev, ino)` de chaque fichier **avant** la recherche, attend
+  l'import, puis supprime l'ancien torrent via `delete-by-inode`. Ne marche
+  que si une release FRENCH/VFF/VFQ/TRUEFRENCH existe réellement chez les
+  indexeurs au moment de la recherche.
+- **`scripts/vpn-bench.py` (skill `vpn-bench`)** compare latence/débit entre
+  le serveur AirVPN configuré (`vpn/custom/default.ovpn`) et d'autres pays.
+  Marche parce que le certificat client AirVPN est lié au **compte**, pas au
+  serveur : seule la ligne `remote [pays].vpn.airdns.org <port>` change, rien
+  à regénérer depuis le site. **Restaure systématiquement la config d'origine
+  à la fin** (backup sur disque en plus de la copie en mémoire, pour survivre
+  à un kill dur) — jamais de changement permanent sans le redemander.
+  Latence mesurée vers un tracker tiré au hasard parmi les torrents actifs
+  (accepté explicitement : moins reproductible, plus simple).
+
+### Traefik, dashboard, exposition
+
+- **`hsts` et `security-headers` : middlewares partagés, définis une seule
+  fois sur le container `traefik` lui-même** (labels sans routeur associé —
+  un container avec `traefik.enable=true` peut déclarer un middleware sans
+  router pour que d'autres stacks le référencent via `<nom>@docker`). Ne
+  jamais redéfinir `stsSeconds`/`customResponseHeaders` en dur dans un compose
+  file, toujours `hsts@docker`/`security-headers@docker`. Un routeur qui a
+  déjà un autre middleware les combine en liste :
+  `arr-lan-only@file,security-headers@docker,hsts@docker`.
+  - `hsts` : `stsSeconds=15552000`, `stsIncludeSubdomains`, `forceSTSHeader`,
+    sur tous les services y compris LAN-only.
+  - `security-headers` : `X-Robots-Tag: noindex, nofollow, noarchive`
+    (serveur perso, aucun service ne doit être indexé ni appris par un
+    crawler d'entraînement IA), `X-Frame-Options: DENY`,
+    `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
+  - `rate-limit` : `average=50`, `burst=100` par IP, sur `jellyfin` et
+    `seerr` seulement (Nextcloud a son propre anti-bruteforce, les arr et
+    transmission sont LAN-only). Limite tout le routeur, pas seulement le
+    login — Traefik seul ne sait pas cibler par code de réponse ou chemin.
+    Valeurs volontairement généreuses pour ne jamais gêner un usage normal.
+    **C'est ce middleware qui rate-limitait Seerr** quand il passait par le
+    domaine public (voir plus haut) : y ajouter un service qui parle à
+    Jellyfin en volume demande d'y penser.
+- **Le dashboard vit sur le domaine nu et `www.${DOMAIN}`**, pas
+  `dashboard.${DOMAIN}` : `Host(${DOMAIN}) || Host(www.${DOMAIN})` dans
+  `traefik/docker-compose.yml`. Nextcloud est sur `nextcloud.${DOMAIN}` — et
+  changer le domaine de Nextcloud n'est pas qu'un label Traefik :
+  `trusted_domains`/`overwrite.cli.url` sont dans `config/config.php`
+  (persisté, hors compose), à mettre à jour via `occ config:system:set` dans
+  le container `app` et **pas** en éditant le fichier à la main, sinon
+  Nextcloud rejette le nouveau nom d'hôte (« domaine non fiable »).
+- **Le dashboard est accessible en WAN comme en LAN** — les sous-domaines
+  qu'il liste sont de toute façon publics via Certificate Transparency dès
+  qu'un certificat a été émis, donc restreindre la page n'apportait aucune
+  confidentialité réelle. Ne pas proposer d'y revenir sans redemande.
+  Les cartes des services LAN-only restent dans le HTML et sont grisées côté
+  client par une sonde `<img>` (`onload`/`onerror`, **pas** `fetch`/`XHR` —
+  ceux-ci échouent pareil bloqués ou non par CORS, donc ne distinguent pas un
+  403 d'un succès). Chemin de la sonde dans `PROBE_PATH` : ne pas supposer
+  `/favicon.ico` générique, `transmission-proxy` le redirige vers du HTML.
+  Exclu des moteurs/crawlers par trois voies redondantes (volontaire, couvre
+  les crawlers qui ne parsent pas le HTML) : `<meta name="robots">`,
+  `dashboard/assets/robots.txt` et l'en-tête `X-Robots-Tag`. Garder
+  `robots.txt` à jour dans `dashboard/assets/` (source versionnée), pas dans
+  `dashboard/html/` (généré, gitignoré).
+- **Les deux middlewares LAN-only vivent dans le provider `file`, pas dans
+  des labels Docker** (`traefik/dynamic/lan-only.yml`, `watch: true`,
+  référencés en `arr-lan-only@file`/`transmission-lan-only@file`) — pour
+  pouvoir être ouverts au WAN et refermés **sans recréer un seul conteneur**
+  (`make switch-lan-only-middleware` : « tester/corriger si je ne suis pas
+  chez moi mais que j'ai un accès SSH »). Un label ne peut changer qu'en
+  recréant le conteneur qui le porte, ce qui aurait voulu dire redémarrer les
+  4 arr + le proxy à chaque aller-retour.
+  **Le middleware est rendu inopérant, pas retiré des routeurs** : seule sa
+  plage change, `LAN_CIDR` ↔ `0.0.0.0/0` + `::/0`. **`::/0` n'est pas
+  décoratif** — sans lui un client IPv6 resterait bloqué et l'ouverture serait
+  silencieusement partielle.
+  **Un dossier monté, pas un fichier** : un bind-mount de *fichier* garde
+  l'inode qu'il avait au démarrage (voir le piège dédié plus bas). Le script
+  écrit par `mktemp` + `mv` atomique, pour que Traefik — qui surveille le
+  dossier — ne lise jamais un fichier à moitié écrit.
+  **Refermeture par un garde cron (`rearm`, toutes les 5 min)**, pas par un
+  `sleep 3600` détaché : le cron survit à la déconnexion SSH qui a servi à
+  ouvrir et à un redémarrage, ce qu'un processus en arrière-plan ne fait pas —
+  et l'oubli est le vrai risque de cette commande. Contrepartie assumée : la
+  refermeture tombe entre 60 et 65 min. L'échéance vit dans
+  `${DATA_ROOT}/.lan-only-open-until`, son absence = fermé.
+  **`ensure` suit le fichier d'état, il ne referme pas aveuglément** : un
+  `make up` pendant une fenêtre ouverte recréait le fichier en mode fermé
+  alors que le bandeau continuait d'annoncer « ouvert jusqu'à HH:MM » — on se
+  croit joignable de l'extérieur alors qu'on ne l'est plus. Il nettoie au
+  passage une échéance périmée.
   **Le mode de défaillance est fermé, pas ouvert** : sans
   `traefik/dynamic/lan-only.yml`, Traefik ne résout plus le middleware et les
-  5 routeurs répondent **404** (vérifié en supprimant le fichier pour de vrai —
-  le dashboard, qui ne le référence pas, restait à 200). D'où le
-  `scripts/lan-only-middleware.sh ensure` appelé par `make up` : il recrée le
-  fichier en mode fermé s'il manque, pour qu'aucun démarrage ne puisse partir
-  sans lui. `traefik/dynamic/` est versionné par un `.gitkeep` — si Docker devait
-  créer le dossier lui-même, il le ferait en root sur l'hôte (piège déjà
-  rencontré, voir plus bas) ; son contenu est gitignoré, il porte `LAN_CIDR`.
-  Vérifié aussi le 2026-08-07, et c'est la non-régression qui compte : un client
-  **du LAN** (requête émise depuis une adresse de `LAN_CIDR`, pas depuis la
-  loopback) passe toujours (200) LAN-only actif, un client hors
-  LAN est toujours bloqué (403), et la refermeture par le **vrai** daemon cron a
-  été exercée (pas seulement à la main — leçon du `%` non échappé plus bas).
-  **Piège du déplacement, corrigé le 2026-08-07 même jour, signalé par
-  l'utilisateur : le dashboard classait tous les services en « Public ».**
-  `extract_traefik_services()` déduisait « LAN » de la présence d'un label frère
-  `traefik.http.middlewares.<mw>.ipallowlist.sourcerange` sur le même service —
-  exactement les labels que ce déplacement supprime. Plus de label, plus de
-  détection, et les 5 cartes remontaient dans Public. Sortir une déclaration des
-  labels casse donc tout code qui la cherchait là : penser à `grep` la clé de
-  label retirée avant de conclure. Corrigé par `lan_middleware_names()`, qui
-  relève les middlewares porteurs d'un `ipAllowList` dans
-  `traefik/dynamic/lan-only.yml`, la voie par label restant acceptée pour tout
-  futur ipallowlist déclaré ainsi. Parseur maison (regex sur nom + `ipAllowList`
-  ligne suivante) et **pas PyYAML** : ce script n'a aucune dépendance hors
-  stdlib, c'est ce qui a motivé sa réécriture depuis bash+jq (voir plus bas) —
-  PyYAML est installé sur cette machine mais ne le serait pas forcément sur une
+  5 routeurs répondent **404**. D'où le `lan-only-middleware.sh ensure` appelé
+  par `make up`. `traefik/dynamic/` est versionné par un `.gitkeep` — si
+  Docker devait créer le dossier lui-même il le ferait en root sur l'hôte ;
+  son contenu est gitignoré, il porte `LAN_CIDR`.
+  **Pas de marqueur `.cron-status` pour ce garde** : muet en permanence, il ne
+  serait jamais que vert. C'est le **bandeau rouge du dashboard**
+  (`render_lan_only_banner()`, avec l'heure de refermeture) qui porte la
+  visibilité, et c'est pour lui que la bascule régénère le dashboard dans les
+  deux sens. Il fallait un signal *serveur* : les cartes sont grisées côté
+  client par la sonde `<img>`, qui verrait justement ces services répondre.
+  **Un service reste classé « Local (LAN) » même fenêtre ouverte** : faire
+  basculer les 5 cartes dans « Public » ferait perdre l'information utile
+  (« normalement restreint »).
+  **Piège du déplacement, à retenir plus généralement : sortir une
+  déclaration des labels casse tout code qui la cherchait là.**
+  `extract_traefik_services()` déduisait « LAN » de la présence d'un label
+  frère `...ipallowlist.sourcerange` — plus de label, plus de détection, et
+  les 5 cartes remontaient dans « Public ». Corrigé par
+  `lan_middleware_names()`, qui relève les middlewares porteurs d'un
+  `ipAllowList` dans le fichier dynamique, la voie par label restant
+  acceptée. Penser à `grep` la clé de label retirée avant de conclure.
+  Parseur maison (regex) et **pas PyYAML** : `generate-dashboard.py` n'a
+  aucune dépendance hors stdlib, c'est ce qui a motivé sa réécriture depuis
+  bash+jq — PyYAML est installé ici mais ne le serait pas forcément sur une
   installation neuve.
-  Choix de fond au passage : **un service reste classé « Local (LAN) » même
-  fenêtre ouverte.** Faire basculer les 5 cartes dans « Public » à chaque
-  aller-retour ferait perdre l'information utile (« normalement restreint »), et
-  c'est le bandeau qui dit que la restriction est levée et jusqu'à quand.
-  Vérifié dans les deux états. Cas dégradé assumé : fichier dynamique absent =
-  aucun nom relevé = tout en Public — c'est l'état où ces routeurs répondent 404
-  de toute façon.
-  **`ensure` suit le fichier d'état, il ne referme pas aveuglément** (corrigé
-  dans la même passe, incohérence trouvée en testant le cas précédent) : un
-  `make up` pendant une fenêtre ouverte recréait le fichier en mode fermé alors
-  que `status` et le bandeau continuaient d'annoncer « ouvert jusqu'à HH:MM » —
-  on se croit joignable de l'extérieur alors qu'on ne l'est plus, le pire des
-  deux mondes. Il rend donc l'état décrit par l'échéance : fenêtre en cours →
-  ouvert, pas d'échéance ou échéance périmée → fermé, en nettoyant au passage une
-  échéance morte pour que `rearm` et le bandeau ne vivent pas dessus. Les deux
-  cas exercés.
-  Note sans rapport avec ce changement mais visible en le testant : à chaque
-  redémarrage de Traefik, une quinzaine de `middleware "hsts@docker" does not
-  exist` sortent pendant ~5 s, le temps que le provider docker livre les labels
-  du conteneur traefik lui-même. Transitoire, se résorbe seul, antérieur à ce
-  changement.
-
-- **`hsts` et `security-headers` : deux middlewares Traefik partagés,
-  définis une seule fois sur le container `traefik` lui-même**
-  (`traefik/docker-compose.yml`, labels sans routeur associé — Traefik ne
-  se reverse-proxy pas, mais un container avec `traefik.enable=true` peut
-  déclarer un middleware sans router pour que d'autres stacks le
-  référencent via `<nom>@docker`, `@docker` = provider, nécessaire pour
-  référencer un middleware déclaré sur un autre container/stack). Chaque
-  stack les ajoute à son propre routeur — ne jamais redéfinir
-  `stsSeconds`/`customResponseHeaders`/etc. en dur dans un compose file,
-  toujours `hsts@docker`/`security-headers@docker`. Un routeur avec déjà
-  un autre middleware (ex. `arr-lan-only`) les combine en liste séparée
-  par virgules : `arr-lan-only,security-headers@docker,hsts@docker`.
-  - `hsts` (ajouté le 2026-07-24, généralisé à tous les services y compris
-    LAN-only) : `stsSeconds=15552000`, `stsIncludeSubdomains=true`,
-    `forceSTSHeader=true`. `nextcloud-hsts` (middleware local dupliquant
-    les mêmes valeurs) supprimé au passage.
-  - `security-headers` (ajouté le 2026-07-24 pour le dashboard seul sous
-    le nom `dashboard-headers`, généralisé à tous les services le
-    2026-07-24) : `X-Robots-Tag: noindex, nofollow, noarchive` (serveur
-    perso, aucun service ne doit être indexé par un moteur de recherche
-    ou appris par un crawler d'entraînement IA), `X-Frame-Options: DENY`,
-    `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
-    Sur le dashboard, redondant avec sa balise `<meta name="robots">`
-    (voir plus bas) et son `dashboard/assets/robots.txt` — volontaire,
-    couvre les crawlers qui ne parsent pas le HTML.
-  - `rate-limit` (ajouté le 2026-07-24, appliqué à `jellyfin` et `seerr`
-    seulement — Nextcloud a son propre anti-bruteforce intégré, les
-    services `arr`/`transmission` sont déjà LAN-only via `ipallowlist`) :
-    `average=50`, `burst=100` par IP source. Limite tout le routeur, pas
-    que l'endpoint de login (Traefik seul ne sait pas cibler par code de
-    réponse/chemin pour faire du vrai anti-bruteforce à la fail2ban) —
-    valeurs volontairement généreuses pour ne jamais gêner un usage normal
-    (Jellyfin charge plusieurs images de bibliothèque en parallèle),
-    testé le 2026-07-24 : 200 requêtes concurrentes → ~110 passent
-    (302), le reste 429 ; 20 requêtes séquentielles → aucune impactée.
-- **Dashboard exclu des moteurs de recherche/crawlers IA** (ajouté le
-  2026-07-24, conséquence de son exposition WAN) : balise `<meta
-  name="robots">` dans le HTML généré + `dashboard/assets/robots.txt`
-  (versionné, `Disallow: /`), en plus de l'en-tête `X-Robots-Tag` du
-  middleware partagé `security-headers` ci-dessus. Si un nouveau fichier
-  statique est ajouté à la racine servie par `dashboard`, garder
-  `robots.txt` à jour dans `dashboard/assets/` (source versionnée), pas
-  directement dans `dashboard/html/` (généré, gitignoré).
-- **Healthcheck sur tous les services** (ajouté le 2026-07-24, avant la
-  moitié en étaient dépourvus : `nextcloud-app`/`web`, `seerr`, `traefik`,
-  `dashboard`, `arr/*`, `vpn/transmission-proxy` — sans ça un process
-  bloqué sans crasher restait `Up` indéfiniment, `restart: unless-stopped`
-  ne se déclenchant que sur un exit du process, jamais sur un statut
-  unhealthy). Un check HTTP réel quand un endpoint non authentifié existe
-  (`/ping` Servarr pour `prowlarr`/`sonarr`/`radarr`, `/status.php` pour
-  `web`, `/api/v1/status` pour `seerr`) ; simple connect TCP sinon
-  (`nc -z`, pour `app` sur le port fastcgi 9000 sans HTTP propre,
-  `cross-seed` sans endpoint non authentifié connu, `dashboard`/
-  `transmission-proxy` sur nginx) ; `pgrep supercronic` pour `recyclarr`
-  qui n'a aucun serveur (juste un scheduler interne — ne détecte pas un
-  job individuel bloqué, seulement le scheduler mort). `traefik` a un
-  entrypoint statique dédié `healthcheck` lié à `127.0.0.1:8082`
-  (`traefik.yml`, jamais publié dans `ports:`) + `ping: {}`, plutôt que de
-  réutiliser `web`/`websecure` — sinon la redirection http→https de
-  l'entrypoint `web` s'appliquerait aussi à la sonde interne. Version
-  volontairement simple : aucune auto-remédiation (pas de watcher type
-  `autoheal` sur le socket Docker), juste de la visibilité (`docker ps`,
-  dashboard ci-dessous).
-- **Le dashboard reflète l'état `unhealthy` d'un service** (ajouté le
-  2026-07-24, conséquence directe du point ci-dessus) :
-  `scripts/generate-dashboard.py` lit `docker ps --filter
-  health=unhealthy` (en plus de `docker ps --filter status=running`
-  déjà utilisé pour public/local/arrêté) et ajoute un contour rouge
-  (`.logo-unhealthy`) autour du logo + un texte d'avertissement sous la
-  carte. Régénéré automatiquement toutes les 5 min par cron
-  (`scripts/crontab`, `make cron-install`) plutôt que seulement à la
-  main (`make dashboard-refresh`) — sinon un service qui devient
-  unhealthy entre deux régénérations manuelles resterait affiché comme
-  sain arbitrairement longtemps.
-- **Le dashboard affiche des stats Transmission (ratio session/total,
-  débits, ratio par tracker), visibles WAN et LAN** (ajouté le 2026-07-28) :
-  `scripts/transmission-stats.py` interroge le RPC Transmission via le même
-  mécanisme docker-exec-curl que `scripts/torrent-cleanup.py` (RPC non
-  authentifié, joignable seulement depuis l'intérieur du conteneur — réseau
-  `vpn-internal` isolé) et sort du JSON consommé par
-  `scripts/generate-dashboard.py`. Ratio session = `current-stats` de
-  `session-stats` (compteurs remis à zéro à chaque redémarrage du daemon,
-  donc "depuis l'uptime" demandé) ; ratio total = `cumulative-stats` (jamais
-  remis à zéro). Un ratio glissant sur 24h avait été ajouté le même jour
-  (delta calculé contre l'échantillon le plus proche d'"il y a 24h" dans un
-  historique persisté sous `${DATA_ROOT}/.transmission-stats-history.jsonl`)
-  puis retiré quelques heures plus tard, jugé pas utile par l'utilisateur —
-  l'historique persisté (même fichier, même convention dotfile sous
-  DATA_ROOT que `.torrent-cleanup.log`) ne sert plus qu'à l'échelle des
-  mètres de débit (`record_speed_sample()`/`historical_max_speed()`,
-  fenêtre de rétention ~25h conservée telle quelle, toujours pertinente pour
-  ça). Ratio par tracker = somme de `uploadedEver`/`downloadedEver`
-  par host d'annonce (`torrent-get.trackerStats`), noms résolus via Prowlarr
-  (même logique que `tracker_host`/`resolve_tracker_name` dans
-  `torrent-cleanup.py`, dupliquée plutôt que factorisée — `torrent-cleanup.py`
-  est un script curses autonome, pas une lib). Un torrent multi-tracker
-  compte dans chaque tracker auquel il annonce (impossible de départager
-  l'upload par tracker côté RPC Transmission) : le ratio par tracker pris
-  individuellement reste correct, mais la somme des trackers peut dépasser
-  le volume réel total. Contrairement aux cartes de service (grisées côté
-  WAN via `data-probe`, cf. ci-dessus), cette section n'a aucun gating LAN :
-  ce sont des chiffres agrégés en snapshot (recalculés à chaque régénération
-  cron, 5 min), pas un accès de contrôle au client — voulu explicitement.
-  Ratio calculé côté Transmission, peut différer du ratio réel compté par
-  chaque tracker (leur propre comptage d'annonce fait foi, pas les
-  compteurs locaux du client) — pas encore de lecture directe des ratios
-  de compte sur les trackers privés eux-mêmes (tr4cker/c411/nya.si évoqués
-  par l'utilisateur), reporté à plus tard : Prowlarr n'expose aucune notion
-  de compte/ratio (juste un agrégateur de recherche), il faudrait un
-  scraper dédié par tracker (API si le tracker tourne sur UNIT3D/Gazelle,
-  sinon parsing HTML de la page de profil).
-- **La section Transmission du dashboard affiche des cartes (débits, ratios
-  total/session, ratio par tracker dans la table dépliée), pas du texte
-  brut** (ajouté le 2026-07-28, demandé par l'utilisateur — un premier essai
-  en mètres/barres horizontales le même jour a été remplacé par des cartes
-  après retour direct de l'utilisateur : il voulait retrouver le style carte
-  du reste du dashboard). Chaque carte de débit et chaque carte de ratio
-  affiche une **jauge** en arc de cercle (`gauge_svg()`/`zone_gauge_svg()`
-  dans `scripts/generate-dashboard.py`, rendues via `dashboard/templates/
-  gauge.html` et `gauge-zones.html` : pur SVG, pas de lib JS de graphiques —
-  cohérent avec le reste du dashboard, aucune dépendance externe). Jauge de
-  débit : arc de fond + arc coloré proportionnel + aiguille. Jauge de ratio :
-  pas d'arc de remplissage, le fond est directement divisé en 3 zones de
-  sévérité fixes (rouge/jaune/vert) sur l'échelle 0-4 de `ratio_pct()`,
-  l'aiguille pointe juste sa position dessus (`zone_gauge_svg()` généralisée
-  le même jour pour être réutilisée par l'espace disque, voir plus bas) —
-  remplace une **balance à
-  bascule** (`balance_svg()`, fléau tournant selon le log2(ratio)) essayée le
-  même jour et écartée après retour direct de l'utilisateur : peu pratique à
-  l'usage (sens de bascule pas immédiat). Jauge de ratio préférée à un
-  anneau de progression pour la cohérence avec la jauge de débit (un seul
-  type d'icône sur tout le dashboard). La table détaillée par tracker
-  (repliée par défaut) garde une mini-barre horizontale, pas une mini-jauge :
-  trop peu de place dans une cellule de tableau. Zone de sévérité (couleurs
-  de la jauge de ratio / de la mini-barre) par seuil générique torrenting
-  (rouge `<1` en dessous de l'équilibre, jaune `1–2`, vert `≥2` — pas le
-  seuil `seedRatio=2` propre à Nyaa.si côté Sonarr, voir plus haut, qui ne
-  s'applique qu'à cet indexeur). Jauge de débit cappée sur `speed_scale`
-  (maximum observé sur l'historique ~25h persisté par `transmission-stats.py`,
-  calculé par `historical_max_speed()`, avec un
-  plancher de 1 Mo/s tant que rien n'a encore été échantillonné à pleine
-  vitesse) plutôt qu'une capacité de ligne figée en config : le débit VPN
-  réel dépend du pair/tracker distant et de l'overhead du tunnel, pas
-  seulement de la capacité FAI — une valeur figée aurait été fausse dès le
-  premier changement de serveur VPN ou de tracker. Conséquence : `.transmission-stats-history.jsonl`
-  gagne deux champs par échantillon (`download_speed`/`upload_speed`,
-  absents des échantillons antérieurs à ce changement — lus avec
-  `.get(..., 0)`, ne faussent pas le calcul, juste sous-estiment le max tant
-  que l'historique pré-existant n'a pas été purgé après ~25h).
-- **Les cartes de la section `Transmission &amp; système` sont toutes à
-  plat dans un seul flux (`.stats-flow`, flexbox — pas de grille CSS, pas de
-  sous-section/titre de groupe)** (état stabilisé le 2026-07-28 après
-  plusieurs itérations — voir ci-dessous). Chaque carte porte son propre
-  libellé, y compris ce qui vivait avant dans un titre de groupe désormais
-  disparu : débits ("Débit descendant"/"Débit montant"), ratios ("Ratio
-  total"/"Ratio session (…)"), torrents (titre "Torrents" replié en haut de
-  la carte multi-lignes), indexeurs (titre "Indexeurs" replié en haut de la
-  liste), disque ("Disque" — raccourci depuis "Disque libre" le 2026-07-28,
-  demandé par l'utilisateur ; carte placée après indexeurs, dernière du
-  flux, également demandé). `.stats-flow` utilise flexbox
-  (`flex-wrap`) plutôt qu'une grille CSS — demandé explicitement — avec une
-  largeur de carte fixe par `flex: 0 0 190px` sur `.stat` (pas
-  `grid-template-columns`).
-  `align-items` du conteneur est revenu sur `stretch` (2026-07-30, demandé
-  explicitement) après un premier temps sur `flex-start` (chaque carte
-  gardait sa propre hauteur, pas d'étirement à celle de la plus grande
-  carte de sa "rangée") : les cartes d'une même ligne (flex-wrap crée des
-  "flex lines" indépendantes, l'étirement ne dépasse jamais la ligne)
-  s'étirent maintenant à la hauteur de la plus haute d'entre elles. Le
-  contenu interne de chaque carte absorbe cet espace en plus sans qu'il
-  ait fallu toucher aux templates : `.stat` centre son contenu
-  verticalement (`justify-content: center`), `.stat-list` (indexeurs,
-  tâches planifiées) l'ancre en haut (`justify-content: flex-start`).
-  Itérations précédentes (pour référence, pas l'état actuel) : Débits/Ratio
-  d'abord groupés côte à côte avec un titre `h3` par groupe, puis une
-  deuxième ligne "Système" (un seul titre) éclatée en trois sous-sections
-  titrées (Torrents/Disque/Indexeurs), le tout construit en CSS grid
-  (`.stats-grid`, `grid-template-columns: repeat(auto-fill, …)`) — abandonné
-  au profit du flux plat ci-dessus, toujours à la demande de l'utilisateur.
-  La carte torrents elle-même a changé de forme plusieurs fois avant de se
-  stabiliser en liste empilée label/valeur (`render_stat_item()`/
-  `stat-multi-item.html`, une ligne par métrique, valeur alignée à droite) :
-  Actifs, Surveillés, En téléchargement, En erreur. Téléchargement = torrent
-  avec `status == 4` (spec RPC) ; erreur = champ `error != 0` (tracker
-  injoignable, fichier introuvable sur disque, etc. — `errorString` donne le
-  détail par torrent, pas exposé au dashboard, juste le compte), valeur
-  colorée en rouge si `>0` sinon verte (`stat-value-critical`/
-  `stat-value-good`) — seule la valeur "erreur" est colorée, les autres
-  restent en encre neutre (0 en téléchargement n'est pas anormal,
-  contrairement à une erreur). « Torrents actifs » = tout torrent avec
-  `status != 0` (spec RPC, 0 = stopped/paused) ; « torrents surveillés » =
-  tous les torrents présents dans le client, actifs ou non — hypothèse de
-  lecture de la demande utilisateur ("nombre de torrents actifs" vs
-  "surveillés"), vérifiée en interrogeant le RPC en direct le 2026-07-28
-  (257 actifs / 278 au total à ce moment), à corriger si l'intention était
-  différente.
-  Indexeurs Prowlarr : `/api/v1/indexer` (liste + `enable`) croisé avec
-  `/api/v1/indexerstatus` (liste des indexeurs actuellement désactivés après
-  échecs répétés, vide si tout va bien — un indexeur y figurant compte comme
-  en échec, par `indexerId`), via `docker exec arr-prowlarr-1 curl` (même
-  mécanisme que `build_prowlarr_tracker_map()` dans `transmission-stats.py`,
-  dupliqué plutôt que partagé, voir plus haut) ; liste chaque indexeur avec
-  un point coloré par état plutôt qu'un compte agrégé, pour voir directement
-  LEQUEL est en échec sans changer d'écran.
-  Chaque carte a sa propre disponibilité (best-effort indépendant, voir
-  `build_stats_section()`) : espace disque et indexeurs Prowlarr s'affichent
-  même si `vpn/transmission-vpn` est arrêté (contrairement à Débits/Ratio/
-  torrents, qui dépendent tous de `transmission-stats.py` donc du VPN) ;
-  toute la section (`Transmission &amp; système`, renommée depuis
-  "Transmission — ratios & débits" en cours de route) n'est omise que si
-  aucune carte n'est disponible. Les paragraphes `<p class="note">` sous la
-  section (légende des seuils de couleur ratio/débit/disque) retirés le même
-  jour à la demande de l'utilisateur — les zones de couleur restent
-  identiques sur les jauges elles-mêmes (rouge/jaune/vert), seul le texte
-  d'explication en bas de section a disparu.
-- **`scripts/generate-dashboard.py` (réécrit en Python le 2026-07-28,
-  remplace l'ancien `generate-dashboard.sh`)** : venait d'un script bash+jq
-  qui construisait le HTML par concaténation de chaînes, devenu illisible
-  avec l'ajout des mètres ci-dessus — demandé explicitement par
-  l'utilisateur pour séparer vues et code avant d'étendre le dashboard
-  (future page monitoring évoquée). Vues dans `dashboard/templates/*.html`
-  (un fichier par composant : `page`, `section-grid`, `card-clickable`,
-  `card-down`, `stat-card`, `gauge`, `gauge-zones`, `stats-flow`,
-  `multi-stat-card`, `stat-multi-item`, `indexers-card`, `mini-meter`,
-  `tracker-row`, `tracker-details`, `section-transmission` — `gauge`/
-  `gauge-zones` ajoutés le 2026-07-28 en remplaçant un premier essai en
-  mètres puis en balance ; `stats-flow` le même jour, remplace un détour par
-  `stats-row`/`stats-group` (groupes titrés en CSS grid, voir plus haut) par
-  un flux plat flexbox sans sous-section), rendues via `string.Template` de
-  la stdlib (substitution `$variable` uniquement, zéro logique dans un
-  template — boucles/conditions et calculs géométriques (angles/points
-  d'arc des jauges) restent en Python, ex.
-  `build_cards()`/`build_stats_section()` décident quelles cartes
-  existent et les joignent avant de les passer au template parent). CSS/JS déplacés en
-  fichiers statiques (`dashboard/assets/dashboard.css`/`dashboard.js`, copiés
-  vers `dashboard/html/assets/` comme les logos) plutôt qu'embarqués dans le
-  heredoc. Zéro nouvelle dépendance (`python3` déjà requis par
-  `transmission-stats.py`/`torrent-cleanup.py`, `string.Template` est
-  stdlib) — et ça fait disparaître `jq` du chemin de génération du
-  dashboard (extraction des labels Traefik via `docker compose config
-  --format json` + `re`/`json` du stdlib plutôt qu'un programme `jq`
-  embarqué). Alternative envisagée et écartée : rester en bash avec des
-  templates substitués par `envsubst` — diff plus petit mais les boucles
-  (cartes/mètres/lignes de tracker) restent aussi pénibles qu'avant, ce qui
-  était précisément le problème à résoudre. `make cron-install` doit être
-  relancé après ce changement (`scripts/crontab` invoque désormais `python3
-  .../generate-dashboard.py`, pas plus le `.sh`).
-- **Les sections du dashboard (Public/Local/Stack non lancée/Transmission)
-  ne s'affichent que si elles ont du contenu** (ajouté le 2026-07-28) —
-  plus de placeholder `"aucun"`/`"aucune"`/`"indisponible"` pour une section
-  vide, la section entière est omise. La section Transmission spécifiquement
-  ne s'affiche que si `vpn/transmission-vpn` tourne (vérifié via le même
-  `RUNNING` construit par `docker ps` que les cartes de service), pas
-  seulement si `transmission-stats.py` a réussi à sortir un JSON — évite
-  d'afficher un message d'erreur générique le temps que le conteneur
-  redémarre. Le tableau détaillé "ratio par tracker" est en plus replié par
-  défaut dans un `<details>`/`<summary>` natif (pas de JS) — verbeux avec
-  plusieurs trackers privés, pas l'information qu'on veut voir en premier.
-- **`max-file: "3"` sur tous les blocs `logging` json-file** (ajouté le
-  2026-07-24) — `max-file` n'était jamais fixé alors que `max-size` l'est
-  partout, donc un seul fichier de logs par service : dès qu'il atteignait
-  `max-size`, tout l'historique précédent disparaissait plutôt que d'être
-  conservé dans un fichier tourné. Toujours ajouter les deux ensemble sur
-  tout nouveau service, jamais `max-size` seul.
-- **Ratio-limite 2 sur les torrents Nyaa.si via `seedCriteria.seedRatio`
-  côté Sonarr, pas un script maison** (demandé le 2026-07-28) — ~~Prowlarr n'a
-  aucun champ ratio/seed sur son propre objet indexeur (vérifié via l'API,
-  `/api/v1/indexer/<id>`)~~ **FAUX, démenti le 2026-08-07** : Prowlarr expose
-  `torrentBaseSettings.seedRatio`/`seedTime`/`packSeedTime`/`appMinimumSeeders`
-  sur son propre indexeur, et c'est là que le réglage doit vivre (voir l'entrée
-  `PUBLIC_INDEXER_SEED_RATIO` plus haut — le poser uniquement côté arr le fait
-  effacer par le `fullSync` de Prowlarr toutes les 6 h, ce qui explique la
-  disparition constatée le 2026-08-06). Sonarr/Radarr en exposent un aussi
-  (`seedCriteria.seedRatio`/`seedTime`, poussé au client de téléchargement au
-  moment du grab), mais leur valeur n'est pas celle qui fait autorité. Réglé à `2` sur l'indexeur synchronisé `Nyaa.si (Prowlarr)` côté
-  Sonarr (`/api/v3/indexer/4`, via l'API — pas l'UI, pas dans un fichier
-  versionné, comme les autres réglages arr faits par API). Un premier
-  script (`scripts/apply-nyaa-ratio-limit.py`, cron 5 min) avait été écrit
-  puis retiré (2026-07-28, même jour) : il couvrait plus de cas (aussi les
-  torrents déjà présents et une future injection cross-seed sur Nyaa.si,
-  qui contournerait ce réglage Sonarr — cross-seed injecte directement
-  dans Transmission sans repasser par le grab Sonarr), mais l'utilisateur a
-  préféré la simplicité du réglage natif à cette couverture plus large.
-  Les torrents déjà présents au moment de la demande gardent le
-  `seedRatioLimit=2` posé une fois manuellement (pas rétroactif, mais pas
-  besoin de le refaire — déjà fait). Trou connu et accepté : un futur
-  torrent Nyaa.si injecté par cross-seed n'aura pas cette limite.
-- **Deux profils qualité Sonarr distincts pour préférer l'audio français sur
-  un anime donné, pas un réglage global** (`Anime (Fansub)` inchangé /
-  `Anime (Fansub) VF` nouveau, ajoutés le 2026-07-28 via l'API — comme le
-  point ci-dessus, pas dans un fichier versionné, pas gérés par
-  `arr/recyclarr/recyclarr.yml` qui ne gère que "WEB-2160p (Combined)" côté
-  Sonarr : aucun risque qu'un `recyclarr sync` écrase ces deux profils).
-  Custom Format `FRENCH` créé (regex `\b(TRUEFRENCH|FRENCH|VFF|VFQ)\b`,
-  résoudre son id par nom, ne pas le supposer fixe) : scoré à 0 (neutre) sur
-  `Anime (Fansub)`, à 200 sur `Anime (Fansub) VF` (au-dessus de `MULTi`=100
-  et `VOSTFR`=50 déjà présents par défaut sur ce profil — `VOSTFR` ici veut
-  dire japonais + sous-titres français, pas de l'audio français, à ne pas
-  confondre). Bascule voulue par série (via le skill `anime-vf`, voir
-  ci-dessous), pas un scoring partagé par tous les animes — un premier essai
-  avait modifié `Anime (Fansub)` en place, corrigé le même jour après retour
-  direct de l'utilisateur : il voulait deux profils séparés, la bascule
-  faisant elle-même office de sélection explicite par série plutôt qu'une
-  préférence globale imposée à tous les animes.
-  Skill `.claude/skills/anime-vf/SKILL.md` : bascule la série demandée sur
-  `Anime (Fansub) VF`, relance une recherche (`SeriesSearch`), rapporte ce
-  qui a été grabé — le remplacement du fichier existant reste ensuite
-  automatique côté Sonarr (`upgradeAllowed: true` sur les deux profils),
-  aucune action manuelle nécessaire une fois la bonne release grabée. Le
-  skill capture le `(dev, ino)` de chaque fichier déjà présent avant de
-  lancer la recherche, attend l'import de la nouvelle release, puis
-  supprime l'ancien torrent via `scripts/torrent-cleanup.py
-  delete-by-inode` (ajouté le même jour, voir plus haut) — demandé
-  explicitement par l'utilisateur plutôt que de laisser ce nettoyage
-  manuel. Fonctionne seulement si une release FRENCH/VFF/VFQ/TRUEFRENCH
-  existe réellement chez les indexeurs Prowlarr configurés au moment de la
-  recherche — pas de garantie de disponibilité.
-- **`scripts/vpn-bench.py` (skill `vpn-bench`)** compare latence/débit entre
-  le serveur AirVPN actuellement configuré (`vpn/custom/default.ovpn`) et
-  d'autres pays, ajouté le 2026-07-29 suite à un bench manuel
-  Belgique/Pays-Bas/Allemagne/Suisse (Belgique gagnante sur les trois
-  métriques à la fois — pas de changement de serveur suite à ce test).
-  Fonctionne parce que le certificat client AirVPN (`<cert>`/`<key>` dans le
-  `.ovpn`) est lié au compte, pas au serveur : seule la ligne `remote
-  [pays].vpn.airdns.org <port>` change entre pays, donc pas besoin de
-  regénérer quoi que ce soit depuis le site AirVPN pour tester un autre
-  pays. Restaure systématiquement la config d'origine à la fin (backup sur
-  disque en plus de la copie en mémoire, pour survivre à un kill dur du
-  script) — jamais de changement permanent sans le redemander
-  explicitement. Latence mesurée vers un tracker tiré au hasard parmi les
-  torrents actifs à chaque run (pas de tracker fixe en config) — accepté
-  explicitement par l'utilisateur, moins reproductible d'un run à l'autre
-  mais plus simple.
-- **`scripts/apply-arr-overrides.py` (`make arr-overrides`, aussi enchaîné
-  par cron quotidien juste après `make recyclarr-sync`, voir
-  `scripts/crontab`)** réapplique les réglages des
-  deux profils qualité principaux (Sonarr `WEB-2160p (Combined)`, Radarr
-  `[SQP] SQP-1 WEB (2160p)`) qu'aucune propriété recyclarr n'expose : tailles
-  de palier "Quality Definition" (voir commentaires dans
-  `arr/recyclarr/recyclarr.yml`) et champ `language` du profil Radarr forcé
-  à "Original" par le guide. Ajouté le 2026-07-29 en creusant la question de
-  la reproductibilité de ces réglages sur un autre déploiement — vérifié en
-  direct ce même jour que ces valeurs avaient déjà dérivé sur cette instance
-  (retombées aux défauts du guide TRaSH), le pense-bête en commentaire
-  ("repasser ces valeurs après coup") n'ayant jamais été relancé depuis le
-  dernier `recyclarr sync` @daily qui les écrase. Résout le profil Radarr
-  par nom (pas par id, contrairement à l'ancien commentaire qui supposait
-  l'id 7 figé) pour rester valide si le profil est un jour recréé avec un
-  autre id, ou répliqué sur un autre déploiement où l'id serait différent.
-  Idempotent (compare avant d'écrire, `déjà à jour, rien à faire` si rien à
-  changer) et best-effort par arr (une erreur sur Sonarr n'empêche pas
-  d'essayer Radarr).
-  **Élargi le 2026-08-02 à la config anime** (`arr/profiles/sonarr-anime.json`,
-  versionné) : les 2 custom formats qui nous appartiennent (`FRENCH`,
-  `VOSTFR (hors suffixe)`) et les 3 profils `Anime (Fansub)*`. Décision prise
-  après avoir remis à plat l'utilité de recyclarr — l'utilisateur le garde
-  (sa vraie valeur : les MAJ communautaires des ~120 regex, listes LQ /
-  groupes de release / tags de plateformes) mais veut que **toute la config
-  custom vive dans le repo**. Ces objets n'étaient couverts par aucun
-  `trash_id`, donc rien ne les recréait sur une installation neuve et rien ne
-  rattrapait leur dérive : ils n'existaient que dans la base Sonarr,
-  récupérables par la sauvegarde restic mais pas reproductibles depuis git.
-  Le JSON est **déclaratif et fait autorité** : tout custom format absent de
-  `scores` est remis à 0 sur le profil concerné.
-  Qualités et custom formats désignés **par nom**, jamais par id (propres à
-  chaque instance — c'est précisément pourquoi un dump d'API brut ne serait
-  pas reproductible) ; un profil absent est créé à partir de
-  `/api/v3/qualityprofile/schema` plutôt qu'en versionnant tout l'arbre des
-  paliers de qualité (2,7 Ko de JSON au total, relisible dans un diff). Ordre
-  imposé : custom formats d'abord, profils ensuite (qui les référencent par
-  nom) — et surtout `make recyclarr-sync` AVANT tout le script, sinon les CF
-  du guide scorés par les profils anime (`MULTi`, `LQ`, `Upscaled`...)
-  n'existent pas encore ; ce cas lève une erreur explicite plutôt que de
-  créer un profil silencieusement dépourvu de la moitié de ses scores.
-  `api_put` passe par un `api_write` commun qui vérifie désormais la réponse
-  (`curl -s` sort 0 même sur un 400 — sans ça une écriture refusée par la
-  validation Sonarr était comptée comme réussie).
-  Chemin de **création** testé explicitement le 2026-08-02 en dupliquant la
-  config sous des noms jetables (`… ZZTEST`) : les 3 profils créés de zéro
-  ressortent identiques aux vrais (cutoff, qualités autorisées, scores), 2e
-  exécution idempotente, objets supprimés après coup — sans quoi ce chemin,
-  celui qui justifie tout l'exercice, n'aurait jamais été exercé avant le
-  jour d'une vraie réinstallation (même leçon que le bug de `pg_dump` plus
-  haut).
-  Cron initialement réglé à 00h15, un délai de sécurité estimé après le
-  sync interne `@daily` (00h00) du conteneur recyclarr — repéré le
-  2026-07-30 (utilisateur) comme une fenêtre de 15 min pendant laquelle ces
-  réglages sont dans l'état par défaut du guide TRaSH, pas les valeurs
-  voulues. Fix : le scheduler interne de recyclarr (`CRON_SCHEDULE`, cron
-  `@daily` par défaut de l'image) est désactivé — aucune valeur ne le
-  désactive proprement (seule une expression cron qui ne matche jamais,
-  ex. `31 février`, fonctionne comme contournement, écarté comme pas assez
-  propre) ; le service `recyclarr` passe donc en mode manuel pur
-  (`arr/docker-compose.yml` : plus de `restart:`/healthcheck, `profiles:
-  [manual]` pour rester absent de `make up STACK=arr`), déclenché
-  uniquement par `make recyclarr-sync` (nouveau target Makefile,
-  `docker compose run --rm recyclarr sync` — passer un argument à
-  l'entrypoint de l'image bascule du mode cron au mode CLI one-shot).
-  `scripts/crontab` enchaîne désormais `recyclarr-sync` puis
-  `apply-arr-overrides.py` sur une seule ligne cron (`&&`, plus deux
-  horaires séparés) : la fenêtre où ces réglages sont faux se limite à la
-  durée réelle du sync (quelques secondes, mesuré), pas à un délai de
-  sécurité estimé.
-  **Ce `&&` ne refermait en fait rien du tout** (démenti le 2026-08-07, voir le
-  piège « écritures Servarr asynchrones » plus bas) : recyclarr écrit les
-  tailles de palier avec un `PUT /api/v3/qualitydefinition/update` qui répond
-  **202 Accepted**, donc rend la main avant que l'arr n'ait appliqué la valeur.
-  Le script lisait 200 ms plus tard des valeurs encore correctes, sortait « déjà
-  à jour, rien à faire », et la dérive s'installait pour 24 h. Enchaîner plus
-  serré rendait même la course *plus* facile à perdre. Corrigé côté script
-  (`settle()`, relecture jusqu'à 2 passes propres consécutives), pas côté cron —
-  la ligne cron reste inchangée.
-- **Carte dashboard "Tâches planifiées"** (ajoutée le 2026-07-30, remplace
-  l'ancienne carte solo "Dernière sauvegarde") : liste chaque tâche de
-  `scripts/crontab` avec un point coloré — vert si elle a tourné avec
-  succès il y a moins de temps que l'écart normal entre deux occurrences de
-  son cron, rouge sinon (demandé explicitement ainsi par l'utilisateur).
-  Même gabarit carte-liste que les indexeurs Prowlarr (`indexers-card.html`)
-  — classes CSS renommées `.indexer-list`/`.indexer-dot-*` →
-  `.status-list`/`.status-dot-*` (génériques, réutilisées par les deux
-  cartes) à cette occasion. Deux mécanismes de détection selon la tâche
-  (voir `render_scheduled_tasks_card()`/`cron_marker_age_seconds()` dans
-  `scripts/generate-dashboard.py`) :
-  - **Sauvegarde restic** : garde son check existant (âge réel du dernier
-    snapshot via `restic snapshots --latest 1`, voir `BACKUP_MAX_AGE_DAYS`
-    ci-dessus) — plus fiable qu'un marqueur de fin de script, qui ne prouve
-    que "le script est allé jusqu'au bout", pas que le snapshot produit est
-    valide.
-  - **Nextcloud (cron.php), rafraîchissement dashboard, recyclarr +
-    overrides arr** : chaque ligne de `scripts/crontab` écrit désormais
-    `date +\%s > __DATA_ROOT__/.cron-status/<nom>` à la fin de sa chaîne de
-    commandes (`&&`, donc jamais atteint si une étape précédente échoue) ;
-    `cron_marker_age_seconds()` compare l'âge du marqueur à l'intervalle
-    attendu (`SCHEDULED_TASKS`, codé en dur par tâche plutôt qu'un
-    parseur générique d'expression cron — seulement 3 tâches concernées,
-    une abstraction générique n'aurait rien simplifié). `__DATA_ROOT__` est
-    un 3e placeholder substitué par `make cron-install` (comme
-    `__REPO_ROOT__`/`__PUID__`), qui crée aussi `.cron-status/` s'il
-    n'existe pas encore.
-  La composition de la liste ne dépend JAMAIS de la disponibilité d'un
-  marqueur/snapshot (demandé explicitement le 2026-07-30 après un premier
-  essai qui omettait une tâche tant que son marqueur n'existait pas
-  encore) : une tâche sans marqueur/snapshot est affichée en rouge, pas
-  absente. Liste volontairement minimale (nom + point coloré, pas d'âge
-  affiché) pour rester cohérente avec le gabarit indexeurs déjà en place.
-
-  En revanche, une tâche liée à une stack arrêtée EST absente de la liste
-  (raffiné le 2026-07-30, même jour, suite à une remarque de l'utilisateur :
-  "si la stack n'est pas lancée, le cron lui-même ne devrait pas être
-  lancé" — pas seulement caché côté dashboard). `SCHEDULED_TASKS` porte
-  donc un 4e élément, la liste des services `<project>/<service>` requis
-  (mêmes clés que le `running` de `docker_ps_set()`) : `["nextcloud/app"]`
-  pour Nextcloud (cron.php), `["arr/sonarr", "arr/radarr"]` pour Recyclarr
-  + overrides arr, liste vide pour Sauvegarde restic et Rafraîchissement
-  dashboard (pas de stack associée — ce dernier est justement ce qui doit
-  tourner pour refléter qu'une autre stack est arrêtée). `render_scheduled_tasks_card()`
-  saute entièrement la ligne si un des services requis n'est pas dans
-  `running` — rouge serait un faux signal d'échec pour un arrêt volontaire.
-  Ce filtrage dashboard est un affichage, pas une garantie : le vrai fix
-  est côté cron (voir `scripts/require-running.sh` ci-dessous), sans quoi
-  le job continuerait de tourner (et d'échouer, ou de réussir inutilement)
-  toutes les 5 min/tous les jours contre une stack arrêtée, pour rien.
-
-- **`scripts/require-running.sh <project>/<service> [...]`** (ajouté le
-  2026-07-30) : exit 0 seulement si chaque service listé a un conteneur
-  `running` au moment de l'appel (`docker ps --filter label=com.docker.compose.project=...
-  --filter label=com.docker.compose.service=...`, mêmes labels que
-  `docker_ps_set()` dans `scripts/generate-dashboard.py`). Deux usages :
-  - En tête de chaîne `&&` dans `scripts/crontab` pour les 2 tâches liées à
-    une stack précise (Nextcloud cron.php → `nextcloud/app` ; Recyclarr +
-    overrides arr → `arr/sonarr` ET `arr/radarr`) : si le guard échoue,
-    toute la chaîne s'arrête avant le premier `docker exec`/
-    `docker compose run` — silencieux plutôt qu'un échec répété.
-  - Dans `scripts/backup.sh`, pour rendre le dump de la base Nextcloud
-    best-effort plutôt que fatal : `pg_dump` sur `nextcloud/db-next`
-    tournait auparavant sans vérifier qu'il était démarré, sous `set -e` —
-    si `nextcloud` était arrêté au moment du cron hebdo, TOUT le script
-    échouait (aucun manifeste d'images, aucun `restic backup`), pas
-    seulement le dump DB. Le fichier `nextcloud-db.sql` d'un run précédent
-    est supprimé du staging plutôt que laissé tel quel si le dump est
-    sauté ce run-là — un vieux dump silencieusement re-sauvegardé comme
-    s'il était frais serait pire qu'une sauvegarde manquante.
-  Pas de gating équivalent sur la sauvegarde restic elle-même côté
-  dashboard/cron : c'est une sauvegarde globale (manifeste de toutes les
-  stacks), pas le cron d'un seul service — seule sa dépendance interne au
-  dump Nextcloud est rendue best-effort, pas la tâche entière.
-- **Marge de 20 % (`CRON_MARKER_SLACK = 1.2` dans `scripts/generate-dashboard.py`)
-  sur l'intervalle attendu de chaque tâche planifiée** (ajouté le 2026-07-30,
-  suite à un faux rouge constaté sur "Rafraîchissement dashboard" lui-même) —
-  sans marge, un marqueur comparé pile à l'intervalle du cron (300s pour un
-  `*/5`) passe rouge dès que la génération du dashboard tombe dans les
-  dernières secondes avant le tick suivant (jitter du scheduler, ou un `make
-  dashboard-refresh` manuel qui ne tombe pas pile sur le cycle) alors que la
-  tâche tourne normalement (confirmé via `refresh.log` : succès à chaque
-  tick). S'applique aussi à `BACKUP_MAX_AGE_DAYS` (7j → 8.4j effectifs) pour
-  la même raison, la sauvegarde restic étant elle aussi hebdomadaire pile.
-- **Pied de page `Généré le … — make dashboard-refresh` déplacé en `<footer>`
-  en bas de page (ajouté le 2026-07-30)**, et surlignage rouge côté client du
-  timestamp si le cron de régénération semblait arrêté (`data-generated`/
-  `.updated-stale` dans `dashboard.js`/`dashboard.css`) retiré le même jour —
-  devenu redondant avec la carte "Tâches planifiées" (ci-dessus), qui
-  surveille déjà ce cron précis via son propre marqueur.
-- **Section "Transmission &amp; système" renommée "Monitoring"** (2026-07-30)
-  et **masquée par défaut, dépliable via un switch** (même jour, demandé par
-  l'utilisateur) : le titre et le switch (`.section-header-row` dans
-  `section-transmission.html`) restent toujours visibles et alignés sur une
-  même ligne à gauche — seul le contenu (`#monitoring-content`,
-  `.monitoring-hidden`) est masqué, jamais le titre lui-même (corrigé après
-  un premier essai qui masquait toute la `<section>`, titre inclus). État du
-  switch retenu en `localStorage` (`dashboard.js`) pour survivre à la
-  régénération cron toutes les 5 min — sans ça l'utilisateur aurait dû
-  redéplier la section à chaque rechargement de page.
-- **Débits (descendant/montant) et Ratios (total/session) fusionnés chacun en
-  une seule carte à 2 jauges** (`render_dual_gauge_card()`/
-  `dual-gauge-card.html`/`gauge-column.html`, 2026-07-30) — la première ligne
-  de la section comptait 4 cartes séparées, réduites à 2 cartes `.stat-span-2`
-  de 2 colonnes chacune, même principe que la carte Torrents
-  (`render_torrents_files_card()`). Chaque carte porte un titre ("Débits"/
-  "Ratios") ; les libellés de colonne ont perdu leur préfixe redondant avec ce
-  titre ("Débit descendant" → "Descendant", "Ratio total" → "Total").
-  `.stat-dual-gauge` doit explicitement passer `align-items: stretch` (comme
-  `.stat-torrents-files`) pour que `.stat-columns-row` occupe toute la largeur
-  de la carte — sans ça le `.stat` de base (`align-items: center`) laisse la
-  ligne se resserrer à la largeur de son contenu et `justify-content` n'a plus
-  d'espace à répartir, un piège rencontré en l'écrivant. `justify-content:
-  space-evenly` (pas `space-between`) sur `.stat-columns-row` de cette carte
-  spécifiquement : demandé explicitement, l'espace entre les 2 jauges doit
-  être identique à l'espace entre chaque jauge et le bord de la carte, pas
-  concentré au milieu avec les jauges collées aux bords.
-- **Carte Torrents (`stat-torrents-files`) : contenu ancré en haut, pas centré
-  verticalement** (`justify-content: flex-start`, 2026-07-30, demandé
-  explicitement) — cohérent avec `.stat-list` (indexeurs, tâches planifiées),
-  qui suit le même principe pour un contenu de hauteur variable.
-- **Accordéon "Ratio par tracker" remplacé par une simple carte `.stat-span-3`
-  à plat dans le flux** (`tracker-card.html`, 2026-07-30, remplace
-  `tracker-details.html`/`<details>`) — placée juste avant "Tâches
-  planifiées" dans `build_stats_section()` : comme les rangées précédentes
-  remplissent exactement 4 slots chacune, les deux tombent naturellement sur
-  la même rangée (tracker en 1re position, tâches planifiées en 2e) sans
-  logique de positionnement CSS dédiée.
-- **Cartes dépendant d'une stack arrêtée : placeholder "Arrêté" plutôt que
-  disparition silencieuse** (`render_stat_placeholder()`/
-  `stat-placeholder.html`, 2026-07-30, demandé explicitement) — Débits/
-  Ratios/Torrents/Ratio par tracker (dépendent de `vpn/transmission-vpn` via
-  `fetch_transmission_stats()`) et Indexeurs (dépend de `arr/prowlarr`, via
-  `render_indexers_card(running)`) affichent désormais un `.stat`/`.stat-span-N`
-  grisé (`opacity: .45`, même esprit que `.card-down` pour les cartes de
-  service Public/Local) avec le titre de la carte + "Arrêté", dans le même
-  gabarit de span que la carte réelle (pour ne pas décaler la mise en page
-  des cartes suivantes) — au lieu d'être simplement omises comme avant.
-  Cible précisément le cas "stack arrêtée" : si la stack tourne mais que la
-  donnée reste indisponible pour une autre raison (transmission-stats.py en
-  échec, clé API Prowlarr absente), comportement best-effort inchangé (carte
-  omise, pas de placeholder) — `render_indexers_card()` a donc changé de
-  signature (prend `running`) pour court-circuiter avant tout `docker exec`
-  si `arr/prowlarr` n'est pas dans `running`, plutôt que de tenter l'appel
-  pour rien. Disques et Tâches planifiées n'ont pas de dépendance "carte
-  entière" à une stack unique (Disques lit directement le filesystem hôte ;
-  Tâches planifiées gère déjà chaque ligne individuellement, voir
-  `require-running.sh` ci-dessus) — pas concernées par ce placeholder.
+- **`scripts/generate-dashboard.py`** : vues dans `dashboard/templates/*.html`
+  rendues via `string.Template` de la stdlib (substitution `$variable`
+  uniquement, **zéro logique dans un template** — boucles, conditions et
+  calculs géométriques des jauges restent en Python). CSS/JS en fichiers
+  statiques sous `dashboard/assets/`, copiés vers `dashboard/html/assets/`
+  comme les logos. **Zéro dépendance hors stdlib**, et `jq` a disparu du
+  chemin de génération. Réécrit depuis un bash+jq qui concaténait des
+  chaînes ; rester en bash avec `envsubst` avait été envisagé et écarté — les
+  boucles restaient aussi pénibles, ce qui était précisément le problème.
+- **Mise en page du dashboard réglée au détail près, demandée ainsi — ne pas
+  « nettoyer » `.stats-flow`/`.stat-*` dans `dashboard.css` ni réorganiser
+  `build_stats_section()` sans redemande.** Points de fond seuls :
+  - Toutes les cartes de « Monitoring » sont **à plat dans un seul flux
+    flexbox** (`.stats-flow`, `flex-wrap`, largeur fixe par `flex: 0 0 190px`)
+    — pas de grille CSS, pas de sous-section titrée. Chaque carte porte son
+    propre libellé.
+  - Section **masquée par défaut, dépliable via un switch** ; le titre et le
+    switch restent toujours visibles, seul `#monitoring-content` est masqué.
+    L'état du switch (comme celui de « Tous les trackers ») vit en
+    `localStorage` — indispensable, la page est régénérée par cron toutes les
+    5 min et l'utilisateur devrait sinon redéplier à chaque rechargement.
+  - Les jauges sont du **SVG pur** (`gauge_svg()`/`zone_gauge_svg()`), aucune
+    lib JS de graphiques. Jauge de ratio : pas d'arc de remplissage, le fond
+    est divisé en 3 zones de sévérité fixes sur l'échelle 0-4, l'aiguille
+    pointe sa position. Seuils générique torrenting (rouge `<1`, jaune `1–2`,
+    vert `≥2`), **pas** le seuil `seedRatio` d'un indexeur particulier.
+  - Jauge de débit cappée sur `speed_scale` = maximum observé sur
+    l'historique ~25 h (`historical_max_speed()`), plancher 1 Mo/s — pas une
+    capacité de ligne figée en config : le débit VPN réel dépend du pair
+    distant et de l'overhead du tunnel, une valeur figée serait fausse dès le
+    premier changement de serveur.
+  - Les valeurs « en erreur » de la carte Torrents sont les seules colorées
+    (rouge si `>0`, sinon vert) : 0 en téléchargement n'est pas anormal,
+    contrairement à une erreur. « Actifs » = `status != 0` (spec RPC),
+    « surveillés » = tous les torrents présents.
+  - Indexeurs Prowlarr : liste avec un point coloré **par indexeur** plutôt
+    qu'un compte agrégé, pour voir directement LEQUEL est en échec sans
+    changer d'écran. `/api/v1/indexer` croisé avec `/api/v1/indexerstatus`
+    (vide si tout va bien).
+- **Une section vide n'est pas affichée** (plus de placeholder « aucun ») ; la
+  section Monitoring ne s'affiche que si `vpn/transmission-vpn` tourne, pas
+  seulement si `transmission-stats.py` a réussi — évite un message d'erreur
+  générique le temps qu'un conteneur redémarre.
+  **En revanche une carte dont la stack est arrêtée montre un placeholder
+  « Arrêté »** (`render_stat_placeholder()`, grisé, dans le même gabarit de
+  span pour ne pas décaler la mise en page) plutôt que de disparaître
+  silencieusement. Cible précisément ce cas : si la stack tourne mais que la
+  donnée manque pour une autre raison, comportement best-effort inchangé
+  (carte omise). `render_indexers_card()` prend donc `running` en argument,
+  pour court-circuiter avant tout appel si `arr/prowlarr` est arrêté.
+- **Le dashboard reflète l'état `unhealthy`** (`docker ps --filter
+  health=unhealthy`, contour rouge `.logo-unhealthy` + avertissement) et est
+  régénéré **par cron toutes les 5 min**, pas seulement par `make
+  dashboard-refresh` — sinon un service devenu unhealthy resterait affiché
+  comme sain arbitrairement longtemps.
+- **Stats Transmission visibles WAN et LAN**, sans gating : ce sont des
+  chiffres agrégés en snapshot, pas un accès de contrôle au client — voulu
+  explicitement. `scripts/transmission-stats.py` sort le JSON consommé par le
+  générateur. Ratio session = `current-stats` (remis à zéro à chaque
+  redémarrage du daemon, donc « depuis l'uptime ») ; ratio total =
+  `cumulative-stats`. `${DATA_ROOT}/.transmission-stats-history.jsonl` ne sert
+  plus qu'à l'échelle des jauges de débit (rétention ~25 h).
+  Un torrent multi-tracker compte dans **chaque** tracker auquel il annonce
+  (impossible de départager l'upload par tracker côté RPC) : le ratio par
+  tracker reste correct individuellement, mais la somme peut dépasser le
+  volume réel total.
+  Ratio calculé côté Transmission, peut différer du ratio compté par chaque
+  tracker (leur propre comptage d'annonce fait foi). Pas de lecture directe
+  des ratios de compte sur les trackers privés — Prowlarr n'expose aucune
+  notion de compte, il faudrait un scraper dédié par tracker. Reporté.
+- **Carte « Tâches planifiées »** : une ligne par tâche de `scripts/crontab`,
+  point vert si elle a tourné avec succès il y a moins de temps que
+  l'intervalle attendu de son cron, rouge sinon. Deux mécanismes de détection :
+  - **Sauvegarde restic** : âge réel du dernier snapshot
+    (`restic snapshots --latest 1`) — plus fiable qu'un marqueur de fin de
+    script, qui ne prouve que « le script est allé au bout », pas que le
+    snapshot est valide.
+  - **Les autres** : chaque ligne de `scripts/crontab` écrit
+    `date +\%s > __DATA_ROOT__/.cron-status/<nom>` en fin de chaîne `&&`
+    (donc jamais atteint si une étape échoue) ; `cron_marker_age_seconds()`
+    compare à l'intervalle de `SCHEDULED_TASKS`, codé en dur par tâche
+    plutôt qu'un parseur générique d'expression cron — trop peu de tâches
+    pour qu'une abstraction simplifie quoi que ce soit.
+  **Ne jamais écrire un chemin, un uid ou `DATA_ROOT` en littéral dans
+  `scripts/crontab`** : `make cron-install` substitue `__REPO_ROOT__`,
+  `__PUID__` et `__DATA_ROOT__` depuis ce checkout et `.env.shared` (cron ne
+  charge pas `.env.shared` lui-même), et le `sed` réécrit **tout** le fichier,
+  commentaires compris — ne pas y épeler ces valeurs même en commentaire.
+  **La composition de la liste ne dépend jamais de la disponibilité d'un
+  marqueur** : une tâche sans marqueur est affichée **en rouge, pas absente**.
+  En revanche une tâche liée à une **stack arrêtée est absente** — rouge
+  serait un faux signal d'échec pour un arrêt volontaire. D'où un 4e élément
+  dans `SCHEDULED_TASKS` : la liste des services `<project>/<service>`
+  requis. Ce filtrage est un affichage, pas une garantie : le vrai fix est
+  côté cron (`require-running.sh`).
+- **Marge de 20 % (`CRON_MARKER_SLACK = 1.2`)** sur l'intervalle attendu de
+  chaque tâche, et sur `BACKUP_MAX_AGE_DAYS` : sans marge, un marqueur comparé
+  pile à l'intervalle du cron passe rouge dès que la génération tombe dans les
+  dernières secondes avant le tick suivant (jitter du scheduler, ou un
+  `dashboard-refresh` manuel hors cycle) alors que la tâche tourne
+  normalement.
+- **`scripts/require-running.sh <project>/<service> [...]`** : exit 0
+  seulement si chaque service listé a un conteneur `running`. Deux usages —
+  en tête de chaîne `&&` dans `scripts/crontab` (silencieux plutôt qu'un
+  échec répété toutes les 5 min contre une stack arrêtée), et dans
+  `scripts/backup.sh` pour rendre le dump Nextcloud **best-effort plutôt que
+  fatal** : sous `set -e`, un `nextcloud` arrêté faisait échouer TOUT le
+  script (aucun manifeste, aucun `restic backup`). Le `nextcloud-db.sql` d'un
+  run précédent est **supprimé** du staging plutôt que laissé si le dump est
+  sauté — un vieux dump re-sauvegardé comme s'il était frais serait pire
+  qu'une sauvegarde manquante.
+  Pas de gating équivalent sur la sauvegarde restic elle-même : c'est une
+  sauvegarde globale, pas le cron d'un seul service.
 
 ## Pièges à ne pas répéter
 
+### Un test manuel réussi ne prouve rien
+
+Trois bugs de cette classe, tous silencieux, tous invisibles à un test à la
+main. Se méfier dès qu'un comportement dépend d'un ordonnanceur, d'une file
+d'attente ou d'un échappement.
+
 - **Les écritures de configuration Servarr peuvent être ASYNCHRONES : un
-  `200 OK` n'est pas une garantie, un `202 Accepted` en est l'aveu** — repéré le
-  2026-08-07 en cherchant pourquoi les tailles de palier de qualité étaient
-  dérivées en pleine journée alors que le cron nocturne les corrige. `PUT
-  /api/v3/qualitydefinition/update` (l'endpoint qu'utilise recyclarr) répond
-  **202 Accepted** : l'arr met la mise à jour en file et l'applique *après* avoir
-  répondu. Conséquence mesurée en rejouant la chaîne cron à la main :
+  `200 OK` n'est pas une garantie, un `202 Accepted` en est l'aveu.**
+  `PUT /api/v3/qualitydefinition/update` (l'endpoint qu'utilise recyclarr)
+  répond **202** : l'arr met la mise à jour en file et l'applique *après*
+  avoir répondu.
   ```
-  12:26:17.2  recyclarr : PUT /api/v3/qualitydefinition/update -> 202 (5 ms)
-  12:26:17.4  lecture   : encore les BONNES valeurs (100/85)
+  12:26:17.2  recyclarr : PUT .../qualitydefinition/update -> 202 (5 ms)
+  12:26:17.4  lecture   : encore les BONNES valeurs
   12:26:17.9  script    : « déjà à jour, rien à faire »
-  12:27:10    lecture   : valeurs du guide en place (None/None)
+  12:27:10    lecture   : valeurs du guide en place
   ```
-  Un script « lire → comparer → écrire » enchaîné juste derrière (`&&`) ne voit
-  donc rien à corriger et laisse la dérive s'installer jusqu'au prochain
-  passage, qui reperd la même course. Le piège est vicieux parce que le script
-  se déclare explicitement satisfait — c'est un faux négatif silencieux, pas une
-  erreur.
-  Fix retenu dans `scripts/apply-arr-overrides.py` : `settle()`, qui rejoue une
-  étape jusqu'à **2 passes consécutives sans rien à corriger** (`SETTLE_*`),
-  bornées à 6 tentatives × 5 s. Appliqué aux seules étapes que recyclarr fait
-  dériver (tailles Sonarr, tailles + `language` Radarr). Une passe qui corrige
-  remet le compteur à zéro, donc une écriture en deux temps ne conclut pas sur la
-  première accalmie. Vérifié le 2026-08-07 : la chaîne complète
-  (`require-running.sh && make recyclarr-sync && apply-arr-overrides.py`) dure
-  24 s et rattrape les 2 tailles Sonarr + 6 Radarr que la version précédente
-  laissait passer ; état encore correct plusieurs minutes après.
-  **Ne pas « corriger » ça par un `sleep` dans `scripts/crontab`** : la latence
-  de la file n'est pas connue (observée entre 0,5 s et 53 s), et un délai figé
-  serait soit trop court, soit du temps perdu chaque nuit. Se méfier de la même
-  classe de bug pour toute future comparaison avant/après sur un endpoint
-  Servarr en 202 — et plus généralement : un test manuel réussi ne prouve rien
-  ici, exactement comme pour le `%` non échappé du crontab plus bas.
-
-- **`make cron-install` ne doit jamais remplacer le crontab entier** — il
-  pipait `scripts/crontab` directement dans `crontab -`, qui écrase toute la
-  table : n'importe quel job ajouté à la main par l'utilisateur (sans rapport
-  avec ce repo) disparaissait silencieusement à l'installation suivante, sans
-  diff ni avertissement. Repéré le 2026-08-03 par l'utilisateur, juste après
-  qu'un job perso ait été ajouté au crontab. Fix :
-  `scripts/install-crontab.sh` (reçoit sur stdin le contenu déjà substitué,
-  le Makefile gardant la substitution puisque lui seul lit `.env.shared`)
-  fusionne les jobs du repo dans un **bloc délimité par deux commentaires
-  marqueurs** et recopie verbatim tout ce qui est en dehors. Conséquences à
-  garder en tête :
-  - Le bloc est ajouté **en dernier**, délibérément : un `MAILTO=""` ne
-    s'applique qu'aux lignes qui le *suivent* dans un crontab, donc le mettre
-    à la fin limite ce silence aux jobs du repo au lieu d'avaler aussi le mail
-    des jobs de l'utilisateur.
-  - Un job perso doit vivre **hors** du bloc ; à l'intérieur il serait bien
-    réécrit à chaque install (c'est le comportement voulu, `scripts/crontab`
-    reste la source de vérité pour ce qui est managé).
-  - Chemin de migration depuis les versions pré-marqueurs : les lignes du repo
-    déjà présentes sans marqueur sont retirées, sinon elles seraient
-    dupliquées. Deux règles, dans cet ordre — toute ligne présente **verbatim**
-    dans le bloc à installer (attrape les jobs, `MAILTO` et l'en-tête de
-    commentaires, qui resterait sinon orpheline dans la partie utilisateur),
-    puis toute ligne restante mentionnant le chemin du checkout (un job dont le
-    texte a changé entre deux versions du fichier). Les lignes retirées sont
-    affichées, un job perso qui mentionnerait le chemin du repo étant emporté
-    au passage.
-  - Le comparatif verbatim passe le bloc à `awk` **via un fichier, pas
-    `-v`** : une affectation `-v` traverse le traitement des séquences
-    d'échappement d'awk, qui transforme le `date +\%s` des lignes cron en
-    `date +%s` — elles cessent alors de matcher. Même piège `%` que ci-dessous,
-    une couche au-dessus.
-  Testé le 2026-08-03 sur les trois chemins avant de committer : migration
-  depuis un crontab pré-marqueurs contenant en plus 2 jobs perso (jobs perso et
-  leur commentaire conservés, 0 job repo dupliqué, 0 commentaire orphelin),
-  idempotence (3 réinstalls consécutifs → crontab bit-à-bit identique), et
-  première installation sur une machine sans crontab du tout (`crontab -l` sort
-  en erreur, cas géré) — ce dernier via un stub `crontab` dans le `PATH` pour ne
-  pas toucher au vrai.
-
+  Un script « lire → comparer → écrire » enchaîné juste derrière (`&&`) ne
+  voit donc rien à corriger et laisse la dérive s'installer 24 h. Enchaîner
+  plus serré rend même la course *plus* facile à perdre. Le piège est vicieux
+  parce que le script se déclare explicitement satisfait — faux négatif
+  silencieux, pas une erreur. Fix : `settle()` dans
+  `apply-arr-overrides.py` (voir plus haut).
+  **Ne pas « corriger » ça par un `sleep` dans `scripts/crontab`** : la
+  latence de la file n'est pas connue (observée entre 0,5 s et 53 s), un délai
+  figé serait soit trop court, soit du temps perdu chaque nuit. Se méfier de
+  la même classe de bug pour toute comparaison avant/après sur un endpoint
+  Servarr en 202.
 - **Un `%` non échappé dans la partie commande d'une ligne crontab est
   interprété par cron comme un saut de ligne** — tout ce qui suit devient
-  l'entrée standard fournie à la commande, pas la suite de la ligne de
-  commande. Rencontré le 2026-07-30 en ajoutant `date +%s > marqueur` dans
-  `scripts/crontab` (voir carte "Tâches planifiées" ci-dessus) : la
-  commande fonctionnait parfaitement testée à la main (`sh -c '...'`, ou
-  même `env -i ... /bin/sh -c '...'` pour reproduire l'environnement
-  minimal de cron), mais silencieusement `date +` sans argument sous le
-  vrai daemon cron — `%s > __DATA_ROOT__/.cron-status/<nom>` était avalé
-  comme stdin, jamais exécuté comme redirection. Aucune erreur visible
-  nulle part (`MAILTO=""` supprime le mail que cron aurait envoyé sur un
-  échec, et cron ne logue dans syslog que le lancement de la commande, pas
-  sa sortie) — repéré uniquement en comparant l'âge du marqueur après
-  plusieurs vrais ticks à ce qu'un test manuel produisait. Fix : échapper
-  en `date +\%s`. Tout futur ajout dans `scripts/crontab` utilisant `%`
-  (format `date`, ou toute autre commande) doit faire pareil — et se
-  méfier qu'un test manuel réussi ne prouve rien sur le comportement réel
-  sous cron pour cette classe de bug précise.
+  l'entrée standard de la commande. Rencontré avec `date +%s > marqueur` :
+  parfait testé à la main (même avec `env -i ... /bin/sh -c` pour reproduire
+  l'environnement minimal), mais silencieusement `date +` sans argument sous
+  le vrai daemon. Aucune erreur visible nulle part (`MAILTO=""` supprime le
+  mail, et cron ne logue que le lancement de la commande, pas sa sortie).
+  Fix : `date +\%s`. Tout futur ajout dans `scripts/crontab` utilisant `%`
+  doit faire pareil.
+- **Un `-v` d'awk traverse le traitement des séquences d'échappement**, qui
+  transforme le `date +\%s` des lignes cron en `date +%s` — elles cessent
+  alors de matcher. `install-crontab.sh` passe donc son bloc de comparaison à
+  `awk` **via un fichier, pas `-v`**. Même piège `%` que ci-dessus, une couche
+  au-dessus.
+
+### Cron et crontab
+
+- **`make cron-install` ne doit jamais remplacer le crontab entier.** Il
+  pipait `scripts/crontab` dans `crontab -`, qui écrase toute la table :
+  n'importe quel job perso disparaissait silencieusement, sans diff ni
+  avertissement. `scripts/install-crontab.sh` fusionne désormais les jobs du
+  repo dans un **bloc délimité par deux commentaires marqueurs** et recopie
+  verbatim tout ce qui est en dehors. Conséquences :
+  - Le bloc est ajouté **en dernier**, délibérément : un `MAILTO=""` ne
+    s'applique qu'aux lignes qui le *suivent*, donc le mettre à la fin limite
+    ce silence aux jobs du repo au lieu d'avaler aussi le mail des jobs de
+    l'utilisateur.
+  - Un job perso doit vivre **hors** du bloc ; à l'intérieur il serait
+    réécrit à chaque install (comportement voulu, `scripts/crontab` reste la
+    source de vérité pour ce qui est managé).
+  - Migration depuis les versions pré-marqueurs : les lignes du repo déjà
+    présentes sans marqueur sont retirées, sinon elles seraient dupliquées.
+    Deux règles dans cet ordre — toute ligne présente **verbatim** dans le
+    bloc à installer (attrape aussi `MAILTO` et l'en-tête de commentaires,
+    qui resterait sinon orpheline), puis toute ligne restante mentionnant le
+    chemin du checkout. Les lignes retirées sont affichées, un job perso qui
+    mentionnerait ce chemin étant emporté au passage.
+
+### Réseau et Docker
+
 - **`vpn/transmission-vpn` ne doit jamais rejoindre un second réseau
   Docker** (ex. `traefik-public`) et sa variable `LOCAL_NETWORK` ne doit
   jamais contenir son propre sous-réseau — les deux cassent le routing
-  sortant du tunnel (route `redirect-gateway def1` qui couvre
-  `172.16.0.0/12`, la plage par défaut des réseaux Docker). Toujours
-  passer par le sidecar `transmission-proxy` pour exposer le RPC ; pour
-  autoriser un pair du même réseau Docker sans casser le routage, utiliser
-  `UFW_ALLOW_GW_NET=true`, pas `LOCAL_NETWORK`. Détails complets : ISSUES.md.
+  sortant du tunnel (route `redirect-gateway def1`, qui couvre
+  `172.16.0.0/12`, la plage par défaut des réseaux Docker). Toujours passer
+  par le sidecar `transmission-proxy` pour exposer le RPC ; pour autoriser un
+  pair du même réseau Docker sans casser le routage, `UFW_ALLOW_GW_NET=true`,
+  **pas** `LOCAL_NETWORK`. Détails : ISSUES.md.
 - **`vpn/transmission-vpn` a besoin du module kernel `ip_tables` chargé sur
   l'hôte** — absent par défaut sur les Ubuntu récents (remplacé par
   `nftables`), nécessaire aux règles de routing/kill-switch de
   `haugene/transmission-openvpn`. Fix : `/etc/modules-load.d/ip-tables.conf`
-  contenant `ip_tables` (déjà en place sur ce déploiement). Prérequis host,
-  pas dans le compose file — à vérifier sur toute nouvelle machine.
+  contenant `ip_tables`. Prérequis host, pas dans le compose file — à
+  vérifier sur toute nouvelle machine.
+- **Rejoindre le réseau `vpn-internal` d'une autre stack** : son vrai nom
+  Docker est `vpn_vpn-internal` (préfixé par le dossier du projet compose) —
+  le déclarer `external: true` avec juste `vpn-internal` échoue. Toujours
+  ajouter `name: vpn_vpn-internal` sur la déclaration externe. Rejoindre ce
+  réseau depuis un autre container ne pose aucun problème en soi ; seul
+  `transmission-vpn` lui-même ne doit jamais toucher un second réseau.
+- **Deux bind-mounts Docker séparés du même disque physique n'autorisent pas
+  les hardlinks entre eux**, même si `stat` rapporte le même `st_dev` des
+  deux côtés — `link()` refuse avec `Cross-device link` dès que source et
+  destination sont sur deux montages distincts, peu importe que ce soit
+  littéralement la même partition. `copyUsingHardlinks: true` était bien
+  actif mais chaque import retombait silencieusement sur une copie complète
+  (~185 Go récupérés en corrigeant). Fix : **un seul mount
+  `${DATA_ROOT}:/data_root`** pour sonarr et radarr, avec remote path mapping
+  (`/data/completed/` → `/data_root/.transmission/data/completed/`) et les
+  root folders repointés sur `/data_root/library/...`.
+  **cross-seed n'a pas de remote path mapping** — il compare tel quel le
+  chemin renvoyé par le client (`/data/completed/...`) à son `dataDirs`, donc
+  impossible de renommer son mount. Fix : garder `${DATA_ROOT}/.transmission
+  /data:/data` et faire pointer `linkDirs` vers un **sous-dossier du même
+  mount** (`/data/.cross-seed-links`).
+- **Un bind-mount ne peut pas être monté sous un point de montage déjà
+  `:ro`** — Docker ne peut pas créer le mountpoint dans un parent en lecture
+  seule (`mkdirat ... read-only file system`). Rencontré sur `arr/cross-seed`
+  (`config.js` vs volume `/links`) et sur `dashboard/` (`./assets` sous
+  `./html:...:ro`) — solution : un seul mount, le script de génération copie
+  les assets dans le dossier généré.
+- **Un bind-mount de fichier unique reste figé sur l'ancien inode si le
+  fichier hôte est remplacé plutôt que modifié en place.** Rencontré sur
+  `arr/recyclarr/recyclarr.yml` : le conteneur continuait de lire l'ancien
+  contenu (`docker exec ... cat` ne montrait pas le changement) alors que
+  `docker inspect` confirmait le bon chemin monté — un bind-mount de fichier
+  suit l'inode capturé au démarrage, pas le chemin. Un `docker restart`
+  suffit. Ne pas conclure qu'un changement de config « n'a pas pris » sans
+  vérifier ça d'abord ; et préférer monter le **dossier** quand le fichier
+  doit pouvoir être remplacé à chaud (cf. `traefik/dynamic/`).
+- **Ne jamais copier un `.example` de `docker-compose.override.yml` tel quel
+  sans remplir ses placeholders** (`/path/to/...`) — Docker crée sinon
+  silencieusement l'arborescence bidon correspondante **en root** sur l'hôte.
+  Et comme les override réels sont gitignorés, toute évolution structurelle
+  doit aussi se refléter dans le `.example`.
+- **DNS du FAI qui renvoie `127.0.0.1` pour certains domaines** (blocage
+  anti-piratage, ex. domaines de trackers) — se présente comme une panne
+  réseau (`Connection refused`) alors que le domaine répond normalement via
+  un résolveur public. Fix : forcer `dns: ${DNS_PRIMARY}/${DNS_SECONDARY}`
+  sur le service concerné.
 - **Traefik ne retente pas seul un certificat ACME resté en échec** (ex.
   après un DNS temporairement en NXDOMAIN) — un restart du container est
-  nécessaire une fois le problème sous-jacent corrigé.
+  nécessaire une fois le problème corrigé.
+- Bruit connu, transitoire : à chaque redémarrage de Traefik, une quinzaine de
+  `middleware "hsts@docker" does not exist` sortent pendant ~5 s, le temps que
+  le provider docker livre les labels du conteneur traefik lui-même.
+
+### Sauvegarde et restauration
+
+- **`scripts/backup.sh` dumpait silencieusement la mauvaise base Postgres
+  depuis le début** (repéré en testant `make restore` pour de vrai — jusque-là
+  jamais exercé) : `pg_dump -U "$POSTGRES_USER" "${POSTGRES_DB:-$POSTGRES_USER}"`
+  retombe sur `$POSTGRES_USER` (« postgres », le superuser d'amorçage) quand
+  `POSTGRES_DB` n'est pas définie — et `nextcloud/.env` ne la définit jamais.
+  Toutes les sauvegardes précédentes avaient donc un `nextcloud-db.sql` de 26
+  lignes au lieu du vrai dump (279 tables). La base réelle s'appelle
+  `nextcloud`, codée en dur sur le service `app`. Fix : fallback
+  `${POSTGRES_DB:-nextcloud}`.
+  **Deux leçons générales** : un chemin de restauration jamais exercé peut
+  cacher ce genre de bug arbitrairement longtemps ; et un `${VAR:-default}`
+  est un piège quand `VAR` n'est définie nulle part — le fallback devient le
+  cas normal, silencieusement.
 - **`jellyfin.db` corrompue (`SQLite Error 11: database disk image is
   malformed`)** : ne pas juste supprimer le fichier pour forcer une
   régénération — `config/config/system.xml` garde
-  `IsStartupWizardCompleted=true`, donc Jellyfin se croit en mise à
-  niveau et plante en boucle sur d'anciennes migrations qui supposent un
-  schéma déjà existant. Avant de reset : essayer une réparation
-  (`sqlite3 <copie>.db ".recover" > dump.sql`, réimporter dans un fichier
-  neuf, `PRAGMA integrity_check`/`foreign_key_check`, `REINDEX; VACUUM;`)
-  — a fonctionné sans perte de données le 2026-07-20 malgré la
-  corruption. Si reset complet malgré tout : repasser aussi
-  `IsStartupWizardCompleted` à `false` dans `system.xml` pour repartir
-  sur le vrai chemin "nouvelle installation". Le dossier
-  `data/SQLiteBackups/` (backups auto intégrés à Jellyfin) était vide au
-  moment de l'incident — vérifier de temps en temps qu'il se remplit
-  réellement.
-- Avant de modifier un des `docker-compose.override.yml` réels (gitignorés,
-  contiennent les vrais chemins de la machine, sous le home de l'utilisateur),
-  se rappeler qu'ils ne
-  sont pas versionnés : toute évolution structurelle doit aussi se refléter
-  dans le `.example` correspondant. Ne jamais copier un `.example` tel quel
-  sans remplir ses placeholders (`/path/to/...`) — Docker crée sinon
-  silencieusement l'arborescence bidon correspondante en root sur l'hôte
-  (arrivé avec `arr/docker-compose.override.yml.example`, nettoyé le
-  2026-07-22).
-- **Rejoindre le réseau `vpn-internal` d'une autre stack** (ex. `arr/` pour
-  atteindre `transmission-vpn:9091`) : son vrai nom Docker est
-  `vpn_vpn-internal` (préfixé par le dossier du projet compose, `vpn/`
-  ne fixe pas de `name:` de réseau) — le déclarer `external: true` avec
-  juste `vpn-internal` échoue (`network ... declared as external, but
-  could not be found`). Toujours ajouter `name: vpn_vpn-internal` sur la
-  déclaration externe (voir `arr/docker-compose.yml`). Rejoindre ce réseau
-  depuis un autre container ne pose aucun problème en soi — seul
-  `transmission-vpn` lui-même ne doit jamais toucher un second réseau (cf.
-  piège ci-dessus).
-- **DNS du FAI qui renvoie `127.0.0.1` pour certains domaines** (blocage
-  anti-piratage côté FAI, ex. domaines de trackers/indexeurs) — se présente
-  comme une panne réseau (`Connection refused`) alors que le domaine répond
-  normalement via un résolveur public. Rencontré sur `arr/prowlarr` en
-  ajoutant un indexeur. Fix : forcer `dns: ${DNS_PRIMARY}/${DNS_SECONDARY}`
-  (Cloudflare par défaut, `.env.shared`) sur le service concerné (déjà le
-  cas sur Jellyfin par défaut ; ajouté aussi sur
-  `prowlarr`/`sonarr`/`radarr`/`cross-seed`).
-- **Sonarr/Radarr n'importent pas les fichiers vidéo posés en vrac à la
-  racine d'un dossier scanné** (scan "dossiers non mappés"/Library Import)
-  — ils ne reconnaissent que la convention un-film/une-série par
-  sous-dossier, sans erreur ni log pour les fichiers ignorés. Pour un
-  fichier existant hors de cette convention, utiliser **Manual Import**
-  (liste aussi les fichiers en vrac, matching manuel), pas le scan
-  automatique.
-- **cross-seed + Sonarr/Radarr : Connect "Custom Script", pas "Webhook"**
-  — le type Webhook générique de Sonarr/Radarr envoie un payload de test
-  factice (pas de vrai hash de torrent) au moment d'enregistrer la
-  connexion ; cross-seed le rejette (`A valid infoHash or an accessible
-  path must be provided`), ce qui empêche l'enregistrement de la connexion
-  côté Sonarr/Radarr (échec bloquant, pas juste un warning ignorable). La
-  méthode documentée par cross-seed est un Custom Script
-  (`arr/scripts/cross-seed-notify.sh`) qui lit `$sonarr_download_id`/
-  `$radarr_download_id` et appelle l'API cross-seed lui-même.
-- **`useClientTorrents: true` requis dans `arr/cross-seed/config.js`**
-  (faux par défaut chez cross-seed) — sans ça, le webhook déclenché par
-  `arr/scripts/cross-seed-notify.sh` ne consulte jamais le client réel pour
+  `IsStartupWizardCompleted=true`, donc Jellyfin se croit en mise à niveau et
+  plante en boucle sur d'anciennes migrations qui supposent un schéma
+  existant. Avant de reset, essayer une réparation : `sqlite3 <copie>.db
+  ".recover" > dump.sql`, réimporter dans un fichier neuf,
+  `PRAGMA integrity_check`/`foreign_key_check`, `REINDEX; VACUUM;` — a
+  fonctionné sans perte de données malgré la corruption. Si reset complet
+  malgré tout : repasser `IsStartupWizardCompleted` à `false`. Le dossier
+  `data/SQLiteBackups/` était vide au moment de l'incident — vérifier de temps
+  en temps qu'il se remplit réellement.
+
+### Sonarr / Radarr / Prowlarr
+
+- **Sonarr/Radarr n'importent pas les fichiers vidéo posés en vrac à la racine
+  d'un dossier scanné** — ils ne reconnaissent que la convention
+  un-film/une-série par sous-dossier, sans erreur ni log pour les fichiers
+  ignorés. Utiliser **Manual Import**, pas le scan automatique.
+- **Supprimer un episodefile via l'API déclenche quasi instantanément la
+  recherche automatique interne de Sonarr** pour l'épisode redevenu
+  « manquant » : dans la fenêtre de quelques secondes entre la suppression et
+  un grab manuel visant une release précise, Sonarr a grabé de lui-même autre
+  chose (mieux scorée sur le profil de la série). Supprimer un fichier pour
+  forcer un remplacement laisse donc une fenêtre de course. Pas de parade
+  fiable identifiée.
+- **Le cache de `GET /api/v3/release?episodeId=...` expire vite** : un `guid`
+  récupéré par un GET précédent peut déjà être invalide au `POST` (grab), avec
+  `"Couldn't find requested release in cache, try searching again"` — a
+  fortiori si une recherche automatique s'est intercalée. Le grab manuel doit
+  suivre la recherche dans la foulée, sans appel intermédiaire.
+- **Le paramètre `seriesId` de `GET /api/v3/history` n'est pas fiable** : la
+  réponse contient des entrées d'autres séries malgré le filtre. Toujours
+  filtrer côté client sur `record["seriesId"]`. Voir aussi `eventType=1`
+  (entier) plutôt que la chaîne `"grabbed"`, qui renvoie une réponse vide.
+- **`GET /api/v3/wanted/cutoff` ne reflète que le cutoff *qualité*, pas
+  `cutoffFormatScore`** — un épisode à la bonne qualité mais sous le score n'y
+  apparaît pas, alors qu'il reste éligible à l'upgrade. Ne pas s'en servir
+  pour estimer l'ampleur d'une vague de re-recherche : recalculer les scores
+  fichier par fichier (`GET /api/v3/episodefile`, champ `customFormats`,
+  croisé avec les `formatItems` du profil cible), ou vérifier au cas par cas
+  avec `GET /api/v3/release`, dont les `rejections` mentionnent explicitement
+  `Existing file meets cutoff`.
+- **Avant tout changement d'un custom format par l'API, vérifier qu'il n'est
+  pas géré par recyclarr** : recyclarr resynchronise la **définition** du CF,
+  pas seulement son score, donc un `PUT` est appliqué puis réécrit au sync
+  suivant. Repéré uniquement parce que `recyclarr sync --preview` a été
+  relancé *après* le PUT. Réflexe : `grep` le `trash_id` dans
+  `recyclarr.yml`, et relancer `--preview` après coup.
+  Solution retenue dans ce cas plutôt que de sortir le CF de `recyclarr.yml`
+  (ce qui aurait fait perdre sa création automatique sur un déploiement neuf,
+  donc un recul de reproductibilité) : **un CF distinct que nous possédons**
+  (`VOSTFR (hors suffixe)`), le CF du guide restant intact et scoré **0** sur
+  les profils concernés, le nôtre reprenant son score.
+
+### La boucle de regrab infini (`cutoffFormatScore` + regex)
+
+Le piège le plus coûteux du repo, diagnostiqué en trois passes. À lire en
+entier avant de toucher à un score ou à une regex de custom format.
+
+- **Mécanisme** : les CF `VOSTFR`/`SUBFRENCH`/`FRENCH`
+  (`ReleaseTitleSpecification`) matchaient le suffixe entre parenthèses que
+  certains groupes ajoutent au **titre du post** (`(VF, FRENCH, SUBFRENCH,
+  VOSTFR, ...)`) — suffixe **absent du nom réel du fichier `.mkv`**. Au grab
+  la release score haut, après import le fichier réévalué score plus bas → la
+  release déjà possédée a l'air d'être un upgrade → regrab → réimport → même
+  écart → boucle. Confirmé via l'historique : littéralement le même
+  magnet/infoHash grabé 3 à 5 fois.
+  **Le moteur de la boucle est l'asymétrie grab/fichier**, pas le plafond.
+  Abaisser `cutoffFormatScore` seul ne suffit pas : tant que le cutoff reste
+  au-dessus du maximum qu'un *fichier* peut atteindre, la porte de l'upgrade
+  ne se referme jamais.
+- **Un `cutoffFormatScore` n'a de sens que s'il est (a) atteignable et (b)
+  posé là où l'objectif du profil est rempli.** Le défaut des guides TRaSH
+  (10000) ne l'est jamais, et un calcul naïf par somme des CF positifs ne
+  l'est pas non plus : beaucoup sont **mutuellement exclusifs** (un seul tier,
+  une seule plateforme de streaming, un seul codec, un seul format audio, une
+  seule résolution, un seul niveau de repack — les specs `negate` du guide les
+  enchaînent). Pour un profil à CF déterminant, caler sur ce CF ; pour un
+  profil généraliste, sur le haut de la distribution **réellement observée**.
+  Ces distributions sont **bimodales** selon qu'une release porte ou non un
+  tag de groupe « Tier » (+1600 à 1700), largement absent des trackers FR :
+  viser le maximum théorique maintiendrait des recherches perpétuelles (donc
+  du quota indexeur) pour la majorité des titres.
+  Pour un profil géré par recyclarr, passer par `upgrade.until_score` dans
+  `recyclarr.yml`, pas par l'API — un appel API serait écrasé au sync.
+  **Piège** : dès qu'un profil fournit une liste `qualities:` explicite,
+  recyclarr **exige** `until_quality` en plus de `until_score`, sinon le sync
+  échoue en validation.
+- **Exclure un terme situé dans un groupe parenthésé demande DEUX assertions**,
+  et c'est le cœur du correctif dans `arr/profiles/sonarr-anime.json` :
+  - lookahead `(?![^()]*\))` — attrape le terme placé **après** un groupe
+    imbriqué ;
+  - lookbehind `(?<!\([^)]*)` — attrape le terme placé **avant**, le cas
+    réellement rencontré.
+  Le lookahead seul est contourné par des parenthèses imbriquées : dans
+  `(VF, FRENCH, VOSTFR, Koukaku Kidoutai (2026), ...)`, le `(` de `(2026)`
+  arrive avant la première `)`, `[^()]*\)` échoue, l'assertion négative
+  réussit — et le terme matche alors qu'il est bien dans le suffixe.
+  **.NET accepte un lookbehind de longueur variable, Python `re` non** —
+  utiliser le module `regex` pour tout test hors Sonarr.
+  Méthode de validation à reprendre : calculer la vérité terrain par
+  **comptage réel de profondeur de parenthèses**, pas par une autre regex, sur
+  les titres réels de `/api/v3/history` + `/api/v3/episodefile` ; puis croiser
+  .NET (`/api/v3/parse`, via des CF jetables supprimés après) et Python
+  `regex` en exigeant 0 désaccord.
+  Deux limites connues laissées en l'état : un terme entouré de groupes fermés
+  des **deux** côtés dans les mêmes parenthèses passe encore (aucun schéma de
+  nommage réel ne fait ça), et un titre à parenthèses non appariées ne matche
+  pas (déjà vrai avant).
+- Trou connu, délibéré : `WEB-2160p (Combined)` a `VOSTFR` à +100 et est géré
+  par recyclarr, mais le suffixe est une pratique de groupes d'anime 1080p qui
+  ne croise pas ce profil 2160p — à revoir si un regrab en boucle y apparaît.
+
+### cross-seed
+
+- **Connect « Custom Script », pas « Webhook »** — le type Webhook générique
+  de Sonarr/Radarr envoie un payload de test factice (pas de vrai hash) au
+  moment d'enregistrer la connexion ; cross-seed le rejette (`A valid
+  infoHash or an accessible path must be provided`), ce qui **empêche
+  l'enregistrement** de la connexion (échec bloquant, pas un warning). La
+  méthode documentée est un Custom Script
+  (`arr/scripts/cross-seed-notify.sh`) qui lit
+  `$sonarr_download_id`/`$radarr_download_id` et appelle l'API lui-même.
+- **`useClientTorrents: true` requis dans `arr/cross-seed/config.js`** (faux
+  par défaut) — sans ça le webhook ne consulte jamais le client réel pour
   matcher l'infoHash reçu et échoue systématiquement (`Torrent client does
   not have any torrent with criteria`), même quand le torrent y est bien
-  présent (vérifié le 2026-07-22 en interrogeant directement l'API RPC de
-  `transmission-vpn`). Le job périodique "inject" ne rattrape pas ces
-  échecs non plus tant que ce réglage manque.
-- **`arr/cross-seed/config.js` : les URLs Torznab Prowlarr sont par ID
-  d'indexeur (`http://prowlarr:9696/<id>/api`), pas un endpoint agrégé** —
-  repéré le 2026-07-28 : la config pointait en dur sur l'ID 1 ("Torr9"),
-  supprimé depuis dans Prowlarr et remplacé par 4 indexeurs différents
-  (IDs 2-5). Résultat silencieux pendant 4 jours depuis le déploiement :
-  chaque webhook `cross-seed-notify.sh` déclenchait bien une recherche,
-  mais toujours contre un indexeur mort (`410 Gone` dans les logs), donc
-  0 résultat/0 injection à chaque fois — jamais d'erreur bloquante côté
-  Sonarr/Radarr, juste un `[webhook] Found 0 torrents` systématique.
-  Confirmé en comparant les IDs actifs à ceux synchronisés côté Sonarr
-  (`GET /api/v3/indexer`, champ `baseUrl` de chaque indexeur `(Prowlarr)`).
-  Si un indexeur est ajouté/supprimé/recréé dans Prowlarr, penser à
-  vérifier ses ID(s) actuel(s) (page Indexers, ou l'URL de chaque
-  indexeur `(Prowlarr)` côté Sonarr/Radarr) et à les refléter dans
-  `CROSS_SEED_INDEXER_IDS` (`arr/.env`, voir ci-dessous) — ces IDs ne sont
-  pas stables dans le temps et rien ne prévient d'un ID devenu obsolète
-  autrement qu'en lisant les logs cross-seed.
-  Ces IDs vivaient à l'origine en dur dans le tableau `torznab` de
-  `config.js` — déplacés dans `CROSS_SEED_INDEXER_IDS` (`arr/.env`) le
-  2026-07-29, repéré par l'utilisateur comme une valeur propre à ce
-  déploiement (quels indexeurs Prowlarr existent, dans quel ordre) qui
-  n'avait pas sa place dans un fichier versionné sur un repo public — même
-  principe que `TRACKER_ALIASES` (voir plus haut). `config.js` lit
-  désormais `process.env.CROSS_SEED_INDEXER_IDS.split(",")` au lieu d'un
-  tableau littéral. Nyaa.si (id 4, public, pas de ratio) exclu de cette
-  liste le même jour : cross-seeder un torrent déjà obtenu d'un tracker à
-  ratio vers un tracker public n'apporte aucun bénéfice de ratio (seul
-  l'inverse — un torrent Nyaa cross-seedé vers un tracker à ratio — a un
-  intérêt), et le retrait ne coupe que cette direction : un fichier
-  d'origine Nyaa.si continue d'être cross-seedé normalement vers les
-  indexeurs à ratio restants (`torznab` ne filtre que les cibles
-  cherchées, pas la source du fichier).
-- **`searchCadence` dans `arr/cross-seed/config.js` impose deux contraintes
-  de validation non documentées ailleurs que dans l'erreur elle-même**
-  (repéré le 2026-07-28 en l'ajoutant, boucle de crash immédiate sinon —
-  `restart: unless-stopped` redémarre en boucle sur une config invalide,
-  pas de dégradation silencieuse) : `excludeRecentSearch` doit être défini
-  et valoir au moins 3x `searchCadence` ; `excludeOlder` doit lui aussi
-  être défini et valoir 2 à 5x `excludeRecentSearch`. Valeurs retenues :
-  cadence 3 jours, `excludeRecentSearch` 9 jours, `excludeOlder` 30 jours —
-  la recherche périodique automatique ne couvre donc que les torrents vus
-  il y a moins de 30 jours (ajouts récents), jamais tout l'historique. Le
-  rattrapage de l'historique complet (au-delà de 30 jours) se fait à la
-  demande via `docker exec <container> cross-seed search --exclude-older
-  999999999 --exclude-recent-search 0` (bypass explicite des deux filtres),
-  fait une première fois le 2026-07-28 juste après le fix des IDs Torznab
-  ci-dessus — jamais automatisé (potentiellement des centaines de requêtes
-  aux indexeurs en une fois, à ne lancer qu'en connaissance de cause).
-- **`seerr` (image `ghcr.io/seerr-team/seerr`) ne chown pas lui-même son
-  volume `/app/config`** — contrairement aux images linuxserver.io (`arr/`),
-  il tourne nativement en UID 1000 sans étape root-puis-drop, donc si
-  `${DATA_ROOT}/.seerr/config` n'existe pas encore, Docker le crée en
-  `root:root` et le container crash en boucle (`EACCES` sur
-  `/app/config/logs`). Avant le premier `make up STACK=seerr` : `sudo chown
-  -R 1000:1000 ${DATA_ROOT}/.seerr` (1000 = PUID/PGID par défaut).
-- **Seerr ne détecte les films/séries déjà téléchargés par Sonarr/Radarr
-  comme "disponibles" qu'en scannant les bibliothèques Jellyfin** — pas en
-  interrogeant Sonarr/Radarr directement pour l'existant. Sans bibliothèque
-  Jellyfin pointant sur `${DATA_ROOT}/library` (montage ajouté le
-  2026-07-22 à `jellyfin/docker-compose.yml`, absent par défaut), tout
+  présent. Le job périodique « inject » ne rattrape pas ces échecs non plus.
+- **Les URLs Torznab Prowlarr sont par ID d'indexeur
+  (`http://prowlarr:9696/<id>/api`), et ces IDs ne sont pas stables.** La
+  config a pointé 4 jours sur un indexeur supprimé : chaque webhook
+  déclenchait bien une recherche, mais contre un indexeur mort (`410 Gone`),
+  donc 0 injection — jamais d'erreur bloquante, juste un `[webhook] Found 0
+  torrents` systématique. Si un indexeur est ajouté/supprimé/recréé dans
+  Prowlarr, vérifier les IDs actuels et les refléter dans
+  `CROSS_SEED_INDEXER_IDS` (`arr/.env`, pas en dur dans `config.js` : quels
+  indexeurs existent et dans quel ordre est propre à ce déploiement). **Rien
+  ne prévient d'un ID devenu obsolète autrement qu'en lisant les logs
+  cross-seed.**
+  Nyaa.si est exclu de cette liste : cross-seeder un torrent déjà obtenu d'un
+  tracker à ratio vers un tracker public n'apporte aucun bénéfice (seul
+  l'inverse en a un), et le retrait ne coupe que cette direction — un fichier
+  d'origine Nyaa.si continue d'être cross-seedé vers les indexeurs à ratio.
+- **`searchCadence` impose deux contraintes de validation** non documentées
+  ailleurs que dans l'erreur elle-même, et une config invalide fait boucler le
+  conteneur en crash (`restart: unless-stopped`) : `excludeRecentSearch` doit
+  valoir au moins 3× `searchCadence`, et `excludeOlder` de 2 à 5×
+  `excludeRecentSearch`. Valeurs retenues : 3 j / 9 j / 30 j — la recherche
+  périodique ne couvre donc **que les torrents vus il y a moins de 30 jours**.
+  Le rattrapage complet se fait à la demande via `docker exec <container>
+  cross-seed search --exclude-older 999999999 --exclude-recent-search 0`,
+  **jamais automatisé** (potentiellement des centaines de requêtes d'un coup).
+
+### Seerr
+
+- **`seerr` ne chown pas lui-même son volume `/app/config`** — contrairement
+  aux images linuxserver.io, il tourne nativement en UID 1000 sans étape
+  root-puis-drop, donc si `${DATA_ROOT}/.seerr/config` n'existe pas encore,
+  Docker le crée en `root:root` et le container crash en boucle (`EACCES`).
+  Avant le premier `make up STACK=seerr` :
+  `sudo chown -R 1000:1000 ${DATA_ROOT}/.seerr`.
+- **Seerr ne détecte les films/séries déjà téléchargés qu'en scannant les
+  bibliothèques Jellyfin**, pas en interrogeant Sonarr/Radarr pour l'existant.
+  Sans bibliothèque Jellyfin pointant sur `${DATA_ROOT}/library`, tout
   apparaît comme non disponible et Seerr propose de re-demander du contenu
-  déjà présent. Fix : ajouter les bibliothèques Jellyfin (`/library/film` en
-  type Films, `/library/series` en type Séries — noms de dossiers réels,
-  pas de traduction anglaise), puis lancer manuellement le job "Jellyfin
-  Full Library Scan" côté Seerr (Settings → Jobs & Cache) au lieu d'attendre
-  le cron périodique.
-- **Un bind-mount ne peut pas être monté sous un point de montage déjà
-  `:ro`** — Docker ne peut pas créer le mountpoint interne dans un parent
-  en lecture seule (`mkdirat ... read-only file system`). Déjà rencontré
-  sur `arr/cross-seed` (`config.js` vs volume `/links`, voir son compose
-  file) et à nouveau le 2026-07-23 sur `dashboard/` (voulait monter
-  `./assets` sous `./html:...:ro`) — solution : un seul mount, le script
-  de génération (`scripts/generate-dashboard.py`) copie les logos dans le
-  dossier généré plutôt que de les monter séparément.
-- **Deux bind-mounts Docker séparés du même disque physique n'autorisent
-  pas les hardlinks entre eux**, même si `stat` rapporte le même `st_dev`
-  des deux côtés — `link()` refuse avec `Cross-device link` dès que
-  source et destination sont sur deux montages distincts, peu importe
-  que ce soit littéralement la même partition sous-jacente (confirmé le
-  2026-07-23 : `sonarr`/`radarr` montaient `${DATA_ROOT}/.transmission/data:/data`
-  et `${DATA_ROOT}/library:/library` séparément — `copyUsingHardlinks:
-  true` était bien actif, mais chaque import retombait silencieusement
-  sur une copie complète, doublant l'espace disque de tout ce qui était
-  déjà importé, ~185 Go récupérés en corrigeant). Fix : un seul mount
-  `${DATA_ROOT}:/data_root` dans `arr/docker-compose.yml` pour sonarr et
-  radarr (au lieu de deux mounts séparés), avec remote path mapping
-  (host `transmission-vpn`, `/data/completed/` → `/data_root/.transmission/data/completed/`)
-  et root folders/chemins des séries et films existants repointés sur
-  `/data_root/library/...` via l'API. Même piège sur `arr/cross-seed`
-  (`dataDirs`/`linkDirs` montés séparément dans l'ancien
-  `docker-compose.yml`) corrigé le 2026-07-23 : contrairement à
-  Sonarr/Radarr, cross-seed n'a pas de "remote path mapping" — il compare
-  tel quel le chemin renvoyé par le client torrent (`/data/completed/...`)
-  à son propre `dataDirs`, donc impossible de renommer ce mount comme pour
-  sonarr/radarr sans casser le matching. Fix : garder le même montage
-  `${DATA_ROOT}/.transmission/data:/data` (comme avant, mais sans `:ro`)
-  et faire pointer `linkDirs` vers un sous-dossier de ce même mount
-  (`/data/.cross-seed-links`, host
-  `${DATA_ROOT}/.transmission/data/.cross-seed-links`) au lieu de l'ancien
-  volume séparé `.arr/cross-seed/links` (supprimé, dossier vide au moment
-  du fix).
-- **Connexion Sonarr/Radarr → Jellyfin ("Emby/Jellyfin" notification,
-  ajoutée le 2026-07-24 via l'API, pas les UI — pas dans un fichier
-  versionné) nécessite `mapFrom`/`mapTo`**, sinon le refresh ciblé déclenché
-  sur import/upgrade ne trouve pas le bon dossier côté Jellyfin : Sonarr/
-  Radarr voient la bibliothèque sous `/data_root/library/...` (même mount
-  unique que le fix hardlink ci-dessus), Jellyfin la voit sous
-  `/library/...` (son propre mount, `jellyfin/docker-compose.yml`).
-  `mapFrom=/data_root/library` / `mapTo=/library` dans les deux connexions.
-  Cible `jellyfin:8096` en direct (réseau `traefik-public` partagé, pas de
-  passage par Traefik). Clé API réutilisée depuis celle déjà générée pour
-  Seerr plutôt qu'une clé dédiée à Sonarr/Radarr — voir ARCHITECTURE.md.
-- **`scripts/backup.sh` dumpait silencieusement la mauvaise base Postgres
-  depuis le début** (repéré le 2026-07-24 en testant `make restore` pour de
-  vrai — jusque-là jamais exercé) : `pg_dump -U "$POSTGRES_USER"
-  "${POSTGRES_DB:-$POSTGRES_USER}"` retombe sur `$POSTGRES_USER` ("postgres",
-  le superuser d'amorçage de l'image officielle) quand `POSTGRES_DB` n'est
-  pas définie — et `nextcloud/.env` ne définit que `POSTGRES_USER`/
-  `PASSWORD`, jamais `POSTGRES_DB`. Toutes les sauvegardes précédentes
-  avaient donc un `nextcloud-db.sql` de 26 lignes (juste l'en-tête pg_dump,
-  0 `COPY`) au lieu du vrai dump (~1,57M lignes, 279 tables) — la base
-  réelle s'appelle `nextcloud` (codée en dur via `POSTGRES_DB=nextcloud`
-  sur le service `app`, `nextcloud/docker-compose.yml`), pas
-  `$POSTGRES_USER`. Fix dans `backup.sh` et dans les instructions
-  affichées par `restore.sh` : fallback `${POSTGRES_DB:-nextcloud}`.
-  Validé par un restore réel + import du dump dans une base Postgres
-  temporaire (`restore_test`, supprimée après coup) : 279/279 tables,
-  compte de lignes identique à la base live sur une table témoin
-  (`oc_users`). Retenir la leçon plus généralement : un chemin de
-  restauration jamais exercé peut cacher ce genre de bug arbitrairement
-  longtemps — voir la limite `${VAR:-default}` d'un fallback silencieux
-  quand `VAR` n'est jamais définie nulle part.
-- **Un `os.stat()` nu sur un fichier `library/`/`.transmission/data/` ne
-  suit pas correctement un symlink cross-seed** (`torrent-cleanup.py`,
-  repéré le 2026-07-28 en ajoutant le marqueur `'M'` ci-dessus) — cross-seed
-  (`linkType` symlink par défaut, `arr/cross-seed/config.js`) crée ses liens
-  dans `.cross-seed-links/<tracker>/...` en pointant vers le chemin **tel
-  que vu par le conteneur** (`/data/completed/...`), pas le chemin hôte où
-  tourne ce script Python. `os.stat()` suit le lien avec la racine de
-  l'hôte, qui n'a pas de `/data` : le fichier semble absent alors qu'il
-  existe très bien à l'intérieur des conteneurs — 91 faux positifs constatés
-  sur ~230 torrents (tous les cross-seeds fraîchement injectés) avant le
-  fix. Solution : `resolved_stat()` détecte le symlink via
-  `os.path.islink()`, lit sa cible via `os.readlink()`, et si elle commence
-  par `/data` la traduit en chemin hôte avec la même fonction
-  `container_path_to_host()` que le reste du script avant de faire le vrai
-  `os.stat()`. Le même bug affectait aussi silencieusement le marqueur `'L'`
-  et `find_library_matches()` (sous-évaluaient les correspondances
-  library/ pour tout torrent cross-seed) — corrigés avec le même helper.
-- **La résolution nom-de-tracker (`resolve_tracker_name`, dupliquée dans
-  `torrent-cleanup.py` et `scripts/transmission-stats.py`, voir ci-dessus)
-  échouait sur YggReborn** (repéré le 2026-07-28) — le domaine d'annonce
-  BitTorrent réel (`tracker.yggreborn.org`) et celui listé par Prowlarr
-  (`indexerUrls: www.yggreborn.org`) sont deux sous-domaines **frères** du
-  même domaine de base (`yggreborn.org`), pas l'un suffixe de l'autre : un
+  déjà présent. Après ajout, lancer manuellement « Jellyfin Full Library
+  Scan » au lieu d'attendre le cron.
+
+### Résolution des trackers (`core.py` + `transmission-stats.py`)
+
+La logique est **dupliquée** dans les deux consommateurs plutôt que
+factorisée — tout correctif doit être appliqué des deux côtés.
+
+- **Un `os.stat()` nu sur un fichier `library/`/`.transmission/data/` ne suit
+  pas correctement un symlink cross-seed.** cross-seed (`linkType` symlink
+  par défaut) crée ses liens en pointant vers le chemin **tel que vu par le
+  conteneur** (`/data/completed/...`), pas le chemin hôte. `os.stat()` suit le
+  lien avec la racine de l'hôte, qui n'a pas de `/data` : le fichier semble
+  absent alors qu'il existe très bien dans le conteneur — 91 faux positifs sur
+  ~230 torrents avant le fix, et le même bug sous-évaluait silencieusement les
+  correspondances `library/`. Fix : `resolved_stat()`, qui détecte le symlink,
+  lit sa cible et la traduit en chemin hôte avant le vrai `os.stat()`.
+- **Comparer les domaines par leur base, pas par suffixe.** Le domaine
+  d'annonce réel (`tracker.yggreborn.org`) et celui listé par Prowlarr
+  (`www.yggreborn.org`) sont deux sous-domaines **frères** — un
   `hostname.endswith("." + domain)` nu ne matche jamais. Fix : `base_domain()`
-  (2 derniers labels du hostname, ex. `www.yggreborn.org` → `yggreborn.org`)
-  appliqué des deux côtés avant de comparer, dans les deux scripts.
-  Nyaa.si n'a lui aucun tracker qui lui soit propre — seulement des
-  trackers publics génériques (`nyaa.tracker.wf`, `open.stealth.si`,
-  `tracker.opentrackr.org`, `exodus.desync.com`, `tracker.torrent.eu.org`),
-  aucune info Prowlarr ne permet de les rattacher à Nyaa spécifiquement.
-  Confirmé par l'utilisateur le 2026-07-28 que ce bundle exact de 5 domaines
-  est bien celui de Nyaa.si (vérifié : toujours les 5 ensemble, jamais
-  mélangés à un torrent d'un autre indexeur dans cette bibliothèque) — ajouté
-  en alias, matché en exact et non via `base_domain()` : `tracker.torrent.
-  eu.org` réduirait à `eu.org`, un vrai domaine public partagé par
-  d'innombrables sites sans rapport, un faux positif bien pire que
-  l'inverse. Si un futur torrent d'un autre indexeur ajoute l'un de ces
-  trackers publics en complément du sien (pratique courante pour la
-  redondance), il serait aussi étiqueté "Nyaa.si" à tort — accepté en
-  connaissance de cause, à revoir si ça arrive. Ces alias vivent dans
-  `TRACKER_ALIASES` (`arr/.env`, voir `.env.example`), pas en dur dans le
-  code des scripts (premier essai le 2026-07-28, corrigé la même journée
-  suite à une remarque de l'utilisateur) : quels trackers publics un
-  indexeur embarque est une donnée propre à ce déploiement, pas une
-  décision d'architecture qui a sa place dans un script versionné sur un
-  repo public — même principe que les autres valeurs par-déploiement déjà
-  en `.env`/`.env.shared` (voir plus haut).
-  Piège annexe repéré en ajoutant cet alias : `transmission-stats.py`
-  sommait `uploadedEver`/`downloadedEver` une fois par **host** brut, pas
-  par nom résolu — un torrent Nyaa comptait donc son volume 5 fois (une
-  par tracker du bundle) une fois les 5 hosts collapsés sous le même nom,
-  gonflant `uploaded`/`downloaded` d'un facteur 5 dans la section
-  Transmission du dashboard (le ratio affiché n'était pas faussé, par
-  coïncidence : numérateur et dénominateur gonflés du même facteur). Fixé
-  en dédupliquant par nom résolu avant d'accumuler. Même dédup appliquée à
-  `tracker_display()` dans `torrent-cleanup.py` (affichait sinon
-  `"Nyaa.si,Nyaa.si,Nyaa.si,Nyaa.si,Nyaa.si"` dans la colonne TRACKER).
-  **Un tracker non rattachable à un indexeur Prowlarr est désormais traité à
-  part des indexeurs configurés** (2026-08-02, dans les deux consommateurs) :
-  `resolve_tracker_name()` renvoie `(nom, officiel)` au lieu du seul nom,
-  `officiel=False` signifiant "retombé sur le hostname brut" (tracker public
-  embarqué dans le `.torrent`, pas un indexeur qu'on interroge nous-mêmes).
-  Déclencheur : une vieille release YggReborn (post de janvier, grabbée le
-  2026-08-02) embarquait **24 hosts d'annonce** — son tracker plus une
-  vingtaine de trackers publics de secours, dont des IPs nues. Conséquences
-  côté affichage, différentes par frontend :
-  - Dashboard (`tracker-card.html`) : les lignes non officielles restent dans
-    le HTML généré mais sont masquées par CSS (`.tracker-row-other`), un
-    switch "Tous les trackers" les révèle (classe `show-all-trackers`, état
-    en `localStorage` — même mécanisme et même raison que le switch
-    Monitoring : la page est régénérée par cron toutes les 5 min). Filtrage
-    côté client, pas côté Python : la donnée reste dans le JSON de
-    `transmission-stats.py` (champ `official` par entrée).
-  - `clearr` (colonne TRACKER) : tous les non-officiels d'un même torrent
-    sont repliés sous un seul libellé `"Autre"` (`OTHER_TRACKER_LABEL`), les
-    hostnames bruts partant dans un tooltip `title=` natif — **pas** un
-    tooltip Bootstrap, qui aurait exigé Popper (non vendoré, voir plus haut).
-    `tracker_display()` renvoie donc `(libellé, hostnames_non_officiels)`.
-    Bénéficie aussi à la TUI, qui hérite du libellé court (sa colonne
-    tronquait déjà à 19 caractères, donc jamais cassée — c'était bien le web
-    le cas à corriger).
-- **Supprimer un episodefile via l'API Sonarr (`DELETE
-  /api/v3/episodefile/{id}`) déclenche quasi instantanément la recherche
-  automatique interne de Sonarr pour l'épisode redevenu "manquant"** —
-  rencontré le 2026-07-29 sur `THE GHOST IN THE SHELL` (id série 21) :
-  l'intention était de supprimer les fichiers `[Reza] ... v2/v3` (bloqués en
-  upgrade par la comparaison de révision, voir plus haut) puis grabber
-  manuellement une release VOSTFR précise (audio japonais + sous-titres FR,
-  sans doublage) via `POST /api/v3/release`. Sonarr a grabé de lui-même une
-  release MULTi (Tsundere-Raws, doublage français inclus, déjà scorée plus
-  haut que VOSTFR sur le profil par défaut — voir plus haut) dans la fenêtre
-  de quelques secondes entre la suppression et la tentative de grab manuel,
-  avant même qu'une recherche puisse être relancée pour cibler spécifiquement
-  la release voulue. Sur ce cas précis, l'issue (doublage FR) a finalement
-  été acceptée par l'utilisateur après coup, mais retenir pour la prochaine
-  fois : supprimer un fichier existant pour forcer un remplacement laisse une
-  fenêtre de course avec la recherche automatique de Sonarr, qui peut
-  grabber autre chose que prévu si le profil de la série préfère déjà un
-  autre format. Pas de parade fiable identifiée encore (voir aussi le piège
-  ci-dessus sur le cache de release qui expire trop vite pour enchaîner
-  recherche fraîche + grab manuel de façon fiable).
-- **Le cache de résultats de `GET /api/v3/release?episodeId=...` expire vite
-  côté Sonarr** — rencontré le 2026-07-29, même incident que ci-dessus : un
-  `guid` récupéré par un appel `GET /api/v3/release` précédent peut déjà être
-  invalide au moment du `POST /api/v3/release` (grab), avec l'erreur
-  `"Couldn't find requested release in cache, try searching again"` — a
-  fortiori si une recherche automatique de Sonarr (voir piège ci-dessus)
-  s'est intercalée entre les deux et a invalidé/remplacé le cache. Le grab
-  manuel doit suivre la recherche GET dans la foulée, sans appel
-  intermédiaire qui laisse le temps à autre chose de rafraîchir le cache.
-- **Le paramètre `seriesId` de `GET /api/v3/history` n'est pas fiable** —
-  vérifié le 2026-07-29 en testant le skill `anime-vf` sur One Punch Man :
-  la réponse contenait des entrées d'autres séries (Jujutsu Kaisen) malgré
-  le filtre. Toujours filtrer côté client sur `record["seriesId"]`, jamais
-  faire confiance au filtrage serveur de cet endpoint. Voir aussi
-  `eventType=1` (entier) plutôt que la chaîne `"grabbed"`, qui renvoie une
-  réponse vide dans nos tests.
-- **`cutoffFormatScore: 10000` (valeur par défaut des guides TRaSH, "upgrade
-  jusqu'à la meilleure release possible") peut provoquer des re-téléchargements
-  en boucle d'une release déjà possédée** — diagnostiqué le 2026-07-29 sur
-  `THE GHOST IN THE SHELL` S01E04 (profil Sonarr `Anime (Fansub)`, id 9) :
-  grabbé 3 fois en une journée, confirmé via `GET /api/v3/history` que c'était
-  littéralement le même magnet/infoHash (`nyaa.si/view/2138643`) à chaque
-  fois, pas 3 releases concurrentes. Mécanisme : les custom formats
-  `VOSTFR`/`SUBFRENCH` (`ReleaseTitleSpecification`) matchent sur le suffixe
-  entre parenthèses que certains groupes (ex. Tsundere-Raws) ajoutent au titre
-  du post Nyaa.si (`(VF, FRENCH, SUBFRENCH, VOSTFR, ...)`) — un suffixe absent
-  du nom réel du fichier `.mkv` dans le torrent. Au grab, la release score 150
-  (VOSTFR détecté dans le titre complet) ; après import, le fichier
-  ré-évalué ne score plus que 100 (pas de "VOSTFR" dans le nom de fichier) →
-  la même release déjà possédée a l'air d'être un upgrade de +50 à la
-  prochaine recherche → regrab → réimport → score à nouveau tronqué → boucle.
-  Avec `cutoffFormatScore=10000` (max réellement atteignable sur ce profil :
-  155) l'épisode ne sort jamais de la liste "cutoff unmet" et reste
-  éligible à chaque RSS sync (~15 min) / recherche périodique — cause
-  probable aussi du quota C411 tapé le 2026-07-28 ([[project_c411_quota_2026-07-28]]),
-  la plupart des profils étant dans le même état (recherches perpétuelles qui
-  ne trouvent en général rien de mieux, mais consomment du quota indexeur).
-  Fix appliqué le 2026-07-29 : `cutoffFormatScore` abaissé à un plafond
-  réaliste (somme des custom formats à score positif réellement cumulables
-  sur une même release, pas la somme brute de `formatItems` qui compte aussi
-  des alternatives mutuellement exclusives comme les plateformes de
-  streaming) sur les 5 profils qui l'avaient à 10000 : `WEB-1080p`→1782,
-  `WEB-2160p (Combined)`→4000, `Anime (Fansub)`→155, `Anime (Fansub) VF`→335,
-  `Anime (Fansub) VOSTFR`→105. Fait via API directe pour les 4 profils non
-  gérés par recyclarr (mêmes conventions que les profils Anime, voir plus
-  haut) ; pour `WEB-2160p (Combined)` (géré par `arr/recyclarr/recyclarr.yml`,
-  resynchronisé par le cron interne `@daily` du conteneur recyclarr, cf.
-  commentaire dans son `docker-compose.yml`), un simple appel API aurait été
-  écrasé au sync suivant — passé plutôt par la clé `upgrade.until_score` du
-  schéma de config recyclarr (`quality_profiles:`, confirmé via
-  `https://schemas.recyclarr.dev/latest/config/quality-profiles.json`),
-  validé avec `recyclarr sync --preview` avant application réelle.
-  **Ce fix seul ne suffisait pas** — constaté le 2026-08-02 sur `BLACK TORCH`
-  S01E05 (5 grabs, 4 imports en 2h le 2026-08-01), même signature sur
-  Chainsmoker Cat / Sparks of Tomorrow / Daemons of the Shadow Realm / Ghost
-  in the Shell (2 grabs à ~15 min d'écart, l'intervalle du RSS sync ; 8 grabs
-  strictement redondants sur 280 dans l'historique). Abaisser
-  `cutoffFormatScore` ne touche que le *plafond* ; le moteur de la boucle est
-  l'écart entre le score annoncé au grab et le score réévalué après import, et
-  155 restait au-dessus du maximum qu'un *fichier* peut atteindre sur ce
-  profil (100 pour une release MULTi, `VOSTFR` ne matchant jamais le nom du
-  `.mkv`) — la porte de l'upgrade ne se refermait donc jamais. Correctif de
-  fond appliqué le 2026-08-02, en deux volets :
-  - **Lookahead « pas entre parenthèses » `(?![^()]*\))`** ajouté aux regex
-    qui matchaient le suffixe `(VF, FRENCH, SUBFRENCH, VOSTFR)` des posts
-    Tsundere-Raws. Validé avant application sur les 193 titres réels de
-    `GET /api/v3/history` : 31 faux positifs supprimés, 81 vrais
-    VOSTFR/SUBFRENCH conservés ; CF `MULTi` vérifié non concerné (0 titre où
-    il ne matche qu'entre parenthèses), donc laissé tel quel.
-  - **`Anime (Fansub)` : `cutoffFormatScore` 155 → 100**, le vrai maximum
-    atteignable par un fichier importé sur ce profil — filet pour tout futur
-    suffixe exotique que le lookahead ne couvrirait pas.
-
-  **Ce lookahead seul ne suffisait pas non plus : les parenthèses imbriquées le
-  contournent** (trouvé le 2026-08-07 en basculant `THE GHOST IN THE SHELL`
-  S01E05 sur une release AV1). `(?![^()]*\))` demande « pas de `)` devant moi
-  sans `(` avant elle » — or Tsundere-Raws met des titres alternatifs
-  parenthésés DANS son suffixe : `(VF, FRENCH, SUBFRENCH, VOSTFR, Koukaku
-  Kidoutai (2026), Koukaku Kidoutai (TV))`. Le `(` de `(2026)` arrive avant la
-  première `)`, `[^()]*\)` échoue, le lookahead négatif réussit, et le terme
-  matche alors qu'il est bien dans le suffixe. Constaté en direct : grab annoncé
-  à **90**, fichier importé réévalué à **40** — les 50 d'écart étaient
-  exactement `VOSTFR (hors suffixe)`. Toute release dont le suffixe porte un
-  titre alternatif entre parenthèses passait donc à travers le correctif du
-  2026-08-02.
-  Fix : **ajout d'un lookbehind de longueur variable `(?<!\([^)]*)`** (« pas
-  précédé d'une `(` encore ouverte ») aux 3 regex de `arr/profiles/
-  sonarr-anime.json` — `FRENCH`, `VOSTFR`, `SUBFRENCH`. Les deux assertions se
-  complètent : le lookbehind attrape le terme placé AVANT le groupe imbriqué (le
-  cas réel), le lookahead celui placé APRÈS. .NET accepte un lookbehind de
-  longueur variable (Python `re` non — utiliser le module `regex` pour tout test
-  hors Sonarr).
-  Validé sur **688 titres réels** (483 `sourceTitle` de `/api/v3/history` + 371
-  noms de fichiers/`sceneName` de `/api/v3/episodefile`, 272 avec parenthèses,
-  80 à parenthèses multiples), vérité terrain calculée par **comptage réel de
-  profondeur de parenthèses** et non par une autre regex : **0 faux positif, 0
-  faux négatif** après, contre 6 faux positifs avant par terme ; 195 vrais
-  VOSTFR, 12 SUBFRENCH et 29 FRENCH tous conservés. Croisé .NET (`/api/v3/parse`
-  sur les 688 titres, via 3 CF jetables `ZZTEST … nested` supprimés après) et
-  Python `regex` : **0 désaccord**. Résultat final : le titre suffixé et le nom
-  de fichier scorent tous les deux **40** sur `Anime (Fansub) VOSTFR` —
-  l'asymétrie grab/fichier, moteur de la boucle, est refermée.
-  Deux limites connues, laissées en l'état : un terme entouré de groupes fermés
-  des DEUX côtés à l'intérieur des mêmes parenthèses
-  (`(Alt (2026) VOSTFR (TV) fin)`) passe encore — aucun schéma de nommage réel
-  ne fait ça ; et un titre à parenthèses non appariées ne matche pas, ce qui
-  était déjà vrai avant ce fix.
-
-  Piège structurant rencontré en l'appliquant : **le CF `VOSTFR` est géré par
-  recyclarr** (`trash_id 07a32f77690263bb9fda1842db7e273f`, référencé deux
-  fois dans `recyclarr.yml` — `custom_formats` pour son score sur
-  `WEB-2160p (Combined)` et `custom_format_groups` via `[Optional] French
-  Audio Version`), et recyclarr resynchronise la **définition** du CF, pas
-  seulement son score : un `PUT /api/v3/customformat/49` est bien appliqué
-  mais serait réécrit au sync quotidien suivant. Repéré uniquement parce que
-  `recyclarr sync --preview` a été relancé *après* le PUT et affichait
-  `Update │ VOSTFR` (réflexe à garder pour tout changement API sur un CF :
-  vérifier qu'il n'est pas dans un `trash_ids` avant de supposer qu'il tient).
-  Solution retenue plutôt que de sortir `VOSTFR` de `recyclarr.yml` (qui
-  aurait aussi fait perdre sa création automatique sur un déploiement neuf,
-  donc un recul de reproductibilité) : un **CF distinct que nous possédons**,
-  `VOSTFR (hors suffixe)` (id 51), portant les regex corrigées — même schéma
-  que le CF `FRENCH` (id 50, créé à la main le 2026-07-28, confirmé absent du
-  diff recyclarr donc modifiable directement, ce qui a été fait). Le CF
-  `VOSTFR` du guide reste intact et scoré **0** sur les profils concernés, le
-  nouveau CF reprenant son score : `Anime (Fansub)` (9) et
-  `Anime (Fansub) VOSTFR` (11), les deux seuls profils anime où `VOSTFR` est
-  positif donc où `grab > fichier` est possible. Vérifié après coup :
-  `recyclarr sync --preview` ressort `No changes` sur Custom Format ET Quality
-  Profile, et `GET /api/v3/parse` score le titre à suffixe 100 (= le score du
-  fichier) au lieu de 150.
-  Deux trous connus laissés en l'état, délibérément : `Anime (Fansub) VF` (10)
-  a `VOSTFR` à **-100**, donc le suffixe fait scorer le grab *plus bas* que le
-  fichier — asymétrie inverse, incapable de boucler (son vrai risque venait du
-  CF `FRENCH`, corrigé) ; `WEB-2160p (Combined)` (8) a `VOSTFR` à +100 et est
-  géré par recyclarr, mais le suffixe est une pratique Tsundere-Raws (anime
-  1080p) qui ne croise pas ce profil 2160p — à revoir si un regrab en boucle y
-  apparaît.
-
-  **Tous les `cutoffFormatScore` repris le 2026-08-02** en généralisant le
-  raisonnement : un cutoff n'a de sens que s'il est (a) atteignable et (b)
-  posé là où l'objectif du profil est rempli. Le calcul de 2026-07-29
-  additionnait naïvement les CF à score positif, sans voir que beaucoup sont
-  **mutuellement exclusifs** (un seul tier, une seule plateforme de streaming,
-  un seul codec vidéo, un seul format audio, une seule résolution, un seul
-  niveau de repack — les specs `negate` du guide les enchaînent) : plusieurs
-  valeurs "réalistes" étaient donc encore inatteignables. Maximums réels
-  recalculés en tenant compte de ces groupes :
-  - `Anime (Fansub) VF` (10) : 335 → **200** (= score `FRENCH`, son CF
-    déterminant ; max réel 325, l'ancien 335 comptait AV1 *et* x265).
-  - `Anime (Fansub) VOSTFR` (11) : 105 → **20** (max réel 95). Pas 50
-    (= score `VOSTFR`) comme le raisonnement "CF déterminant" le voudrait :
-    20 = score `MULTi` sur ce profil, choisi pour que les 14 séries migrées
-    depuis `Anime (Fansub)` (voir ci-dessous) ne repartent pas en masse en
-    recherche. Contrepartie assumée : un fichier MULTi déjà en place bloque
-    l'upgrade vers un VOSTFR, la préférence VOSTFR ne joue donc plus qu'au
-    moment du grab, quand les deux sont proposés dans la même recherche.
-  - `WEB-2160p (Combined)` (8) : 4000 → **2000** (max réel 3907).
-  - Radarr `[SQP] SQP-1 WEB (2160p)` : 10000 → **1800** (max réel 4562) —
-    jamais couvert par le correctif de 2026-07-29, qui n'avait touché que
-    Sonarr. Ajouté dans `recyclarr.yml` (le champ n'y était pas du tout,
-    d'où le défaut du guide).
-    Piège rencontré en l'ajoutant : dès qu'un profil fournit une liste
-    `qualities:` explicite (le cas depuis l'activation HDTV/DVD du
-    2026-08-01), recyclarr **exige** `until_quality` en plus de
-    `until_score`, sinon le sync échoue en validation. Repris tel quel du
-    cutoff qualité déjà en place (`Bluray|WEB-2160p`) pour ne rien changer
-    d'autre que le score.
-  Pour les deux profils généralistes (8 et Radarr 7), pas de CF déterminant :
-  la valeur est calée sur le haut de la distribution réellement observée
-  (Sonarr 8 : 43 fichiers, médiane 250, max 3405 ; Radarr : 19 fichiers,
-  médiane 255, max 2105). Ces distributions sont **bimodales** selon qu'une
-  release porte ou non un tag de groupe "Tier" (+1600 à 1700), largement
-  absent des trackers FR — même constat qui avait fait remettre
-  `min_format_score` à 0. Viser le maximum aurait maintenu des recherches
-  perpétuelles (donc du quota indexeur) pour la majorité des titres, pour
-  lesquels aucune release Tier n'existera jamais.
-
-- **Profil Sonarr `WEB-1080p` supprimé** (2026-08-02, demandé) — assigné à
-  aucune série, absent de `recyclarr.yml` comme de `arr/profiles/`, donc
-  jamais recréé (vérifié par un cycle `recyclarr-sync` +
-  `apply-arr-overrides.py` complet après suppression). Ses 37 scores de
-  custom format et son `cutoffFormatScore=1782` n'avaient jamais été
-  reproductibles depuis le repo — c'était le seul trou identifié en
-  inventoriant les profils ce jour-là, refermé en supprimant le profil
-  plutôt qu'en le versionnant. La mention `WEB-1080p`→1782 plus haut est un
-  reliquat historique du correctif de 2026-07-29, le profil n'existe plus.
-  Profils Sonarr restants : les 6 par défaut (aucun utilisé),
-  `WEB-2160p (Combined)`, `Anime (Fansub) VF`, `Anime (Fansub) VOSTFR`.
-
-- **Profil Sonarr `Anime (Fansub)` supprimé** (2026-08-02, demandé) : ses 14
-  séries (dont One Piece, 23 saisons — 133 épisodes au total) déplacées vers
-  `Anime (Fansub) VOSTFR` via `PUT /api/v3/series/editor`, puis
-  `DELETE /api/v3/qualityprofile/9`. Ordre imposé : Sonarr refuse de
-  supprimer un profil encore assigné, et il fallait d'abord le retirer de
-  `arr/profiles/sonarr-anime.json` sous peine de le voir recréé au cron
-  suivant par `apply-arr-overrides.py`. Impact chiffré avant d'agir (c'est
-  ce qui a fixé le cutoff à 20 plutôt que 50) : à 50, 70 des 133 fichiers
-  repassaient sous le cutoff ; à 20, seulement 17 — ceux qui n'ont ni
-  `MULTi` ni `VOSTFR` (One Piece ×10, Dorohedoro ×4, Smoking Behind… ×2,
-  BLACK TORCH ×1), donc légitimement à améliorer.
-  **Piège de méthode** : `GET /api/v3/wanted/cutoff` ne reflète **que** le
-  cutoff *qualité*, pas `cutoffFormatScore` — un épisode dont le fichier est
-  à la bonne qualité mais sous le score n'y apparaît pas, alors qu'il reste
-  bel et bien éligible à l'upgrade. Ne pas s'en servir pour estimer l'ampleur
-  d'une vague de re-recherche : recalculer les scores fichier par fichier
-  (`GET /api/v3/episodefile`, champ `customFormats`, croisé avec les
-  `formatItems` du profil cible), ou vérifier au cas par cas avec
-  `GET /api/v3/release` dont les `rejections` mentionnent explicitement
-  `Existing file meets cutoff`.
-- **Un bind-mount Docker d'un fichier unique (pas un dossier) peut rester
-  figé sur l'ancien inode si le fichier hôte est remplacé plutôt que modifié
-  en place** — repéré le 2026-07-29 en éditant `arr/recyclarr/recyclarr.yml`
-  (monté `:ro` dans `recyclarr`) : le conteneur continuait de lire l'ancien
-  contenu après l'édition (`docker exec ... cat` ne montrait pas le
-  changement), alors que `docker inspect` confirmait le bon chemin hôte monté.
-  Cause : l'inode du fichier avait changé sur l'hôte (`stat -c '%i'` différent
-  côté hôte et côté conteneur) — un bind-mount de fichier suit l'inode capturé
-  au démarrage du conteneur, pas le chemin. Un simple `docker restart` du
-  conteneur suffit à faire relire le fichier à jour ; ne pas conclure trop
-  vite qu'un changement de config n'a "pas pris" sans vérifier ça d'abord.
+  (2 derniers labels) appliqué des deux côtés.
+- **Nyaa.si n'a aucun tracker qui lui soit propre**, seulement des trackers
+  publics génériques — aucune info Prowlarr ne permet de les rattacher. Ils
+  sont donc déclarés en alias dans `TRACKER_ALIASES` (`arr/.env`, pas en dur
+  dans le code : quels trackers publics un indexeur embarque est propre à ce
+  déploiement) et matchés **en exact, pas via `base_domain()`** —
+  `tracker.torrent.eu.org` réduirait à `eu.org`, un domaine public partagé par
+  d'innombrables sites sans rapport. Faux positif accepté en connaissance de
+  cause : un torrent d'un autre indexeur qui ajouterait l'un de ces trackers
+  en secours serait étiqueté « Nyaa.si » à tort.
+- **Dédupliquer par nom résolu avant d'accumuler.** `transmission-stats.py`
+  sommait `uploadedEver`/`downloadedEver` une fois par **host brut** : un
+  torrent Nyaa comptait son volume 5 fois une fois les 5 hosts collapsés sous
+  le même nom, gonflant les totaux d'un facteur 5 (le ratio n'était pas faussé
+  par coïncidence, numérateur et dénominateur gonflés pareil). Même dédup
+  nécessaire à l'affichage, qui sortait sinon `"Nyaa.si,Nyaa.si,..."`.
+- **Un tracker non rattachable à un indexeur Prowlarr est traité à part** :
+  `resolve_tracker_name()` renvoie `(nom, officiel)`, `officiel=False`
+  signifiant « retombé sur le hostname brut » (tracker public embarqué dans le
+  `.torrent`, pas un indexeur qu'on interroge). Déclencheur : une release avec
+  **24 hosts d'annonce**, dont des IPs nues. Côté dashboard les lignes non
+  officielles sont masquées par CSS et révélées par un switch (filtrage côté
+  client, la donnée reste dans le JSON) ; côté clearr elles sont repliées sous
+  un seul libellé « Autre » (`OTHER_TRACKER_LABEL`) avec les hostnames dans un
+  `title=` natif.
 
 ## Repo
 
 ```
 server/
-├── .env.shared(.example)     # PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT — réel gitignoré, .example versionné
+├── .env.shared(.example)     # PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT/LAN_CIDR/DNS_* — réel gitignoré
 ├── Makefile                  # `make help` (cible par défaut) liste tout — voir plus bas
 ├── README.md                  # doc humaine : services, install
 ├── ARCHITECTURE.md            # doc humaine : architecture, choix structurants
@@ -2216,59 +1241,80 @@ server/
 ├── scripts/
 │   ├── crontab                    # source de vérité des crons DU REPO — `make cron-install`
 │   ├── install-crontab.sh          # fusionne scripts/crontab dans un bloc marqué, préserve les jobs perso
+│   ├── logrotate.conf              # rendu sous DATA_ROOT par `make cron-install` (logrotate n'expand aucune variable)
 │   ├── lan-only-middleware.sh      # ouvre/referme les services LAN-only au WAN — `make switch-lan-only-middleware` + garde cron `rearm`
 │   ├── backup.sh                   # sauvegarde restic hebdomadaire
 │   ├── restore.sh                  # restauration guidée d'un snapshot restic
 │   ├── generate-dashboard.py       # régénère dashboard/html/ — `make dashboard-refresh`
 │   ├── transmission-stats.py       # JSON ratios/débits pour generate-dashboard.py
 │   ├── provision.py                # config d'installation : clés API, biblios Jellyfin, objets arr, Seerr — `make api-keys` / `make provision`
-│   ├── apply-arr-overrides.py      # réapplique tailles/language des 2 profils qualité principaux + provisionne la config anime, les connexions Jellyfin et le metadata writer nfo de Sonarr/Radarr — `make arr-overrides`
+│   ├── apply-arr-overrides.py      # déclaratif : profils qualité, config anime, connexions Jellyfin, metadata writer, ratio indexeurs publics — `make arr-overrides`
 │   └── require-running.sh          # exit 0 si les services <project>/<service> donnés tournent — guard cron + backup.sh
-├── sauvegarde/                # non versionné — dépôt restic + mot de passe + staging
-├── traefik/                  # socket-proxy + traefik + dashboard (page statique de liens) ; .env(ACME_EMAIL)/.example
-├── jellyfin/                 # docker-compose.yml + override.yml(.example) pour les bibliothèques
+├── sauvegarde/                # non versionné — dépôt restic + staging (le mot de passe vit hors du repo)
+├── traefik/                  # socket-proxy + traefik + dashboard ; dynamic/ (middlewares LAN-only) ; .env(ACME_EMAIL)/.example
+├── jellyfin/                 # docker-compose.yml + override.yml(.example) pour les bibliothèques ; .env (identifiants admin)
 ├── nextcloud/                 # db-next/app/web/news-updater ; .env/.example ; override.yml(.example)
 ├── vpn/                       # transmission-vpn (réseau isolé) + sidecar transmission-proxy ; .env/.example
 ├── arr/                       # prowlarr/sonarr/radarr/cross-seed/recyclarr/clearr ; .env/.example ; override.yml.example (optionnel)
-│   ├── clearr/                 # web (FastAPI/Jinja2/Bootstrap) + TUI + CLI delete-by-inode, un seul core.py partagé — voir plus haut
-│   └── profiles/               # config arr custom versionnée (sonarr-anime.json) — appliquée par scripts/apply-arr-overrides.py
-├── kodi/                      # addon de menu contextuel « Supprimer avec clearr » — pas un service, installé côté client par `make kodi-install` (voir kodi/README.md)
-├── seerr/                     # recherche/requête unifiée (successeur Jellyseerr/Overseerr) ; pas de .env (config via son assistant web)
-└── dashboard/                 # templates/ (vues, string.Template) + assets (logos, css, js) + html/ généré — pas de compose file, servi par traefik/ (voir ci-dessus)
+│   ├── clearr/                 # web (FastAPI/Jinja2/Bootstrap) + TUI + CLI delete-by-inode, un seul core.py partagé
+│   └── profiles/               # config arr custom versionnée (sonarr-anime.json) — appliquée par apply-arr-overrides.py
+├── kodi/                      # addon de menu contextuel « Supprimer avec clearr » — installé côté client par `make kodi-install`
+├── seerr/                     # recherche/requête unifiée ; pas de .env (config via son assistant web + provision.py)
+└── dashboard/                 # templates/ (string.Template) + assets (logos, css, js) + html/ généré — servi par traefik/
 ```
 
 `make network` (crée `traefik-public` si absent) avant tout `make up`.
 
-**`make help` est la cible par défaut** (ajouté le 2026-08-07, demandé) : `make`
-seul affiche la liste des cibles et leurs arguments au lieu de lancer `network`,
-qui était la première du fichier et ne disait rien du reste. La liste est
-**générée depuis les annotations `## …` des cibles elles-mêmes**, pas maintenue à
-côté — une liste séparée diverge dès qu'on ajoute une cible sans y penser.
-Convention pour toute nouvelle cible : `cible: ## ARG=<valeur> — description`,
-l'annotation sur la ligne de la *définition* (pour `clearr`/`recyclarr-sync`, qui
-ont d'abord une ligne `cible: STACK := arr`, elle va sur la ligne
-`cible: network` — un `#` dans une affectation de variable make serait avalé
-comme commentaire et fausserait la valeur). Ne pas y écrire `$${DOMAIN}` ni
-d'autre échappement make : l'aide est produite par un `grep` sur le fichier brut,
-donc le texte s'affiche littéralement.
+**`make help` est la cible par défaut**, et la liste est **générée depuis les
+annotations `## …` des cibles elles-mêmes** — une liste maintenue à côté
+diverge dès qu'on ajoute une cible sans y penser. Convention pour toute
+nouvelle cible : `cible: ## ARG=<valeur> — description`, l'annotation sur la
+ligne de la *définition*. Pour une cible précédée d'une ligne
+`cible: STACK := arr`, elle va sur la ligne `cible: network` — un `#` dans une
+affectation de variable make serait avalé comme commentaire et fausserait la
+valeur. Ne pas y écrire `$${DOMAIN}` ni d'autre échappement make : l'aide est
+produite par un `grep` sur le fichier brut, le texte s'affiche littéralement.
+
+**Rotation des logs** : `scripts/logrotate.conf` couvre les logs de cron du
+repo et l'access log Traefik, lancé par cron **sans root** avec son propre
+fichier d'état sous `DATA_ROOT` (le logrotate système n'a pas à connaître ce
+checkout). Il pointe la config **rendue** sous `DATA_ROOT`, pas le fichier du
+repo : logrotate n'expand aucune variable, ses chemins doivent être littéraux,
+et c'est `make cron-install` qui fait la substitution. `.gitignore` couvre les
+noms tournés (`*.log.*`), pas seulement les noms de base.
 
 ## Sauvegarde — repères rapides
 
-- `make backup` (aussi via cron dimanche 3h, `scripts/crontab`) : dump
-  `pg_dump` Nextcloud + manifeste des digests d'images en cours
-  d'exécution + `restic backup` + `restic forget --keep-weekly 8
-  --prune` + tag git `backup-YYYY-MM-DD` si l'infra a changé depuis le
-  dernier tag de ce type, poussé sur `origin`.
+- `make backup` (aussi via cron dimanche 3h) : dump `pg_dump` Nextcloud +
+  manifeste des digests d'images en cours d'exécution + `restic backup` +
+  `restic check --read-data-subset=5%` + `restic forget --group-by host
+  --keep-weekly 8 --prune` + tag git `backup-YYYY-MM-DD` si l'infra a changé
+  depuis le dernier tag de ce type, poussé sur `origin`.
+  Le dump est **supprimé du staging après le backup** : il porte les hachages
+  de mots de passe et les jetons d'application de Nextcloud, il n'a pas à
+  rester en clair sur le disque une fois dans le dépôt chiffré.
+  **`--group-by host` n'est pas cosmétique** : `restic forget` groupe par
+  défaut sur (host, paths) et applique la politique à chaque groupe
+  *séparément*, donc chaque changement de la liste de chemins crée un nouveau
+  groupe et l'ancien cesse d'être élagué — il l'a déjà fait, en épinglant
+  ~10 GiB. Pire que l'espace perdu : juste après un tel changement, la
+  rétention réelle retombe à un seul snapshot alors que le message annonce
+  toujours 8 semaines.
 - `make restore SNAPSHOT=<id|latest>` : restaure dans un dossier à part et
   affiche les étapes manuelles — ne touche jamais le live automatiquement.
-- Mot de passe restic dans `~/.config/server-restic-password` (hors du
+- **Mot de passe restic dans `~/.config/server-restic-password`** (hors du
   repo, généré au premier `make backup`) — pas de copie ailleurs = dépôt
-  illisible en cas de perte. **Ancien emplacement**
-  `sauvegarde/restic-password` : `backup.sh`/`restore.sh` s'y replient
-  encore s'il existe (voir `LEGACY_PASSWORD_FILE`), mais toute commande
-  `restic` lancée à la main doit viser le nouveau chemin — sinon
-  `Resolving password failed`, piège rencontré le 2026-08-24 en auditant
-  la sauvegarde.
+  illisible en cas de perte. `sauvegarde/restic-password` est l'ancien
+  emplacement : `backup.sh`/`restore.sh` s'y replient encore
+  (`LEGACY_PASSWORD_FILE`), mais toute commande `restic` lancée à la main doit
+  viser le nouveau chemin, sinon `Resolving password failed`.
+- Les `.env` de chaque stack sont collectés **par boucle sur `$STACKS`**, pas
+  listés à la main : un `.env` ajouté plus tard (c'est arrivé avec
+  `jellyfin/.env`, qui porte les identifiants dont `make provision` a besoin)
+  n'existerait sinon **nulle part ailleurs que sur ce disque** — gitignoré et
+  non sauvegardé. La boucle rend le prochain couvert par construction.
+- Délibérément **pas** sauvegardés : `library` (media, re-téléchargeable via
+  arr), `.transmission/data`, `.jellyfin/cache` — énormes et jetables.
 - Résilience visée : perte du disque `DATA_ROOT` → restauration depuis
   `sauvegarde/` (sur un disque différent). Perte de celui-ci → seul
   l'infra-as-code est récupérable depuis GitHub, la sauvegarde restic est
