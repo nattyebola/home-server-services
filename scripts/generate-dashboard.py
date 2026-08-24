@@ -553,7 +553,14 @@ BACKUP_MAX_AGE_DAYS = 7
 DASHBOARD_STALE_AFTER_SECONDS = 15 * 60
 
 RESTIC_REPO_DIR = REPO_ROOT / "sauvegarde" / "restic-repo"
-RESTIC_PASSWORD_FILE = REPO_ROOT / "sauvegarde" / "restic-password"
+# Même résolution que scripts/backup.sh : le mot de passe vit hors du repo (il
+# n'a pas à être dans l'arborescence qu'on sauvegarde), l'ancien emplacement
+# restant accepté en repli tant qu'un déploiement ne l'a pas migré. Pointer le
+# seul ancien chemin faisait échouer last_backup_age_days() en silence, donc
+# affichait la sauvegarde en rouge alors qu'elle tournait (constaté le
+# 2026-08-24, migration du mot de passe faite sans toucher à ce fichier).
+RESTIC_PASSWORD_FILE = Path.home() / ".config" / "server-restic-password"
+LEGACY_RESTIC_PASSWORD_FILE = REPO_ROOT / "sauvegarde" / "restic-password"
 
 # Tâches de scripts/crontab qui écrivent un marqueur `date +\%s > ...` à la
 # fin d'une exécution réussie (le `&&` du cron ne l'atteint pas si une étape
@@ -606,10 +613,13 @@ def last_backup_age_days():
     docker exec ici : restic ne tourne dans aucun conteneur). Best-effort :
     None si restic/le mot de passe/le dépôt est absent ou injoignable, pour
     omettre la carte plutôt que planter la génération du dashboard."""
-    if not RESTIC_PASSWORD_FILE.exists():
+    password_file = RESTIC_PASSWORD_FILE
+    if not password_file.exists():
+        password_file = LEGACY_RESTIC_PASSWORD_FILE
+    if not password_file.exists():
         return None
     env = {**os.environ, "RESTIC_REPOSITORY": str(RESTIC_REPO_DIR),
-           "RESTIC_PASSWORD_FILE": str(RESTIC_PASSWORD_FILE)}
+           "RESTIC_PASSWORD_FILE": str(password_file)}
     try:
         res = subprocess.run(
             ["restic", "snapshots", "--latest", "1", "--json"],
