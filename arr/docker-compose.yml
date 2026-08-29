@@ -324,7 +324,15 @@ services:
         max-file: "3"
 
   recyclarr:
-    image: ghcr.io/recyclarr/recyclarr:latest
+    # SEULE image du repo qui n'est pas en `:latest` — recyclarr ne publie plus
+    # ce tag : « The `latest` Docker tag is not available on Docker Hub or GHCR.
+    # Use a major version tag (e.g. `8`) » (README upstream). Les seuls tags non
+    # numériques du registre sont `edge` (build de développement, digest
+    # distinct), donc il n'existe aucun équivalent. `8` suit la dernière 8.x
+    # (même digest que 8.7.1 au 2026-08-29), ce qui garde l'esprit du repo à un
+    # majeur près. CONTREPARTIE : `make update STACK=arr` ne franchira jamais la
+    # 9 tout seul — bump à faire à la main ici, rien ne le signalera.
+    image: ghcr.io/recyclarr/recyclarr:8
     # Mode manuel uniquement (pas de `restart:`, pas de healthcheck) — plus
     # de scheduler interne (cron @daily par défaut de l'image, désactivé le
     # 2026-07-30 : aucune valeur de CRON_SCHEDULE ne le désactive proprement,

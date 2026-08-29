@@ -30,6 +30,13 @@ explicitement :
   toujours les dernières versions. La reproductibilité d'une restauration
   passe par le manifeste de digests capturé à chaque `make backup`
   (`scripts/backup.sh`), pas par des tags fixes dans les compose files.
+  **Une seule exception, subie et non choisie : `recyclarr`**, qui ne publie
+  plus de tag `latest` (« Use a major version tag (e.g. `8`) », README
+  upstream ; le seul tag non numérique du registre est `edge`, une build de
+  développement au digest distinct). D'où `:8`, qui suit la dernière 8.x.
+  **Ne pas proposer d'y remettre `:latest`** — le tag n'existe pas, le pull
+  échouerait. Corollaire à surveiller : aucun automatisme ne franchira la
+  majeure suivante, le bump vers `:9` est manuel et rien ne le signalera.
 - **Secrets et valeurs propres au déploiement** : `.env` par stack
   (gitignoré) + `.env.example` versionné — même chose pour les valeurs
   partagées entre stacks (`PUID`/`PGID`/`RENDER_GID`/`DOMAIN`/
