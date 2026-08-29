@@ -3,10 +3,8 @@ services:
     image: jellyfin/jellyfin:latest
     restart: unless-stopped
     user: "${PUID}:${PGID}"
-    devices:
-      - /dev/dri/renderD128:/dev/dri/renderD128
-    group_add:
-      - "${RENDER_GID}"
+    # Accélération matérielle GPU (VAAPI Intel/AMD ou NVIDIA) : propre à la
+    # machine, voir docker-compose.override.yml.
     dns:
       - ${DNS_PRIMARY}
       - ${DNS_SECONDARY}

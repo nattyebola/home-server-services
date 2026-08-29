@@ -1,6 +1,7 @@
 # Copy this file to docker-compose.override.yml (gitignored, host-specific)
-# to point Jellyfin at your own media libraries. Optional — Jellyfin works
-# fine with none of these, you just won't have anything to watch yet.
+# to point Jellyfin at your own media libraries and/or your GPU. Optional —
+# Jellyfin works fine with none of these, you just won't have anything to
+# watch yet, and transcoding will run in software.
 # ${DATA_ROOT} is available here too (from .env.shared) if useful.
 services:
   jellyfin:
@@ -8,3 +9,16 @@ services:
       - /path/to/your/music:/hosthome/Musique:ro
       - /path/to/your/photos:/hosthome/Images/photos:ro
       - /path/to/completed/downloads:/media
+    # Hardware transcoding, pick ONE depending on your GPU:
+    # — Intel/AMD (VAAPI):
+    #     devices:
+    #       - /dev/dri/renderD128:/dev/dri/renderD128
+    #     group_add:
+    #       - "${RENDER_GID}"
+    # — NVIDIA (NVENC/NVDEC, requires nvidia-container-toolkit installed and
+    #   configured on the host — VAAPI does NOT work on the proprietary
+    #   nvidia driver):
+    #     runtime: nvidia
+    #     environment:
+    #       - NVIDIA_VISIBLE_DEVICES=all
+    #       - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
