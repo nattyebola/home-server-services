@@ -76,3 +76,17 @@ MAILTO=""
 # the placeholders below are substituted by `make cron-install` with this
 # checkout's absolute path and DATA_ROOT — never hardcode literals here.
 30 4 * * * logrotate --state __DATA_ROOT__/.logrotate.state __DATA_ROOT__/.logrotate.conf >> __REPO_ROOT__/dashboard/refresh.log 2>&1
+
+# Re-search the already-released missing episodes/movies, Mondays at 5am.
+# Fills a structural gap: neither Sonarr nor Radarr has had a scheduled
+# missing-items search since Sonarr v3, so an episode or movie the RSS feed
+# missed at release time is never retried (see scripts/search-missing.py).
+# Weekly and capped inside the script rather than nightly: a burst of searches
+# is what tripped C411 on 2026-07-28. The slot avoids the two other heavy jobs
+# (backup Sunday 3am, recyclarr + overrides at midnight). Guarded by
+# require-running.sh so this is a silent no-op rather than a failure when the
+# arr stack is stopped. Success marker consumed by the "Tâches planifiées"
+# card (see cron_marker_age_seconds()).
+# the placeholders below are substituted by `make cron-install` with this
+# checkout's absolute path and DATA_ROOT — never hardcode literals here.
+0 5 * * 1 __REPO_ROOT__/scripts/require-running.sh arr/sonarr arr/radarr && python3 __REPO_ROOT__/scripts/search-missing.py >> __REPO_ROOT__/arr/search-missing.log 2>&1 && date +\%s > __DATA_ROOT__/.cron-status/search-missing

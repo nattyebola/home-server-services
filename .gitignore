@@ -41,6 +41,8 @@ arr/apply-overrides.log
 arr/apply-overrides.log.*
 arr/recyclarr-sync.log
 arr/recyclarr-sync.log.*
+arr/search-missing.log
+arr/search-missing.log.*
 
 # VPN client credentials (private key + certs, not infra-as-code)
 vpn/custom/

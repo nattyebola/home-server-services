@@ -578,6 +578,31 @@ explicitement :
   — voir le piège dédié plus bas. Une passe qui corrige remet le compteur à
   zéro, donc une écriture en deux temps ne conclut pas sur la première
   accalmie.
+- **`scripts/search-missing.py` (`make search-missing`)**, cron hebdomadaire
+  le lundi 5h : relance une recherche sur les épisodes/films manquants
+  **déjà sortis**. Comble un trou structurel — **ni Sonarr ni Radarr n'a de
+  tâche planifiée de recherche des manquants** (leur `/api/v3/system/task` ne
+  liste que RSS Sync / Refresh / Import List Sync), donc une release absente ou
+  rejetée au moment où l'item passe dans le flux RSS n'est **plus jamais
+  retentée**. Constaté le 2026-08-29 : `The Simpsons` S37E13/E15 manquants
+  depuis janvier/février alors qu'une release approuvée était disponible chez
+  les indexeurs à l'instant du diagnostic.
+  **Le quota indexeur est la contrainte dominante**, pas la couverture : une
+  passe « tous les manquants, chaque nuit » est exactement la rafale qui a fait
+  tomber C411 le 2026-07-28. Trois garde-fous, dans cet ordre — cadence
+  hebdomadaire ; plafond dur par exécution (`MAX_SEARCHES_PER_RUN`) ; **mémoire
+  de la dernière recherche par item** (`${DATA_ROOT}/.search-missing-state.json`,
+  `MIN_RESEARCH_INTERVAL_DAYS`), qui sert d'abord les plus anciennement
+  cherchés. Sans cette rotation le plafond écarterait toujours les mêmes items ;
+  avec elle, tout finit couvert en étalant la charge.
+  N'est **jamais** recherché : un item **déjà dans la file** (y compris
+  `importBlocked` — la release est trouvée, la rechercher ne ferait que
+  consommer du quota et risquer un doublon), et un film à
+  `isAvailable == False` (pas encore sorti selon sa `minimumAvailability` — le
+  catalogue en contient en permanence une dizaine). Sonarr n'a pas besoin de
+  l'équivalent : son `wanted/missing` ne renvoie que des épisodes déjà diffusés.
+  `--dry-run` liste la sélection sans rien envoyer aux indexeurs — le réflexe
+  avant de toucher aux plafonds.
 - **Le scheduler interne de recyclarr est désactivé**, le service passe en
   mode manuel pur (`arr/docker-compose.yml` : plus de `restart:`/healthcheck,
   `profiles: [manual]` pour rester absent de `make up STACK=arr`), déclenché
@@ -1031,6 +1056,26 @@ d'attente ou d'un échappement.
 
 ### Sonarr / Radarr / Prowlarr
 
+- **Ni Sonarr ni Radarr ne re-cherche un manquant tout seul** : aucune tâche
+  planifiée de recherche des manquants depuis Sonarr v3 (leur
+  `/api/v3/system/task` ne liste que RSS Sync / Refresh / Import List Sync).
+  Ce que le flux RSS a raté à la sortie reste manquant indéfiniment, **sans
+  erreur ni signal** — d'où `scripts/search-missing.py`. Ne pas chercher un
+  réglage d'UI pour ça, il n'y en a pas.
+- **Un titre « manquant » est le plus souvent déjà téléchargé** : avant de
+  conclure « aucune release trouvée », croiser `wanted/missing` avec
+  `/api/v3/queue`. Le 2026-08-29, 5 des 7 épisodes/films manquants étaient en
+  fait `importBlocked`/`importPending` — deux causes récurrentes, toutes deux
+  muettes côté UI hors de la file :
+  *« matched to series/movie by ID, automatic import is not possible »*
+  (release dont le titre ne se parse pas ; le grab a été rattaché via
+  l'historique, pas via le nom) et *« Invalid season or episode »* (numérotation
+  absolue d'anime que Sonarr ne remappe pas — `One Piece S01E1172` pour
+  S23E17). Les deux se débloquent par `GET /api/v3/manualimport?downloadId=…`
+  puis `POST /api/v3/command {"name":"ManualImport", …}`, en réinjectant
+  `episodeIds`/`movieId` à la main pour le second cas (le candidat revient avec
+  `episodes: []`). Vérifier la langue détectée au passage : sur une release
+  MULTi/VFF, Radarr a proposé « Vietnamese ».
 - **Sonarr/Radarr n'importent pas les fichiers vidéo posés en vrac à la racine
   d'un dossier scanné** — ils ne reconnaissent que la convention
   un-film/une-série par sous-dossier, sans erreur ni log pour les fichiers
@@ -1249,6 +1294,7 @@ server/
 │   ├── transmission-stats.py       # JSON ratios/débits pour generate-dashboard.py
 │   ├── provision.py                # config d'installation : clés API, biblios Jellyfin, objets arr, Seerr — `make api-keys` / `make provision`
 │   ├── apply-arr-overrides.py      # déclaratif : profils qualité, config anime, connexions Jellyfin, metadata writer, ratio indexeurs publics — `make arr-overrides`
+│   ├── search-missing.py           # recherche hebdo des manquants déjà sortis, plafonnée + rotation — `make search-missing`
 │   └── require-running.sh          # exit 0 si les services <project>/<service> donnés tournent — guard cron + backup.sh
 ├── sauvegarde/                # non versionné — dépôt restic + staging (le mot de passe vit hors du repo)
 ├── traefik/                  # socket-proxy + traefik + dashboard ; dynamic/ (middlewares LAN-only) ; .env(ACME_EMAIL)/.example

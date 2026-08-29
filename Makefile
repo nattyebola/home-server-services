@@ -8,7 +8,7 @@ STACKS := traefik jellyfin nextcloud vpn arr seerr
 
 UPDATE_STACKS := nextcloud vpn jellyfin arr seerr
 
-.PHONY: help require-env-shared network up down config logs update update-all backup restore cron-install dashboard-refresh clearr arr-overrides recyclarr-sync kodi-install api-keys provision switch-lan-only-middleware test
+.PHONY: help require-env-shared network up down config logs update update-all backup restore cron-install dashboard-refresh clearr arr-overrides search-missing recyclarr-sync kodi-install api-keys provision switch-lan-only-middleware test
 
 # `make` sans argument affiche l'aide plutôt que de lancer la première cible
 # (c'était `network`, qui ne dit rien de ce que le reste sait faire).
@@ -231,6 +231,15 @@ provision: ## — crée les objets de config des UI (biblios Jellyfin, objets ar
 # `recyclarr-sync`, voir scripts/crontab.
 arr-overrides: ## — réapplique les réglages arr que recyclarr écrase (aussi enchaîné par cron)
 	@python3 scripts/apply-arr-overrides.py
+
+# relance une recherche sur les épisodes/films manquants déjà sortis — ni Sonarr
+# ni Radarr n'ont de tâche planifiée pour ça, donc ce que le flux RSS a raté à
+# la sortie n'est jamais retenté. Plafonné et à rotation pour ne pas rafaler les
+# indexeurs, voir scripts/search-missing.py ; aussi lancé par cron le lundi à
+# 5h, voir scripts/crontab. `ARGS="--dry-run"` pour voir la sélection sans rien
+# envoyer aux indexeurs.
+search-missing: ## ARGS=<options> — recherche les manquants déjà sortis (aussi lancé par cron)
+	@python3 scripts/search-missing.py $(ARGS)
 
 # lance `recyclarr sync` en one-shot — le service recyclarr (arr/docker-compose.yml)
 # n'a plus de scheduler interne et est sous `profiles: [manual]`, donc
