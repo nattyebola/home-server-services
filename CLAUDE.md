@@ -1075,7 +1075,16 @@ d'attente ou d'un échappement.
   puis `POST /api/v3/command {"name":"ManualImport", …}`, en réinjectant
   `episodeIds`/`movieId` à la main pour le second cas (le candidat revient avec
   `episodes: []`). Vérifier la langue détectée au passage : sur une release
-  MULTi/VFF, Radarr a proposé « Vietnamese ».
+  MULTi/VFF, Radarr a proposé « Vietnamese » — elle part dans le nom du fichier
+  renommé et dans le `.nfo` lu par Jellyfin.
+  Outillé par `scripts/manual-import.py` (`list`/`apply`/`assign`) et le skill
+  `.claude/skills/manual-import/SKILL.md`. Le script **sépare quatre familles
+  et n'en importe qu'une** — celle sans rejet ni ambiguïté : une cible devinée
+  écraserait le fichier d'un autre épisode, et un pack « Not a Custom Format
+  upgrade » ne doit jamais être importé, seulement purgé. Un 4e cas ne se
+  rattache pas du tout : titre absent du catalogue (« Unknown Movie ») — c'est
+  une question pour l'utilisateur, pas un ajout d'office, le téléchargement
+  pouvant être volontairement hors arr.
 - **Sonarr/Radarr n'importent pas les fichiers vidéo posés en vrac à la racine
   d'un dossier scanné** — ils ne reconnaissent que la convention
   un-film/une-série par sous-dossier, sans erreur ni log pour les fichiers
@@ -1295,6 +1304,7 @@ server/
 │   ├── provision.py                # config d'installation : clés API, biblios Jellyfin, objets arr, Seerr — `make api-keys` / `make provision`
 │   ├── apply-arr-overrides.py      # déclaratif : profils qualité, config anime, connexions Jellyfin, metadata writer, ratio indexeurs publics — `make arr-overrides`
 │   ├── search-missing.py           # recherche hebdo des manquants déjà sortis, plafonnée + rotation — `make search-missing`
+│   ├── manual-import.py            # débloque les imports en attente (importBlocked/importPending) — skill manual-import
 │   └── require-running.sh          # exit 0 si les services <project>/<service> donnés tournent — guard cron + backup.sh
 ├── sauvegarde/                # non versionné — dépôt restic + staging (le mot de passe vit hors du repo)
 ├── traefik/                  # socket-proxy + traefik + dashboard ; dynamic/ (middlewares LAN-only) ; .env(ACME_EMAIL)/.example

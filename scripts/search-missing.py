@@ -244,7 +244,7 @@ def run_arr(name, container, base_url, api_key, candidates, command_name,
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="Relance une recherche sur les épisodes/films manquants déjà sortis.")
     parser.add_argument("--dry-run", action="store_true",
                         help="liste ce qui serait cherché sans rien envoyer aux indexeurs")
     parser.add_argument("--limit", type=int, default=MAX_SEARCHES_PER_RUN,
