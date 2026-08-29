@@ -40,6 +40,7 @@ import os
 import shlex
 import subprocess
 import sys
+import urllib.parse
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ARR_ENV = os.path.join(REPO_ROOT, "arr", ".env")
@@ -378,7 +379,7 @@ def provision_jellyfin_libraries(jellyfin_key, done, skipped):
             continue
         request(PROXY_CONTAINER,
                 f"{JELLYFIN_URL}/Library/VirtualFolders"
-                f"?name={library['name'].replace(' ', '%20')}"
+                f"?name={urllib.parse.quote(library['name'])}"
                 f"&collectionType={library['collection_type']}&refreshLibrary=true",
                 "POST", secret_header=("X-Emby-Token", jellyfin_key),
                 body={"LibraryOptions": {"PathInfos": [{"Path": library["path"]}],
@@ -494,19 +495,32 @@ def provision_prowlarr_indexers(arr_env, done, skipped):
 
     existing = {i["name"] for i in arr_request("prowlarr", "/indexer", api_key=prowlarr_key)}
     schema = None
+    app_profile_id = None
     for spec in wanted:
         if spec["name"] in existing:
             continue
         if schema is None:  # 621 définitions, ne le charger que si on crée vraiment
             schema = {s["definitionName"]: s
                       for s in arr_request("prowlarr", "/indexer/schema", api_key=prowlarr_key)}
+            # Le schéma renvoie appProfileId=0 (placeholder) : Prowlarr refuse
+            # ("'App Profile Id' must be greater than '0'") tant qu'on ne pointe
+            # pas sur un app profile réel. "Standard" est celui créé par défaut
+            # à l'installation de Prowlarr, résolu par nom comme le reste de ce
+            # script (l'id n'est pas garanti stable d'une instance à l'autre).
+            profiles = {p["name"]: p["id"]
+                        for p in arr_request("prowlarr", "/appprofile", api_key=prowlarr_key)}
+            app_profile_id = profiles.get("Standard")
+            if app_profile_id is None:
+                raise RuntimeError("app profile 'Standard' introuvable dans Prowlarr "
+                                   f"(profils existants : {sorted(profiles)})")
         base = schema.get(spec["definitionName"])
         if base is None:
             raise RuntimeError(f"définition Cardigann {spec['definitionName']!r} inconnue de "
                                "Prowlarr — vérifier definitionName dans prowlarr-indexers.json")
         body = dict(base)
         body.update({"name": spec["name"], "enable": True,
-                     "priority": spec.get("priority", 25), "tags": []})
+                     "priority": spec.get("priority", 25), "tags": [],
+                     "appProfileId": app_profile_id})
         body["fields"] = [dict(f) for f in base.get("fields", [])]
 
         values = dict(spec.get("fields", {}))
@@ -616,7 +630,14 @@ def provision_seerr(shared, arr_env, done, skipped):
     if not jellyfin_key:
         raise Skipped("JELLYFIN_API_KEY absente de arr/.env — `make api-keys` d'abord")
 
-    if not initialized:
+    # `public.initialized` peut rester à `false` même après une installation
+    # complète si le compte propriétaire a été créé depuis l'assistant web de
+    # Seerr plutôt que par ce script (constaté le 2026-08-27) : le POST
+    # /auth/jellyfin ci-dessous répond alors 500 "Jellyfin hostname already
+    # configured" plutôt que de créer un doublon. `jellyfin.apiKey` déjà posé
+    # est le même signal que la garde additive juste en dessous — plus fiable
+    # ici que le flag `initialized`.
+    if not initialized and not settings.get("jellyfin", {}).get("apiKey"):
         # Le compte propriétaire de Seerr est créé depuis un compte Jellyfin
         # existant : c'est ce POST qui l'importe, et il n'exige pas d'être
         # authentifié tant que l'instance n'est pas initialisée.
