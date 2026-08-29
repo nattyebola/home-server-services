@@ -165,6 +165,16 @@ def build_prowlarr_tracker_map():
     return domain_map, private_map
 
 
+def alias_for(hostname):
+    """Nom d'indexeur déclaré dans TRACKER_ALIASES pour ce host, ou None —
+    clé host exacte d'abord, puis clé domaine de base (`c411.tw=C411` couvre
+    `tk.c411.tw`). Même mécanisme que arr/clearr/app/core.py, voir son
+    alias_for() pour le rationale des deux formes."""
+    if hostname in TRACKER_ALIASES:
+        return TRACKER_ALIASES[hostname]
+    return TRACKER_ALIASES.get(base_domain(hostname))
+
+
 def resolve_tracker_name(hostname, tracker_map, private_map=None):
     """Renvoie (nom, officiel, privé) — officiel=True si hostname a été résolu
     vers un indexeur réellement configuré dans Prowlarr (TRACKER_ALIASES ou
@@ -175,8 +185,8 @@ def resolve_tracker_name(hostname, tracker_map, private_map=None):
     filtre par défaut de la carte "Ratio par tracker", qui ne montre que les
     trackers privés (voir CLAUDE.md)."""
     private_map = private_map or {}
-    if hostname in TRACKER_ALIASES:
-        name = TRACKER_ALIASES[hostname]
+    name = alias_for(hostname)
+    if name:
         return name, True, private_map.get(name, False)
     name = tracker_map.get(base_domain(hostname))
     if name:

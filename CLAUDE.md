@@ -1265,15 +1265,25 @@ factorisée — tout correctif doit être appliqué des deux côtés.
   (`www.yggreborn.org`) sont deux sous-domaines **frères** — un
   `hostname.endswith("." + domain)` nu ne matche jamais. Fix : `base_domain()`
   (2 derniers labels) appliqué des deux côtés.
-- **Nyaa.si n'a aucun tracker qui lui soit propre**, seulement des trackers
-  publics génériques — aucune info Prowlarr ne permet de les rattacher. Ils
-  sont donc déclarés en alias dans `TRACKER_ALIASES` (`arr/.env`, pas en dur
-  dans le code : quels trackers publics un indexeur embarque est propre à ce
-  déploiement) et matchés **en exact, pas via `base_domain()`** —
-  `tracker.torrent.eu.org` réduirait à `eu.org`, un domaine public partagé par
-  d'innombrables sites sans rapport. Faux positif accepté en connaissance de
-  cause : un torrent d'un autre indexeur qui ajouterait l'un de ces trackers
-  en secours serait étiqueté « Nyaa.si » à tort.
+- **`TRACKER_ALIASES` (`arr/.env`) couvre les deux cas que Prowlarr ne peut
+  pas rattacher**, en config et pas en dur dans le code (quels trackers un
+  indexeur utilise est propre à ce déploiement). `alias_for()` accepte deux
+  formes de clé, l'exacte testée en premier :
+  - **host exact** — pour un tracker public mutualisé. **Nyaa.si n'a aucun
+    tracker qui lui soit propre**, seulement des trackers publics génériques.
+    Y aliaser un domaine de base serait un bien pire faux positif :
+    `tracker.torrent.eu.org` réduirait à `eu.org`, partagé par d'innombrables
+    sites sans rapport. Faux positif accepté en connaissance de cause : un
+    torrent d'un autre indexeur qui ajouterait l'un de ces trackers en secours
+    est étiqueté « Nyaa.si » à tort.
+  - **domaine de base** — pour un indexeur dont le tracker annonce sur un
+    domaine à lui, distinct du site que Prowlarr connaît : C411 annonce sur
+    `tk.c411.tw` alors que ses `indexerUrls` sont en `c411.org` (36 torrents
+    classés « Autre » avant le fix du 2026-08-29), d'où `c411.tw=C411`, qui
+    couvre aussi ses futurs sous-domaines. **Ne l'utiliser que pour un
+    domaine appartenant en propre à l'indexeur.**
+  Logique dupliquée dans `core.py` et `transmission-stats.py` comme le reste
+  de cette section — corriger des deux côtés.
 - **Dédupliquer par nom résolu avant d'accumuler.** `transmission-stats.py`
   sommait `uploadedEver`/`downloadedEver` une fois par **host brut** : un
   torrent Nyaa comptait son volume 5 fois une fois les 5 hosts collapsés sous

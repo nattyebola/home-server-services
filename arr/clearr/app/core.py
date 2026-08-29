@@ -281,19 +281,40 @@ def build_prowlarr_tracker_map():
     return domain_map
 
 
+def alias_for(hostname):
+    """Nom d'indexeur déclaré dans TRACKER_ALIASES pour ce host, ou None.
+
+    Deux formes de clé, testées dans cet ordre :
+    - **host exact** (`tracker.opentrackr.org=Nyaa.si`) — seule forme
+      acceptable pour un tracker public mutualisé, dont le domaine de base
+      ne dit rien de l'indexeur qui l'embarque (`eu.org` pour
+      `tracker.torrent.eu.org` : un domaine partagé par d'innombrables sites
+      sans rapport) ;
+    - **domaine de base** (`c411.tw=C411`) — couvre d'un coup tous ses
+      sous-domaines présents et à venir (`tk.c411.tw`), pour un domaine qui
+      appartient EN PROPRE à l'indexeur. Nécessaire parce que Prowlarr ne
+      connaît que le(s) domaine(s) du site (`c411.org`), jamais le domaine
+      distinct sur lequel le tracker annonce.
+    L'exact l'emporte : une clé host reste prioritaire sur une clé domaine
+    qui la recouvrirait."""
+    if hostname in TRACKER_ALIASES:
+        return TRACKER_ALIASES[hostname]
+    return TRACKER_ALIASES.get(base_domain(hostname))
+
+
 def resolve_tracker_name(hostname, tracker_map):
     """Renvoie (nom, officiel) — officiel=True si le hostname se rattache à
     un indexeur réellement configuré dans Prowlarr, False s'il retombe sur le
     hostname brut (tracker public embarqué dans le .torrent, pas un indexeur
     qu'on interroge nous-mêmes) : voir tracker_display, qui replie tous les
     non-officiels sous un seul libellé."""
-    # TRACKER_ALIASES (arr/.env) d'abord : couvre les trackers publics
-    # génériques qu'aucune API ne permet de rattacher à un indexeur (voir
-    # parse_tracker_aliases). Matché en exact, jamais via base_domain — un
-    # domaine public à 2 labels type eu.org serait un bien pire faux positif
-    # que l'inverse.
-    if hostname in TRACKER_ALIASES:
-        return TRACKER_ALIASES[hostname], True
+    # TRACKER_ALIASES (arr/.env) d'abord : couvre ce qu'aucune API ne permet
+    # de rattacher à un indexeur — trackers publics génériques ET domaine
+    # d'annonce propre à un indexeur mais distinct du domaine de son site
+    # (voir alias_for pour les deux formes de clé).
+    name = alias_for(hostname)
+    if name:
+        return name, True
     name = tracker_map.get(base_domain(hostname))
     if name:
         return name, True
