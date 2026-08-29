@@ -6,7 +6,12 @@ NETWORK := traefik-public
 RESTRICTED_NETWORK := traefik-restricted
 STACKS := traefik jellyfin nextcloud vpn arr seerr
 
-UPDATE_STACKS := nextcloud vpn jellyfin arr seerr
+# Stacks parcourues par `update-all`. traefik y est EN DERNIER : sa mise à jour
+# coupe brièvement le reverse proxy (accepté explicitement le 2026-08-29), donc
+# autant que ça arrive une fois, à la fin, et pas au milieu d'une boucle qu'une
+# stack suivante pourrait faire échouer. Le dashboard est régénéré après, il
+# reflète donc l'état d'après redémarrage.
+UPDATE_STACKS := nextcloud vpn jellyfin arr seerr traefik
 
 .PHONY: help require-env-shared network up down config logs update update-all backup restore cron-install dashboard-refresh clearr arr-overrides search-missing recyclarr-sync kodi-install api-keys provision switch-lan-only-middleware test
 
@@ -147,9 +152,15 @@ logs: ## STACK=<nom> — suit les logs de la stack (Ctrl-C pour sortir)
 # Dockerfile (nextcloud app/web ; arr/clearr), then recreate. nextcloud
 # additionally needs its post-upgrade occ maintenance run every time app:
 # gets a new image.
+# `--profile manual` sur le PULL seulement : sans lui docker compose ignore les
+# services profilés, et recyclarr n'était donc JAMAIS mis à jour — son image
+# avait six mois quand on s'en est aperçu (2026-08-29). Surtout pas sur le
+# `up -d` en dessous, qui le démarrerait comme service permanent, exactement ce
+# que son mode manuel évite (voir arr/docker-compose.yml). Sans effet ailleurs :
+# arr est la seule stack à déclarer un `profiles:`.
 update: require-env-shared network ## STACK=<nom> — pull/rebuild puis recrée la stack
 	@test -n "$(STACK)" || (echo "usage: make update STACK=<$(STACKS)>" >&2 && exit 1)
-	$(compose) pull
+	$(compose) --profile manual pull
 	@if [ "$(STACK)" = "nextcloud" ] || [ "$(STACK)" = "arr" ]; then $(compose) build -q; fi
 	$(compose) up -d --remove-orphans
 	@if [ "$(STACK)" = "nextcloud" ]; then \
