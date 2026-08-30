@@ -343,5 +343,214 @@ class TriEtFormatage(unittest.TestCase):
                 self.assertIsInstance(core.human_size(n), str)
 
 
+
+class SeasonDeletion(unittest.TestCase):
+    """Suppression par saison (2026-08-30). Trois défauts possibles, tous
+    silencieux et tous des pertes de données :
+
+    - un torrent à cheval sur une saison GARDÉE traité comme les autres
+      supprimerait les données de cette saison-là ;
+    - une série sans dossier de saison ferait balayer le dossier de la série
+      entière, donc toutes les autres saisons ;
+    - un plan construit sur un Sonarr muet ne verrait presque rien à supprimer
+      (61 % des episodefile de cette bibliothèque n'ont plus aucun torrent) tout
+      en s'annonçant réussi.
+    """
+
+    def setUp(self):
+        # Restauration explicite : contrairement aux stubs des autres classes,
+        # find_series_torrents est une fonction que le reste du module appelle.
+        for name in ("arr_api", "find_series_torrents"):
+            self.addCleanup(setattr, core, name, getattr(core, name))
+        self.root = Path(_SANDBOX, "library", "series", "Serie")
+        self.s01 = self.root / "Season 01"
+        self.s02 = self.root / "Season 02"
+        self.e01 = touch(self.s01 / "S01E01.mkv", b"aaaa")
+        self.e02 = touch(self.s02 / "S02E01.mkv", b"bbbb")
+        self.annexe = touch(self.s01 / "S01E01.nfo", b"n")
+        self.series = {
+            "id": 7, "title": "Serie", "path": str(self.root),
+            "seasons": [{"seasonNumber": 1, "monitored": True},
+                        {"seasonNumber": 2, "monitored": True}],
+        }
+        self.files = [
+            {"id": 11, "seasonNumber": 1, "path": self.e01, "size": 4},
+            {"id": 22, "seasonNumber": 2, "path": self.e02, "size": 4},
+        ]
+        core.arr_api = lambda *a, **k: self.files
+        # Un seul torrent, portant les DEUX saisons : le pack multi-saisons.
+        self.pack = ({"id": 1, "name": "Serie S01-S02"},
+                     [("/hors/library/pack/S01E01.mkv", 4),
+                      ("/hors/library/pack/S02E01.mkv", 4)],
+                     [(self.e01, 4), (self.e02, 4)])
+        core.find_series_torrents = lambda *a, **k: [self.pack]
+        self.state = {"all_torrents": [], "library_index": {}, "cross_seed_child_ids": set()}
+
+    def test_torrent_a_cheval_est_conserve(self):
+        """Saison 1 seule : le pack porte aussi la saison 2, il ne doit PAS
+        partir — et l'espace annoncé comme libéré ne doit pas compter des octets
+        que le torrent continue de seeder."""
+        plan = core.plan_season_deletion(self.state, self.series, [1])
+        self.assertEqual(plan["matched"], [], "le pack ne doit pas être supprimé")
+        self.assertEqual(len(plan["straddling"]), 1)
+        self.assertIn(self.e01, plan["straddling_paths"])
+        self.assertNotIn(self.e02, plan["straddling_paths"],
+                         "un fichier de la saison GARDÉE n'a rien à faire dans le plan")
+        self.assertEqual(plan["freed_bytes"], 1,
+                         "seul le fichier annexe libère de l'espace : le reste est "
+                         "encore référencé par les données du pack")
+
+    def test_pack_entierement_couvert_est_supprime(self):
+        """Les deux saisons choisies : le pack ne déborde plus, il part."""
+        plan = core.plan_season_deletion(self.state, self.series, [1, 2])
+        self.assertEqual(len(plan["matched"]), 1)
+        self.assertEqual(plan["straddling"], [])
+        self.assertEqual(plan["freed_bytes"], 9, "8 octets de données + le fichier annexe")
+
+    def test_serie_sans_dossier_de_saison_ne_balaie_rien(self):
+        """Épisodes à plat dans le dossier de la série : balayer emporterait
+        toutes les autres saisons. On ne balaie donc RIEN."""
+        plat = touch(self.root / "S01E01.mkv", b"cccc")
+        self.files = [{"id": 11, "seasonNumber": 1, "path": plat, "size": 4}]
+        core.find_series_torrents = lambda *a, **k: []
+        plan = core.plan_season_deletion(self.state, self.series, [1])
+        self.assertEqual(plan["season_dirs"], [])
+        self.assertEqual(plan["orphans"], [],
+                         "aucun fichier annexe ne doit être proposé : le dossier "
+                         "balayé serait celui de la série entière")
+
+    def test_fichier_annexe_du_dossier_de_saison_est_annonce(self):
+        core.find_series_torrents = lambda *a, **k: []
+        plan = core.plan_season_deletion(self.state, self.series, [1])
+        self.assertEqual([p for p, _s in plan["orphans"]], [self.annexe])
+        self.assertNotIn(self.e01, [p for p, _s in plan["orphans"]],
+                         "un episodefile est supprimé par Sonarr, pas balayé — "
+                         "l'annoncer deux fois doublerait la taille affichée")
+
+    def test_sonarr_muet_leve(self):
+        core.arr_api = lambda *a, **k: None
+        with self.assertRaises(RuntimeError):
+            core.plan_season_deletion(self.state, self.series, [1])
+
+    def test_saison_inconnue_refusee(self):
+        """Client désynchronisé : deviner reviendrait à supprimer au hasard."""
+        with self.assertRaises(ValueError):
+            core.plan_season_deletion(self.state, self.series, [9])
+        with self.assertRaises(ValueError):
+            core.plan_season_deletion(self.state, self.series, [])
+
+    def test_saison_sans_fichier_reste_proposable(self):
+        """Une saison connue de Sonarr mais jamais téléchargée doit rester
+        sélectionnable : la désactiver est justement ce qui l'empêche d'arriver."""
+        self.series["seasons"].append({"seasonNumber": 3, "monitored": True})
+        self.assertIn(3, core.season_numbers(self.series, self.files))
+        core.find_series_torrents = lambda *a, **k: []
+        plan = core.plan_season_deletion(self.state, self.series, [3])
+        self.assertEqual(plan["episode_file_ids"], [])
+        self.assertEqual(plan["season_dirs"], [])
+
+
+class UnmonitorSeasons(unittest.TestCase):
+    """monitorNewItems doit TOUJOURS ressortir à "all" : tout l'intérêt du mode
+    sans purge est qu'une saison future soit quand même téléchargée. Une série
+    laissée à "none" rendrait la promesse fausse en silence."""
+
+    def setUp(self):
+        self.addCleanup(setattr, core, "arr_api", core.arr_api)
+
+    def test_force_monitor_new_items(self):
+        envoye = {}
+
+        def arr_api(base, key, method, path, params=None, json_body=None):
+            if method == "GET":
+                return {"id": 7, "title": "S", "monitored": False, "monitorNewItems": "none",
+                        "seasons": [{"seasonNumber": 1, "monitored": True},
+                                    {"seasonNumber": 2, "monitored": True}]}
+            envoye.update(json_body)
+            return {}
+        core.arr_api = arr_api
+        self.assertTrue(core.unmonitor_seasons({"id": 7, "title": "S"}, [1]))
+        self.assertEqual(envoye["monitorNewItems"], "all")
+        self.assertTrue(envoye["monitored"], "une série non suivie ne prend aucune saison")
+        etat = {s["seasonNumber"]: s["monitored"] for s in envoye["seasons"]}
+        self.assertFalse(etat[1])
+        self.assertTrue(etat[2], "la saison gardée doit rester suivie")
+
+    def test_echec_d_ecriture_remonte(self):
+        """arr_write rend False sur échec : sans ça une saison restait suivie
+        alors que ses fichiers venaient d'être supprimés — donc re-téléchargée."""
+        core.arr_api = lambda base, key, method, path, params=None, json_body=None: (
+            {"id": 7, "seasons": []} if method == "GET" else None)
+        self.assertFalse(core.unmonitor_seasons({"id": 7, "title": "S"}, [1]))
+
+
+
+
+class ExecuteDeleteSeasons(unittest.TestCase):
+    """L'ORDRE des écritures Sonarr est le cœur de ce chemin.
+
+    Supprimer un episodefile d'une saison ENCORE SUIVIE déclenche quasi
+    instantanément la recherche automatique interne de Sonarr, qui
+    re-téléchargerait ce qu'on vient d'effacer (piège documenté dans CLAUDE.md).
+    L'unmonitor doit donc précéder la suppression — et comme les deux répondent
+    200, rien ne le signalerait à l'exécution : seul ce test le verrouille."""
+
+    def setUp(self):
+        self.addCleanup(setattr, core, "arr_api", core.arr_api)
+        self.addCleanup(setattr, core, "cleanup_orphan_files", core.cleanup_orphan_files)
+        self.calls = []
+
+        def arr_api(base, key, method, path, params=None, json_body=None):
+            self.calls.append((method, path))
+            if method == "GET":
+                return {"id": 7, "title": "S", "seasons": [{"seasonNumber": 1, "monitored": True}]}
+            return {}
+        core.arr_api = arr_api
+        # Bouchonné : ces tests portent sur l'ordre des écritures et sur
+        # l'élagage, pas sur le balayage lui-même (déjà couvert ailleurs).
+        core.cleanup_orphan_files = lambda *a, **k: (0, 0)
+        self.plan = {
+            "series": {"id": 7, "title": "S", "path": "/nowhere"},
+            "seasons": [1], "episode_file_ids": [11, 12],
+            "matched": [], "straddling": [], "straddling_paths": [],
+            "covered": set(), "season_dirs": [], "orphans": [],
+        }
+
+    def test_unmonitor_precede_la_suppression_des_fichiers(self):
+        core.execute_delete_seasons(None, self.plan, [], {}, set(), set())
+        writes = [c for c in self.calls if c[0] != "GET"]
+        self.assertEqual(writes[0][0], "PUT", "l'unmonitor doit venir en premier")
+        self.assertIn("/series/7", writes[0][1])
+        self.assertEqual(writes[1], ("DELETE", "/api/v3/episodefile/bulk"))
+
+    def test_aucun_retrait_de_serie(self):
+        """Le mode sans purge ne doit JAMAIS appeler DELETE /series : c'est
+        exactement ce qui empêcherait une saison future d'arriver."""
+        core.execute_delete_seasons(None, self.plan, [], {}, set(), set())
+        self.assertNotIn(("DELETE", "/api/v3/series/7"),
+                         [(m, p) for m, p in self.calls])
+
+    def test_dossiers_de_saison_vides_elagues(self):
+        """Sonarr supprime SES fichiers lui-même, donc ni remove_library_paths
+        ni cleanup_orphan_files ne tourne dans le cas courant : sans élagage
+        explicite, le dossier de saison restait vide sur le disque (constaté le
+        2026-08-30 sur One-Punch Man S2 et S3)."""
+        vide = Path(_SANDBOX, "library", "series", "Elag", "Season 04")
+        vide.mkdir(parents=True, exist_ok=True)
+        self.plan["season_dirs"] = [str(vide)]
+        core.execute_delete_seasons(None, self.plan, [], {}, set(), set())
+        self.assertFalse(vide.exists(), "le dossier de saison vidé doit disparaître")
+        self.assertFalse(vide.parent.exists(),
+                         "et l'élagage remonte tant que le parent est vide")
+
+    def test_sans_fichier_pas_d_appel_bulk(self):
+        """Une saison connue mais jamais téléchargée : l'unmonitor a du sens,
+        un DELETE bulk sur une liste vide n'en a aucun."""
+        self.plan["episode_file_ids"] = []
+        core.execute_delete_seasons(None, self.plan, [], {}, set(), set())
+        self.assertNotIn("/api/v3/episodefile/bulk", [p for _m, p in self.calls])
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

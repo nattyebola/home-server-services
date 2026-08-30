@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<addon id="context.clearr" name="Supprimer avec clearr" version="1.0.0" provider-name="server">
+<addon id="context.clearr" name="Supprimer avec clearr" version="1.1.0" provider-name="server">
   <requires>
     <!-- 3.0.0 plutôt que 3.0.1 (version réelle de Kodi 21 Omega, la cible ici) :
          Omega accepte les addons 3.0.0, l'inverse n'est pas vrai. Rien dans
@@ -10,19 +10,20 @@
     <menu id="kodi.core.main">
       <item library="context.py">
         <label>30000</label>
-        <!-- Uniquement sur un film ou une série de la bibliothèque : clearr ne
-             sait supprimer qu'un titre entier (pas un épisode ni une saison,
-             voir kodi/README.md), et il faut un DBID pour lire les uniqueids
-             par JSON-RPC. -->
-        <visible>[[String.IsEqual(ListItem.DBType,movie) | String.IsEqual(ListItem.DBType,tvshow)] + !String.IsEmpty(ListItem.DBID)]</visible>
+        <!-- Film, série ou saison de la bibliothèque. Pas d'épisode : clearr
+             supprime un titre ou une saison, jamais un fichier isolé (voir
+             kodi/README.md). Il faut un DBID pour lire les uniqueids par
+             JSON-RPC — sur une saison c'est le seasonid, converti en
+             (numéro, tvshowid) par season_target(). -->
+        <visible>[[String.IsEqual(ListItem.DBType,movie) | String.IsEqual(ListItem.DBType,tvshow) | String.IsEqual(ListItem.DBType,season)] + !String.IsEmpty(ListItem.DBID)]</visible>
       </item>
     </menu>
   </extension>
   <extension point="xbmc.addon.metadata">
-    <summary lang="fr_fr">Supprime le film ou la série sélectionné via clearr</summary>
-    <summary lang="en_gb">Delete the selected movie or TV show through clearr</summary>
-    <description lang="fr_fr">Ajoute une entrée « Supprimer avec clearr » au menu contextuel des films et séries. Envoie l'identifiant IMDb/TMDB/TVDB du titre sélectionné à l'API de clearr, qui supprime les torrents, les fichiers de la bibliothèque et l'entrée Sonarr/Radarr correspondante.</description>
-    <description lang="en_gb">Adds a "Delete with clearr" entry to the context menu of movies and TV shows. Sends the selected title's IMDb/TMDB/TVDB id to the clearr API, which removes the torrents, the library files and the matching Sonarr/Radarr entry.</description>
+    <summary lang="fr_fr">Supprime le film, la série ou la saison sélectionné via clearr</summary>
+    <summary lang="en_gb">Delete the selected movie, TV show or season through clearr</summary>
+    <description lang="fr_fr">Ajoute une entrée « Supprimer avec clearr » au menu contextuel des films, séries et saisons. Envoie l'identifiant IMDb/TMDB/TVDB du titre sélectionné à l'API de clearr, qui supprime les torrents et les fichiers de la bibliothèque. Sur une série, les saisons à supprimer se choisissent dans une liste et la série reste suivie par Sonarr — sauf si « Purger » est choisi, qui la retire complètement.</description>
+    <description lang="en_gb">Adds a "Delete with clearr" entry to the context menu of movies, TV shows and seasons. Sends the selected title's IMDb/TMDB/TVDB id to the clearr API, which removes the torrents and the library files. On a TV show, seasons to delete are picked from a list and the show stays monitored by Sonarr — unless "Purge" is chosen, which removes it entirely.</description>
     <platform>all</platform>
     <license>MIT</license>
     <assets/>

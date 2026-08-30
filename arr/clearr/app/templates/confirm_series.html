@@ -1,37 +1,75 @@
+{# Écran de choix des saisons. Deux boutons plutôt qu'une case « purger » :
+   l'intention doit être lue dans le bouton qu'on clique, pas dans l'état d'une
+   case qu'on peut avoir cochée puis oubliée — et ça évite d'ajouter de la
+   logique à clearr.js, qui n'en a aucune.
+
+   Chaque ligne porte son propre bilan : le total global serait faux dès qu'on
+   décoche une saison, alors qu'une ligne reste vraie quoi qu'il arrive. #}
 <div class="modal-header">
-  <h2 class="modal-title h5" id="modal-title" text-truncate" title="Supprimer toute la série : {{ series_title }}">Supprimer toute la série : {{ series_title }}</h2>
+  <h2 class="modal-title h5 text-truncate" id="modal-title" title="Supprimer des saisons : {{ series_title }}">Supprimer : {{ series_title }}</h2>
   <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
 </div>
-<div class="modal-body">
-
-{% if torrents %}
-<p class="mb-1 small">{{ torrents|length }} torrent(s) Transmission ({{ total_files }} fichier(s), {{ total_size }}) — 🌱 = encore en seed :</p>
-<ul class="small text-body-secondary" style="max-height:200px; overflow-y:auto;">
-  {% for t in torrents[:10] %}<li class="text-truncate" title="{{ t.name }}">{{ '🌱' if t.seeding else '⏸' }} {{ t.name }}</li>{% endfor %}
-  {% if torrents|length > 10 %}<li>... et {{ torrents|length - 10 }} de plus</li>{% endif %}
-</ul>
-{% else %}
-<div class="alert alert-warning py-2 small">Aucun torrent Transmission trouvé pour cette série.</div>
-{% endif %}
-
-{% if orphans %}
-<p class="mb-1 small">{{ orphans|length }} fichier(s) sans torrent ({{ orphans_size }}), supprimé(s) aussi :</p>
-<ul class="small text-warning-emphasis" style="max-height:160px; overflow-y:auto;">
-  {% for f in orphans[:10] %}<li class="text-truncate" title="{{ f.name }} ({{ f.size }})">{{ f.name }} ({{ f.size }})</li>{% endfor %}
-  {% if orphans|length > 10 %}<li>... et {{ orphans|length - 10 }} de plus</li>{% endif %}
-</ul>
-{% else %}
-<p class="small mb-2">Aucun fichier résiduel : tout le dossier de la série est couvert par les torrents ci-dessus.</p>
-{% endif %}
-
-<div class="alert alert-danger py-2 small mb-0">Sonarr : « {{ series_title }} » sera retirée complètement (+ exclusion de liste).</div>
-</div>
-<form class="modal-footer">
-<p class="small text-danger-emphasis mb-0 me-auto">Suppression définitive : aucune annulation possible.</p>
-
+<form class="modal-body" id="season-form">
   <input type="hidden" name="sort" value="{{ sort }}">
   <input type="hidden" name="reverse" value="{{ '1' if reverse else '0' }}">
   <input type="hidden" name="filter" value="{{ filter_str }}">
-  <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
-  <button type="button" class="btn btn-danger btn-sm" data-post="/series/{{ series_id }}/delete" data-target="#tab-content">Confirmer la suppression de TOUTE la série</button>
+
+{% if seasons %}
+{# RIEN n'est coché par défaut. Le 2026-08-30, avec toutes les cases pré-cochées,
+   un clic sur la saison qu'on voulait supprimer la DÉCOCHAIT — deux autres
+   saisons sont parties à sa place. « Je coche ce que je veux supprimer » est le
+   seul sens qui ne se retourne pas contre l'utilisateur, et un clic distrait sur
+   le bouton ne supprime alors rien au lieu de tout. #}
+<p class="mb-2 small"><strong>Cochez les saisons à supprimer</strong> — 🌱 = torrent encore en seed :</p>
+<div class="small" style="max-height:260px; overflow-y:auto;">
+  {% for s in seasons %}
+  <div class="form-check">
+    <input class="form-check-input" type="checkbox" name="seasons" value="{{ s.number }}"
+           id="season-{{ s.number }}">
+    <label class="form-check-label" for="season-{{ s.number }}">
+      <span class="fw-semibold">Saison {{ s.number }}</span>
+      <span class="text-body-secondary">
+        — {{ s.episodes }} épisode(s) · {{ s.size }}
+        {%- if s.torrents %} · {{ s.torrents }} torrent(s){% if s.seeding %} {{ '🌱' * s.seeding }}{% endif %}
+        {%- else %} · aucun torrent (fichiers seuls){% endif %}
+        {%- if not s.monitored %} · déjà non suivie{% endif %}
+      </span>
+    </label>
+  </div>
+  {% endfor %}
+</div>
+{% if hidden_seasons %}
+<p class="small text-body-secondary mt-1 mb-0">{{ hidden_seasons }} saison(s) sans aucun fichier, non listée(s).</p>
+{% endif %}
+{% else %}
+<div class="alert alert-warning py-2 small">Aucune saison avec des fichiers : il n'y a rien à supprimer ici. Utilisez « Purger » pour retirer la série de Sonarr.</div>
+{% endif %}
+
+{% if straddling %}
+{# Rare (0 sur 87 torrents le 2026-08-30) mais pas théorique : un pack S01-S03
+   peut arriver au prochain grab. Conservé, donc aucun espace libéré pour ses
+   fichiers — le dire ici évite une taille libérée qui paraît trop petite. #}
+<p class="mb-1 mt-3 small text-warning-emphasis">{{ straddling|length }} torrent(s) couvrant plusieurs saisons — conservés, aucun espace libéré pour leurs fichiers :</p>
+<ul class="small text-body-secondary mb-0">
+  {% for t in straddling %}<li class="text-truncate" title="{{ t.name }}">{{ t.name }} ({{ t.seasons }})</li>{% endfor %}
+</ul>
+{% endif %}
+
+<div class="alert alert-info py-2 small mt-3 mb-0">
+  Sonarr : les saisons cochées passent en « non suivies ». <strong>La série reste suivie</strong> — une saison future sera téléchargée normalement.
+</div>
 </form>
+<div class="modal-footer">
+  <p class="small text-danger-emphasis mb-0 me-auto">Suppression définitive : aucune annulation possible.</p>
+  <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
+  {# Les deux boutons soumettent le MÊME formulaire (data-form) et ne diffèrent
+     que par ?purge=1. La purge ignore de toute façon les cases côté serveur :
+     elle retire la série entière, une purge partielle laisserait les saisons
+     gardées dans library/ sans plus aucun arr pour les revendiquer. #}
+  <button type="button" class="btn btn-outline-danger btn-sm" data-post="/series/{{ series_id }}/delete"
+          data-target="#tab-content" data-form="#season-form"
+          title="Supprime les saisons cochées, garde la série dans Sonarr">Supprimer les saisons cochées</button>
+  <button type="button" class="btn btn-danger btn-sm" data-post="/series/{{ series_id }}/delete?purge=1"
+          data-target="#tab-content" data-form="#season-form"
+          title="Supprime tout et retire la série de Sonarr (+ exclusion de liste)">Purger toute la série</button>
+</div>

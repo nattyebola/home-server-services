@@ -116,10 +116,27 @@ notification.
 
 ## Limites
 
-- **Films et séries entières uniquement.** Pas d'épisode ni de saison : clearr
-  n'expose la suppression que d'un titre complet (une série supprimée l'est avec
-  toutes ses saisons, y compris celles encore en diffusion). Le `<visible>` de
-  `addon.xml` masque l'entrée sur les autres types.
+- **Films, séries et saisons.** Pas d'épisode isolé : clearr supprime un titre
+  ou une saison entière, jamais un fichier seul. Le `<visible>` de `addon.xml`
+  masque l'entrée sur les autres types.
+- **Deux comportements sur une série**, choisis dans la boîte de confirmation :
+  « Supprimer » retire les saisons cochées et **laisse la série dans Sonarr**
+  (en `monitorNewItems: "all"`), pour qu'une saison future soit quand même
+  téléchargée ; « Purger » retire la série complètement, avec exclusion de liste.
+  « Purger » n'apparaît que si toutes les saisons sont sélectionnées — une purge
+  partielle laisserait les saisons gardées dans `library/` sans plus aucun arr
+  pour les revendiquer.
+- **Sans purge, rien n'empêche un retour** : une saison supprimée puis
+  redemandée depuis Seerr sera re-téléchargée. C'est la différence voulue entre
+  les deux boutons, pas un oubli.
+- **La liste des saisons vient du serveur**, pas de la base Kodi : celle-ci
+  reflète Jellyfin, qui peut connaître des saisons que Sonarr n'a pas. Une
+  saison inconnue de Sonarr est refusée plutôt que devinée.
+- **Un pack multi-saisons est conservé** si l'une de ses saisons est gardée :
+  ses fichiers `library/` de la saison supprimée partent, mais **aucun espace
+  n'est libéré** — les données restent seedées. La boîte de confirmation
+  distingue alors la taille retirée de la bibliothèque et l'espace réellement
+  libéré.
 - **Un titre sans identifiant externe ni chemin** dans la base Kodi ne peut pas
   être résolu : l'addon le dit et n'envoie rien.
 - **Un identifiant qui correspond à plusieurs titres** côté Sonarr/Radarr fait

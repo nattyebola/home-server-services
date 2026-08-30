@@ -60,6 +60,18 @@ async def runtime_error_handler(request: Request, exc: RuntimeError):
     return HTMLResponse(f'<div class="alert alert-danger m-3">Erreur : {exc}</div>', status_code=503)
 
 
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError):
+    """Sélection de saisons vide ou inconnue de Sonarr : l'appelant s'est
+    trompé, ce n'est pas une panne — 400 et non 503, et surtout PAS un 500 nu.
+    Sans ce handler, une saison inconnue renvoyait « Internal Server Error » en
+    text/plain à l'addon Kodi, qui n'y trouvait aucun champ `message` à
+    afficher et tombait sur le repli « clearr a répondu HTTP 500 »."""
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"deleted": False, "found": False, "message": str(exc)}, status_code=400)
+    return HTMLResponse(f'<div class="alert alert-warning m-3">{exc}</div>', status_code=400)
+
+
 # Un POST de formulaire cross-origin est une « simple request » : aucun
 # préflight CORS ne l'arrête, et clearr n'a ni cookie ni session dont un
 # SameSite pourrait dépendre. Les 5 routes de suppression étaient donc
@@ -721,19 +733,52 @@ def torrent_delete(tid: int, sort: str = Form(DEFAULT_SORT["torrents"]), reverse
 # entre les deux est la façon de rapporter le résultat, pas ce qui est supprimé.
 # Ces deux helpers lèvent sur échec, chaque appelant décidant du rendu. ---
 
-def _delete_series(series, state):
-    matched = core.find_series_torrents(state["all_torrents"], state["library_index"],
-                                         state["cross_seed_child_ids"], series["path"])
-    *_, arr_ok = core.execute_delete_series(state["client"], series, matched, state["all_torrents"],
-                                             state["cross_seed_groups"], state["linked_ids"],
-                                             state["missing_ids"])
+def _delete_series(series, state, seasons=None, purge=False):
+    """Deux chemins, choisis par l'appelant :
+
+    - purge=True : tout part, la série est retirée de Sonarr avec exclusion de
+      liste. `seasons` est alors IGNORÉ — purger une partie d'une série
+      laisserait les saisons gardées dans library/ sans plus aucun arr pour les
+      revendiquer, donc invisibles des trois vues.
+    - purge=False : seules les saisons de `seasons` partent, la série reste
+      suivie par Sonarr en monitorNewItems="all" pour qu'une saison future
+      arrive quand même. `seasons` est obligatoire sur ce chemin — « tout
+      supprimer sans purger » se demande en cochant toutes les saisons, jamais
+      par omission.
+    """
+    if purge:
+        matched = core.find_series_torrents(state["all_torrents"], state["library_index"],
+                                             state["cross_seed_child_ids"], series["path"])
+        *_, arr_ok = core.execute_delete_series(state["client"], series, matched, state["all_torrents"],
+                                                 state["cross_seed_groups"], state["linked_ids"],
+                                                 state["missing_ids"])
+        if not arr_ok:
+            # Les fichiers sont partis mais Sonarr suit toujours la série : sans ce
+            # message l'utilisateur lisait « Série supprimée » en vert pendant que
+            # la série se remettait en file de téléchargement.
+            return (f"Série supprimée : {series['title']} — ATTENTION : le retrait côté Sonarr a ÉCHOUÉ, "
+                    "la série est encore suivie et sera re-téléchargée. À retirer à la main dans Sonarr.")
+        return f"Série supprimée : {series['title']}"
+
+    plan = core.plan_season_deletion(state, series, seasons or [])
+    _t, freed, deleted, failed, arr_ok = core.execute_delete_seasons(
+        state["client"], plan, state["all_torrents"], state["cross_seed_groups"],
+        state["linked_ids"], state["missing_ids"])
+    label = ", ".join(f"S{n:02d}" for n in plan["seasons"])
+    parts = [f"{core.human_size(freed)} libéré(s)"]
+    if deleted:
+        parts.append(f"{deleted} torrent(s) supprimé(s)")
+    if failed:
+        parts.append(f"{failed} échec(s)")
+    if plan["straddling"]:
+        # Sans cette mention, la taille libérée paraît trop petite sans raison
+        # visible : les données sont toujours là, seedées par un pack.
+        parts.append(f"{len(plan['straddling'])} torrent(s) multi-saisons conservé(s)")
+    message = f"{series['title']} — {label} supprimée(s) ({', '.join(parts)}). Série toujours suivie."
     if not arr_ok:
-        # Les fichiers sont partis mais Sonarr suit toujours la série : sans ce
-        # message l'utilisateur lisait « Série supprimée » en vert pendant que
-        # la série se remettait en file de téléchargement.
-        return (f"Série supprimée : {series['title']} — ATTENTION : le retrait côté Sonarr a ÉCHOUÉ, "
-                "la série est encore suivie et sera re-téléchargée. À retirer à la main dans Sonarr.")
-    return f"Série supprimée : {series['title']}"
+        return (message + " ATTENTION : une écriture Sonarr a ÉCHOUÉ — la saison peut être encore "
+                "suivie et donc re-téléchargée. À vérifier dans Sonarr.")
+    return message
 
 
 def _delete_movie(movie, state):
@@ -762,40 +807,59 @@ def _delete_movie(movie, state):
 
 @app.get("/series/{sid}/confirm", response_class=HTMLResponse)
 def series_confirm(sid: int, sort: str = DEFAULT_SORT["series"], reverse: str = "0", filter: str = ""):
+    """Écran de choix des saisons + purge. Chaque ligne de saison porte SON
+    bilan, donc reste exacte quelle que soit la sélection : c'est ce qui évite
+    un recalcul côté navigateur (clearr.js n'a aucune logique métier) sans pour
+    autant annoncer un total qui deviendrait faux dès qu'on décoche une case."""
     series = core.find_series_by_id(sid)
     if not series:
         return HTMLResponse("<p>Série introuvable. Fermez et rafraîchissez.</p>")
     state = core.load_full_state()
-    matched = core.find_series_torrents(state["all_torrents"], state["library_index"],
-                                         state["cross_seed_child_ids"], series["path"])
-    total_files = sum(len(hf) for _t, hf, _lm in matched)
-    total_size = sum(s for _t, hf, _lm in matched for _p, s in hf)
-    # Fichiers du dossier qu'aucun torrent ne couvre : execute_delete_series les
-    # supprime (cleanup_orphan_files) mais l'écran de confirmation ne les
-    # annonçait pas, donc promettait moins que ce qu'il fait.
-    orphans = core.series_orphan_files(matched, series["path"])
+    rows, straddling = core.season_breakdown(state, series)
+    # Les saisons sans aucun fichier ne sont pas proposées : il n'y a rien à
+    # supprimer, et One Piece en aligne 22 (les saisons antérieures que Sonarr
+    # connaît sans qu'on les ait jamais téléchargées) — les afficher noierait
+    # la seule ligne utile.
+    seasons = [{"number": r["number"], "episodes": r["episodes"],
+                "size": core.human_size(r["size"]), "monitored": r["monitored"],
+                "torrents": r["torrents"], "seeding": r["seeding"]}
+               for r in rows if r["episodes"] or r["torrents"]]
     return HTMLResponse(render(
         "confirm_series.html",
-        series_id=sid, series_title=series["title"],
-        torrents=[{"name": t["name"], "seeding": core.is_seeding(t)} for t, _hf, _lm in matched],
-        total_files=total_files, total_size=core.human_size(total_size),
-        orphans=[{"name": os.path.basename(p), "size": core.human_size(s)} for p, s in orphans],
-        orphans_size=core.human_size(sum(s for _p, s in orphans)),
+        series_id=sid, series_title=series["title"], seasons=seasons,
+        hidden_seasons=len(rows) - len(seasons),
+        straddling=[{"name": t["name"], "seasons": ", ".join(f"S{n:02d}" for n in touched)}
+                    for t, touched in straddling],
         sort=sort, reverse=reverse == "1", filter_str=filter,
     ))
 
 
 @app.post("/series/{sid}/delete", response_class=HTMLResponse)
-def series_delete(sid: int, sort: str = Form(DEFAULT_SORT["series"]), reverse: str = Form("0"),
+def series_delete(sid: int, purge: str = "0", seasons: list[int] = Form(default=[]),
+                   sort: str = Form(DEFAULT_SORT["series"]), reverse: str = Form("0"),
                    filter: str = Form("")):
+    """`seasons` ne porte que des numéros de saison, jamais un chemin : rien de
+    ce qui sera supprimé ne vient du client, le plan est recalculé côté serveur
+    à partir des seuls entiers reçus (même règle que « Orphelins library/ »).
+    FastAPI les valide en int, ce qui suffit — plan_season_deletion refuse de
+    toute façon une saison que Sonarr ne connaît pas.
+
+    `purge` est un paramètre d'URL et non un champ : les deux boutons de la
+    modale soumettent le même formulaire (celui des cases à cocher), seule leur
+    cible diffère. Un champ caché aurait dû vivre dans un second <form>, donc
+    imbriqué dans le premier — invalide en HTML."""
     series = core.find_series_by_id(sid)
     if not series:
         return HTMLResponse(render_arr_tab("series", sort, reverse == "1", filter,
                                                message="Série déjà supprimée.", message_kind="warning"))
     state = core.load_full_state()
     try:
-        message = _delete_series(series, state)
+        message = _delete_series(series, state, seasons=seasons, purge=purge == "1")
         kind = "success"
+    except ValueError as e:
+        # Sélection vide ou saison inconnue : erreur de l'appelant, pas une
+        # panne — inutile de renvoyer vers le fichier de log.
+        message, kind = f"Rien n'a été supprimé : {e}", "warning"
     except Exception as e:
         core.logger.error("échec de la suppression de la série %r : %s", series["title"], e)
         message, kind = f"ÉCHEC (voir {core.LOG_PATH}) : {e}", "danger"
@@ -879,6 +943,14 @@ class DeleteTarget(BaseModel):
     # Chemin du fichier (film) ou du dossier (série) tel que le voit le client,
     # facultatif : il ne sert que quand les ids ne résolvent rien côté arr.
     path: str = ""
+    # Saisons à supprimer (séries gérées par Sonarr uniquement). Vide = toutes.
+    seasons: list[int] = []
+    # purge=False par défaut : la série reste dans Sonarr, une saison future
+    # sera donc téléchargée. C'est un CHANGEMENT de comportement par rapport à
+    # l'API d'avant le 2026-08-30, qui purgeait toujours — d'où le bump de
+    # kodi/context.clearr en 1.1.0 : un addon plus ancien enverrait un corps
+    # sans ce champ et verrait sa suppression cesser silencieusement de purger.
+    purge: bool = False
 
 
 class _NotFound(Exception):
@@ -911,26 +983,78 @@ def _resolve_target(target, find, kind_label):
     return "media_path", resolved
 
 
-def _preview_arr_series(series, state):
-    matched = core.find_series_torrents(state["all_torrents"], state["library_index"],
-                                         state["cross_seed_child_ids"], series["path"])
-    # Mêmes fichiers résiduels que ceux annoncés par l'écran web (voir
-    # series_confirm) : execute_delete_series les supprime aussi, l'addon Kodi
-    # doit donc pouvoir les nommer avant de demander confirmation.
-    orphans = core.series_orphan_files(matched, series["path"])
+def _target_seasons(target, series, state):
+    """Saisons effectivement visées par un appel API. Un corps sans `seasons`
+    (et sans purge) veut dire « toute la série, mais en la gardant dans
+    Sonarr » : on prend alors toutes les saisons qui ont des fichiers.
+
+    Partagé par la prévisualisation et la suppression : si les deux calculaient
+    leur propre liste, la boîte de confirmation de Kodi pourrait annoncer autre
+    chose que ce qui part."""
+    if target and target.seasons:
+        return list(target.seasons)
+    rows, _straddling = core.season_breakdown(state, series)
+    return [r["number"] for r in rows if r["episodes"] or r["torrents"]]
+
+
+def _preview_arr_series(series, state, target=None):
+    """Deux prévisualisations selon ce que l'appelant s'apprête à faire — sinon
+    l'addon Kodi annoncerait le bilan d'une purge avant une suppression
+    partielle, ou l'inverse.
+
+    Dans les deux cas la réponse porte `seasons` : c'est la liste que l'addon
+    présente à l'utilisateur pour qu'il coche. Elle vient de Sonarr et non de la
+    base locale de Kodi, qui pourrait connaître des saisons que le serveur n'a
+    pas (ou l'inverse) — proposer de supprimer une saison inconnue du serveur ne
+    mènerait qu'à un refus après confirmation."""
+    purge = bool(target and target.purge)
+    seasons_asked = [] if purge else _target_seasons(target, series, state)
+    rows, straddling = core.season_breakdown(state, series)
+    listed = [{"number": r["number"], "episodes": r["episodes"],
+               "size": core.human_size(r["size"]), "torrents": r["torrents"],
+               "seeding": r["seeding"], "monitored": r["monitored"]}
+              for r in rows if r["episodes"] or r["torrents"]]
+
+    if purge or not seasons_asked:
+        matched = core.find_series_torrents(state["all_torrents"], state["library_index"],
+                                             state["cross_seed_child_ids"], series["path"])
+        # Mêmes fichiers résiduels que ceux annoncés par l'écran web (voir
+        # series_confirm) : execute_delete_series les supprime aussi, l'addon Kodi
+        # doit donc pouvoir les nommer avant de demander confirmation.
+        orphans = core.series_orphan_files(matched, series["path"])
+        return {
+            "title": series["title"],
+            "torrents": len(matched),
+            "seeding": sum(1 for t, _hf, _lm in matched if core.is_seeding(t)),
+            "files": sum(len(host_files) for _t, host_files, _lm in matched) + len(orphans),
+            "orphan_files": len(orphans),
+            "orphans": [{"name": os.path.basename(p), "size": core.human_size(s)} for p, s in orphans],
+            "size_bytes": sum(s for _t, host_files, _lm in matched for _p, s in host_files)
+                          + sum(s for _p, s in orphans),
+            "seasons": listed, "straddling": len(straddling), "purge": purge,
+        }
+
+    plan = core.plan_season_deletion(state, series, seasons_asked)
+    # Seuls les fichiers que Sonarr ne revendique pas sont nommés : depuis le
+    # metadata writer une saison porte un .nfo par épisode (21 pour One Piece
+    # S23), et les lister ferait passer une suppression saine pour une
+    # hécatombe dans une boîte de dialogue qui ne défile pas.
     return {
         "title": series["title"],
-        "torrents": len(matched),
-        "seeding": sum(1 for t, _hf, _lm in matched if core.is_seeding(t)),
-        "files": sum(len(host_files) for _t, host_files, _lm in matched) + len(orphans),
-        "orphan_files": len(orphans),
-        "orphans": [{"name": os.path.basename(p), "size": core.human_size(s)} for p, s in orphans],
-        "size_bytes": sum(s for _t, host_files, _lm in matched for _p, s in host_files)
-                      + sum(s for _p, s in orphans),
+        "torrents": len(plan["matched"]),
+        "seeding": sum(1 for t, _hf, _lm in plan["matched"] if core.is_seeding(t)),
+        "files": len(plan["episode_file_ids"]) + len(plan["orphans"]),
+        "orphan_files": len(plan["extra_files"]),
+        "orphans": [{"name": os.path.basename(p), "size": core.human_size(s)}
+                    for p, s in plan["extra_files"]],
+        "size_bytes": plan["size_bytes"],
+        "freed_bytes": plan["freed_bytes"],
+        "seasons": listed, "straddling": len(plan["straddling"]), "purge": False,
+        "selected_seasons": plan["seasons"],
     }
 
 
-def _preview_arr_movie(movie, state):
+def _preview_arr_movie(movie, state, target=None):
     movie_path = movie["movieFile"]["path"] if movie.get("hasFile") else None
     torrent = core.find_movie_torrent(state["all_torrents"], state["cross_seed_child_ids"], movie_path) \
         if movie_path else None
@@ -964,7 +1088,14 @@ def _summary(preview, managed_by_arr):
                      + ("s" if preview["orphan_files"] > 1 else "") + " sans torrent")
     if not parts:
         parts.append("aucun torrent" if managed_by_arr else "aucun fichier")
-    return ", ".join(parts) + f" — {core.human_size(preview['size_bytes'])}"
+    size = core.human_size(preview["size_bytes"])
+    freed = preview.get("freed_bytes")
+    if freed is not None and freed != preview["size_bytes"]:
+        # Un pack multi-saisons survit à une suppression partielle : ses données
+        # restent seedées. Annoncer la seule taille retirée de la bibliothèque
+        # ferait attendre un espace disque qui ne se libérera pas.
+        size += f" (dont {core.human_size(freed)} libéré(s))"
+    return ", ".join(parts) + f" — {size}"
 
 
 def _api_preview(target, find, preview_arr, kind_label):
@@ -974,7 +1105,7 @@ def _api_preview(target, find, preview_arr, kind_label):
         return JSONResponse({"found": False, "message": str(e)}, status_code=404)
     state = core.load_full_state()
     if mode == "arr":
-        preview = preview_arr(resolved, state)
+        preview = preview_arr(resolved, state, target)
     else:
         preview = core.plan_media_path_deletion(state, resolved)
         preview.pop("matched")  # non sérialisable, et sans intérêt pour l'appelant
@@ -1000,7 +1131,8 @@ def _api_delete(target, find, delete_arr, kind_label):
     state = core.load_full_state()
     title = resolved["title"] if mode == "arr" else os.path.basename(resolved.rstrip("/"))
     try:
-        message = delete_arr(resolved, state) if mode == "arr" else _delete_media_path(resolved, state)
+        message = delete_arr(resolved, state, target) if mode == "arr" \
+            else _delete_media_path(resolved, state)
     except Exception as e:
         core.logger.error("API : échec de la suppression de %r : %s", title, e)
         return JSONResponse(
@@ -1009,6 +1141,19 @@ def _api_delete(target, find, delete_arr, kind_label):
         )
     core.logger.info("API : %s", message)
     return {"deleted": True, "title": title, "message": message}
+
+
+def _api_delete_series(series, state, target):
+    """Le mode purge ignore `seasons` — décision explicite : purger une partie
+    d'une série laisserait les saisons gardées dans library/ sans plus aucun arr
+    pour les revendiquer."""
+    if target.purge:
+        return _delete_series(series, state, purge=True)
+    return _delete_series(series, state, seasons=_target_seasons(target, series, state))
+
+
+def _api_delete_movie(movie, state, _target=None):
+    return _delete_movie(movie, state)
 
 
 @app.post("/api/preview/series")
@@ -1023,9 +1168,9 @@ def api_preview_film(target: DeleteTarget):
 
 @app.post("/api/delete/series")
 def api_delete_series(target: DeleteTarget):
-    return _api_delete(target, core.find_series_by_external_ids, _delete_series, "Série")
+    return _api_delete(target, core.find_series_by_external_ids, _api_delete_series, "Série")
 
 
 @app.post("/api/delete/film")
 def api_delete_film(target: DeleteTarget):
-    return _api_delete(target, core.find_movie_by_external_ids, _delete_movie, "Film")
+    return _api_delete(target, core.find_movie_by_external_ids, _api_delete_movie, "Film")

@@ -886,6 +886,392 @@ def series_orphan_files(matched, series_path):
     return orphan_files_under(series_path, covered)
 
 
+# --- Suppression d'une série SAISON PAR SAISON --------------------------------
+#
+# Deux modes, exposés par execute_delete_series(purge=) :
+#
+#   purge=True  : comportement historique — tout part, la série est retirée de
+#                 Sonarr avec exclusion de liste. La sélection de saisons est
+#                 alors IGNORÉE (purger une partie d'une série laisserait les
+#                 saisons gardées dans library/ sans plus aucun arr pour les
+#                 revendiquer : invisibles des trois vues, hors « Orphelins
+#                 library/ »).
+#   purge=False : les saisons choisies partent, la série RESTE dans Sonarr en
+#                 monitorNewItems="all" — c'est ce qui permet à une saison
+#                 future d'être téléchargée alors qu'on vient d'effacer les
+#                 précédentes. Pas d'exclusion de liste : une saison redemandée
+#                 depuis Seerr sera re-téléchargée, et c'est voulu.
+#
+# LE PLAN PART DES episodefile, PAS DES TORRENTS NI DES DOSSIERS « Season XX ».
+#   - Pas des dossiers : leur format est configurable dans Sonarr, vaut
+#     « Specials » pour la saison 0, et une série peut n'en avoir aucun. Une
+#     heuristique de nom est exactement le genre de devinette qui a produit les
+#     bugs d'identification déjà corrigés ailleurs.
+#   - Pas des torrents : mesuré le 2026-08-30, 164 des 269 episodefile de cette
+#     bibliothèque (61 %) n'ont PLUS AUCUN torrent — Sonarr les retire du client
+#     une fois le seedRatio 1.5 atteint sur les indexeurs publics. Des saisons
+#     entières n'existent que sous forme de fichiers library/. Partir des
+#     torrents ne verrait donc pas la majorité de ce qu'il faut supprimer.
+#
+# Corollaire : sans la liste des episodefile on ne sait rien. series_episode_
+# files() LÈVE au lieu de dégrader, comme _arr_covered_paths() et pour la même
+# raison — une suppression de saison qui ne supprimerait presque rien tout en
+# s'annonçant réussie est pire qu'une erreur affichée.
+
+def series_episode_files(series_id):
+    """episodefile d'une série. Contrairement à fetch_episode_files() (fiche
+    détail, best-effort), lève RuntimeError si Sonarr ne répond pas : c'est la
+    seule source qui rattache un fichier à une saison, tout le plan en dépend."""
+    files = arr_api(SONARR_URL, SONARR_API_KEY, "GET", "/api/v3/episodefile",
+                    params={"seriesId": series_id})
+    if files is None:
+        raise RuntimeError(
+            "Sonarr n'a pas répondu : impossible de savoir quel fichier appartient à quelle "
+            "saison, donc impossible de supprimer une saison sans risquer d'en emporter une "
+            "autre. Vérifiez que Sonarr répond, puis réessayez.")
+    return files
+
+
+def season_numbers(series, episode_files):
+    """Saisons proposables : celles de l'objet série (source de vérité, y
+    compris une saison connue sans aucun fichier) réunies à celles réellement
+    portées par un episodefile — une saison dont Sonarr aurait perdu l'entrée
+    resterait sinon insupprimable depuis clearr."""
+    return sorted({s["seasonNumber"] for s in series.get("seasons", [])}
+                  | {f["seasonNumber"] for f in episode_files})
+
+
+def season_directories(episode_files, seasons, series_path):
+    """Dossiers à balayer pour les fichiers annexes d'une saison, DÉDUITS des
+    episodefile — jamais construits depuis un nom de saison.
+
+    Garde indispensable : une série dont les épisodes vivent à plat dans son
+    dossier (seasonFolder désactivé) donne dirname == series_path, et balayer
+    ce dossier emporterait TOUTES les autres saisons. Dans ce cas on ne balaie
+    rien — seuls les fichiers connus de Sonarr partent. Aucune série de cette
+    bibliothèque n'est dans ce cas (vérifié le 2026-08-30, les 29 ont des
+    dossiers de saison), mais une série ajoutée à la main peut l'être."""
+    wanted = set(seasons)
+    dirs = set()
+    for f in episode_files:
+        if f["seasonNumber"] not in wanted:
+            continue
+        directory = os.path.dirname(f["path"])
+        if os.path.normpath(directory) == os.path.normpath(series_path):
+            logger.info("série %s : épisodes à plat dans le dossier de la série — "
+                        "aucun balayage de fichiers annexes pour la saison %s",
+                        series_path, f["seasonNumber"])
+            continue
+        dirs.add(directory)
+    return sorted(dirs)
+
+
+def plan_season_deletion(state, series, seasons):
+    """Plan complet d'une suppression partielle. Lève RuntimeError si Sonarr est
+    muet, ValueError si une saison demandée lui est inconnue (client
+    désynchronisé — deviner serait supprimer au hasard).
+
+    Trois familles de torrents, à ne surtout pas confondre :
+      - `matched`    : tous leurs fichiers library/ appartiennent aux saisons
+                       choisies -> supprimés, données comprises ;
+      - `straddling` : à cheval sur une saison gardée (pack multi-saisons) ->
+                       CONSERVÉS, on ne retire que les hardlinks library/ des
+                       saisons choisies. Aucun espace n'est libéré pour ces
+                       fichiers-là, les données restent sous .transmission/data
+                       et continuent d'être seedées. Rare (0 sur 87 torrents le
+                       2026-08-30) mais un pack S01-S03 peut arriver au prochain
+                       grab ;
+      - le reste     : intouchés, et leurs fichiers library/ sont `covered`,
+                       donc protégés du balayage des fichiers annexes.
+    """
+    wanted = set(seasons)
+    if not wanted:
+        raise ValueError("aucune saison sélectionnée")
+    episode_files = series_episode_files(series["id"])
+    known = set(season_numbers(series, episode_files))
+    unknown = wanted - known
+    if unknown:
+        raise ValueError(f"saison(s) inconnue(s) de Sonarr : {sorted(unknown)}")
+
+    path_season = {f["path"]: f["seasonNumber"] for f in episode_files}
+    targets = [f for f in episode_files if f["seasonNumber"] in wanted]
+
+    matched, straddling, survivors = [], [], []
+    for entry in find_series_torrents(state["all_torrents"], state["library_index"],
+                                       state["cross_seed_child_ids"], series["path"]):
+        _t, _hf, lib_matches = entry
+        touched = {path_season[p] for p, _s in lib_matches if p in path_season}
+        if touched and touched <= wanted:
+            matched.append(entry)
+        else:
+            # Torrent à cheval, OU sans aucun fichier rattachable à une saison
+            # connue (fichier que Sonarr ne revendique plus) : dans les deux cas
+            # on ne le supprime pas. Conservateur par construction — un torrent
+            # qu'on n'arrive pas à rattacher n'est jamais supprimé au jugé.
+            survivors.append(entry)
+            if touched & wanted:
+                straddling.append(entry)
+
+    # Chemins library/ qu'un torrent SURVIVANT couvre encore : ni à balayer, ni
+    # à compter comme espace libéré (leur inode reste référencé par les données
+    # Transmission). Même espace de chemins que series_orphan_files() — les
+    # lib_matches, pas les host_files : c'est le dossier de la série qu'on
+    # inspecte, et il ne contient que des hardlinks.
+    covered = {p for _t, _hf, lm in survivors for p, _s in lm}
+
+    season_dirs = season_directories(episode_files, wanted, series["path"])
+    orphans = []
+    for directory in season_dirs:
+        orphans += orphan_files_under(directory, covered | {f["path"] for f in targets})
+    # Les sidecars sont mis à part pour l'AFFICHAGE seulement — ils partent
+    # exactement comme le reste. Depuis le metadata writer, une saison a un .nfo
+    # par épisode (21 pour One Piece S23) : les lister à côté des vidéos ferait
+    # passer une suppression saine pour une hécatombe, et noierait le seul cas
+    # qui mérite qu'on le lise — une VIDÉO que Sonarr ne revendique pas.
+    sidecars = [(p, s) for p, s in orphans
+                if os.path.splitext(p)[1].lower() in SIDECAR_EXTENSIONS]
+    extra_files = [(p, s) for p, s in orphans if (p, s) not in set(sidecars)]
+
+    # Taille annoncée = tout ce qui disparaît de la bibliothèque ; espace libéré
+    # = seulement ce dont on retire le DERNIER lien. Les deux diffèrent dès
+    # qu'un torrent à cheval survit, et afficher l'un pour l'autre serait le
+    # même mensonge que les « 52.0Go » d'un film de 26.0Go du 2026-08-01.
+    size_bytes = sum(f.get("size", 0) for f in targets) + sum(s for _p, s in orphans)
+    # Déjà compté via les host_files de leur torrent : additionner les deux
+    # compterait deux fois les mêmes octets physiques (un fichier library/ est
+    # un hardlink d'un fichier du torrent, cf. apply_deletion).
+    in_matched = {p for _t, _hf, lm in matched for p, _s in lm}
+    freed_bytes = (sum(s for _t, hf, _lm in matched for _p, s in hf)
+                   + sum(f.get("size", 0) for f in targets
+                         if f["path"] not in covered and f["path"] not in in_matched)
+                   + sum(s for _p, s in orphans))
+
+    return {
+        "series": series,
+        "seasons": sorted(wanted),
+        "season_dirs": season_dirs,
+        "episode_files": targets,
+        "episode_file_ids": [f["id"] for f in targets],
+        "matched": matched,
+        "straddling": straddling,
+        "straddling_paths": sorted(p for _t, _hf, lm in straddling for p, _s in lm
+                                    if path_season.get(p) in wanted),
+        "covered": covered,
+        "orphans": orphans,
+        "sidecars": sidecars,
+        "extra_files": extra_files,
+        "size_bytes": size_bytes,
+        "freed_bytes": freed_bytes,
+    }
+
+
+def season_stats(series, episode_files):
+    """Une ligne par saison pour l'écran de choix : ce que l'utilisateur doit
+    voir AVANT de cocher. Ne calcule rien de destructif et ne fait aucun appel
+    supplémentaire — les compteurs viennent des episodefile déjà chargés."""
+    rows = []
+    by_season = {}
+    for f in episode_files:
+        by_season.setdefault(f["seasonNumber"], []).append(f)
+    monitored = {s["seasonNumber"]: bool(s.get("monitored")) for s in series.get("seasons", [])}
+    for number in season_numbers(series, episode_files):
+        files = by_season.get(number, [])
+        rows.append({
+            "number": number,
+            "episodes": len(files),
+            "size": sum(f.get("size", 0) for f in files),
+            "monitored": monitored.get(number, False),
+        })
+    return rows
+
+
+def season_breakdown(state, series):
+    """Une ligne par saison POUR L'ÉCRAN DE CHOIX, calculée en une seule passe :
+    un appel episodefile et un find_series_torrents pour toute la série, pas un
+    plan_season_deletion() par saison (qui rappellerait Sonarr N fois et
+    rescannerait tous les torrents autant de fois).
+
+    Chaque ligne porte SON propre bilan, donc reste exacte quelle que soit la
+    sélection — c'est ce qui permet de tenir la promesse « la modale annonce ce
+    qui va partir » sans recalcul côté navigateur, là où un total global
+    deviendrait faux dès qu'on décoche une case.
+
+    Renvoie (lignes, à_cheval) — les torrents à cheval sont un fait global, pas
+    un attribut de saison : ils ne partent dans AUCUN cas partiel."""
+    episode_files = series_episode_files(series["id"])
+    path_season = {f["path"]: f["seasonNumber"] for f in episode_files}
+    monitored = {s["seasonNumber"]: bool(s.get("monitored")) for s in series.get("seasons", [])}
+
+    own, straddling = {}, []
+    for entry in find_series_torrents(state["all_torrents"], state["library_index"],
+                                       state["cross_seed_child_ids"], series["path"]):
+        torrent, _hf, lib_matches = entry
+        touched = {path_season[p] for p, _s in lib_matches if p in path_season}
+        if len(touched) == 1:
+            own.setdefault(touched.pop(), []).append(torrent)
+        elif len(touched) > 1:
+            straddling.append((torrent, sorted(touched)))
+
+    by_season = {}
+    for f in episode_files:
+        by_season.setdefault(f["seasonNumber"], []).append(f)
+
+    rows = []
+    for number in season_numbers(series, episode_files):
+        files = by_season.get(number, [])
+        torrents = own.get(number, [])
+        rows.append({
+            "number": number,
+            "episodes": len(files),
+            "size": sum(f.get("size", 0) for f in files),
+            "monitored": monitored.get(number, False),
+            "torrents": len(torrents),
+            "seeding": sum(1 for t in torrents if is_seeding(t)),
+            "straddling": sum(1 for _t, touched in straddling if number in touched),
+        })
+    return rows, straddling
+
+
+def unmonitor_seasons(series, seasons):
+    """Désactive les saisons choisies et REMET monitorNewItems="all" dans la
+    même écriture.
+
+    Pourquoi forcer monitorNewItems ici : tout l'intérêt du mode sans purge est
+    qu'une saison future soit quand même téléchargée. Une série à "none" rendrait
+    la promesse fausse en silence. C'est le défaut de Seerr comme de Sonarr
+    (vérifié le 2026-08-30 : les 29 séries et le réglage Seerr sont à "all"), donc
+    ce n'est qu'un filet — mais il est gratuit, l'écriture a lieu de toute façon,
+    et il couvre aussi les séries ajoutées à la main hors Seerr.
+
+    `monitored` est forcé à True pour la même raison : une série globalement non
+    suivie ne prendrait aucune nouvelle saison, quel que soit monitorNewItems.
+
+    Contrairement à plan_sonarr_unmonitor() (vue Torrents), AUCUNE condition de
+    « saison terminée » : ici l'utilisateur a désigné la saison explicitement,
+    y compris une saison en cours de diffusion dont il ne veut plus."""
+    fresh = arr_api(SONARR_URL, SONARR_API_KEY, "GET", f"/api/v3/series/{series['id']}")
+    if not fresh:
+        logger.warning("unmonitor_seasons: série id=%s introuvable au moment d'écrire", series["id"])
+        return False
+    wanted = set(seasons)
+    for season in fresh.get("seasons", []):
+        if season["seasonNumber"] in wanted:
+            season["monitored"] = False
+    fresh["monitored"] = True
+    fresh["monitorNewItems"] = "all"
+    return arr_write(SONARR_URL, SONARR_API_KEY, "PUT", f"/api/v3/series/{series['id']}",
+                     json_body=fresh,
+                     what=f"désactivation des saisons {sorted(wanted)} de {series['title']!r}")
+
+
+def delete_episode_files(file_ids):
+    """Retire les episodefile de la base Sonarr — et c'est Sonarr qui supprime
+    le hardlink library/ correspondant.
+
+    Appelé AVANT toute suppression de torrent, délibérément :
+      - Sonarr est ainsi seul à toucher aux fichiers qu'il revendique, donc sa
+        base ne peut pas rester désynchronisée d'un disque qu'on aurait vidé
+        derrière son dos ;
+      - le déclencheur onEpisodeFileDelete (activé sur la connexion Jellyfin,
+        cf. JELLYFIN_TRIGGERS) signale le bon dossier à Jellyfin. En mode sans
+        purge il n'y a pas de onSeriesDelete : sans cet appel, la propagation
+        vers Jellyfin puis Kodi ne dépendrait plus que du watcher inotify ;
+      - un episodefile dont le fichier a déjà disparu est un cas qu'on s'évite.
+
+    Doit être précédé de unmonitor_seasons() : supprimer un episodefile d'une
+    saison encore suivie déclenche quasi instantanément la recherche automatique
+    interne de Sonarr, qui re-téléchargerait ce qu'on vient d'effacer (piège
+    documenté dans CLAUDE.md, constaté sur un grab manuel en 2026-08).
+
+    L'endpoint bulk n'est appelé qu'une fois : une série entière peut porter
+    plusieurs dizaines de fichiers."""
+    if not file_ids:
+        return True
+    return arr_write(SONARR_URL, SONARR_API_KEY, "DELETE", "/api/v3/episodefile/bulk",
+                     json_body={"episodeFileIds": list(file_ids)},
+                     what=f"suppression de {len(file_ids)} episodefile")
+
+
+def remove_library_paths(paths):
+    """Supprime des hardlinks library/ que Sonarr ne revendique plus (fichiers
+    annexes, ou épisodes d'un torrent à cheval que delete_episode_files n'a pas
+    couverts). Renvoie (nombre, octets)."""
+    removed, freed = 0, 0
+    for path in paths:
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            size = 0
+        try:
+            os.remove(path)
+            removed += 1
+            freed += size
+            logger.info("fichier supprimé : %s", path)
+            prune_empty_dirs(path)
+        except OSError as e:
+            logger.warning("échec de suppression de %s : %s", path, e)
+    return removed, freed
+
+
+def execute_delete_seasons(client, plan, all_torrents, cross_seed_groups, linked_ids, missing_ids):
+    """Exécute un plan de plan_season_deletion(). Ordre imposé, chaque étape
+    dépendant de la précédente :
+
+      1. unmonitor des saisons (+ monitorNewItems="all")  -> ferme la fenêtre de
+         recherche automatique AVANT de retirer quoi que ce soit ;
+      2. DELETE episodefile/bulk                          -> Sonarr retire ses
+         entrées ET les hardlinks library/, et notifie Jellyfin ;
+      3. suppression des torrents entièrement couverts    -> libère les données ;
+      4. hardlinks résiduels des torrents à cheval        -> le torrent survit ;
+      5. balayage des fichiers annexes du dossier de saison.
+
+    Renvoie (all_torrents, freed, deleted, failed, arr_ok)."""
+    series = plan["series"]
+    arr_ok = unmonitor_seasons(series, plan["seasons"])
+    arr_ok = delete_episode_files(plan["episode_file_ids"]) and arr_ok
+
+    all_torrents, freed, deleted, failed, failed_entries = bulk_delete_torrents(
+        client, plan["matched"], all_torrents, linked_ids, missing_ids, cross_seed_groups)
+
+    # Hardlinks des saisons choisies portés par un torrent CONSERVÉ : Sonarr les
+    # a normalement déjà retirés à l'étape 2 (ce sont ses episodefile), d'où le
+    # filtre sur l'existence — ne restent ici que ceux qu'il n'a pas pu ou pas
+    # su supprimer. Aucun espace libéré, le torrent seede toujours les données.
+    straddling_removed, _straddling_freed = remove_library_paths(
+        [p for p in plan["straddling_paths"] if os.path.lexists(p)])
+
+    # Les torrents en échec couvrent toujours leurs fichiers : les balayer
+    # supprimerait des données encore seedées, jamais annoncées à l'écran.
+    still_covered = plan["covered"] | {p for _t, _hf, lm in failed_entries for p, _s in lm}
+    orphan_removed = orphan_freed = 0
+    # Dossiers pris DANS LE PLAN : les recalculer ici les chercherait dans des
+    # episodefile que l'étape 2 vient justement de supprimer, donc dans une
+    # liste vide — plus aucun fichier annexe ne serait balayé.
+    for directory in plan["season_dirs"]:
+        r, f = cleanup_orphan_files(directory, covered=still_covered)
+        orphan_removed += r
+        orphan_freed += f
+    freed += orphan_freed
+
+    # Le dossier de saison lui-même. Les deux fonctions qui élaguent
+    # (remove_library_paths, cleanup_orphan_files) ne le font qu'après avoir
+    # supprimé un fichier — or ici c'est SONARR qui a supprimé les siens, donc
+    # aucune des deux ne tourne dans le cas courant et les dossiers restaient
+    # vides sur le disque (constaté le 2026-08-30 sur One-Punch Man S2/S3).
+    # prune_empty_dirs_from remonte tant que c'est vide : le dossier de la série
+    # survit tant qu'il lui reste ne serait-ce qu'un tvshow.nfo, ce qui est le
+    # comportement voulu — la série, elle, est conservée.
+    for directory in plan["season_dirs"]:
+        prune_empty_dirs_from(directory, LIBRARY_ROOT)
+
+    logger.info("Sonarr: série %r (id=%s) saisons %s — arr %s, %d episodefile retiré(s) par Sonarr, "
+                "%d torrent(s) supprimé(s), %d échec(s), %d hardlink(s) résiduel(s), "
+                "%d fichier(s) annexe(s), série CONSERVÉE",
+                series["title"], series["id"], plan["seasons"], "OK" if arr_ok else "ÉCHOUÉ",
+                len(plan["episode_file_ids"]), deleted, failed, straddling_removed, orphan_removed)
+    return all_torrents, freed, deleted, failed, arr_ok
+
+
 def _arr_covered_paths():
     """(fichiers, dossiers) que Sonarr/Radarr revendiquent dans library/ :
     chemins exacts des episodefile/movieFile importés, et dossiers des titres
@@ -1046,7 +1432,13 @@ def execute_delete_series(client, series, matched, all_torrents, cross_seed_grou
     fichiers résiduels de son dossier, puis retire la série de Sonarr
     (deleteFiles=false : les fichiers ont déjà été supprimés ici même, comme
     pour un film via plan_radarr_deletion) avec exclusion de liste pour ne
-    jamais la voir revenir via un import list sync."""
+    jamais la voir revenir via un import list sync.
+
+    C'est le chemin de PURGE, et il reste inchangé — la suppression partielle
+    passe par plan_season_deletion() + execute_delete_seasons(), volontairement
+    séparées plutôt qu'ajoutées ici en paramètres : les deux ne partagent ni
+    l'ordre des écritures Sonarr, ni ce qu'elles balaient, ni ce qu'elles
+    promettent. La TUI et le bouton « Purger » de l'UI web appellent celle-ci."""
     host_path = series["path"]  # même mount /data_root que Sonarr, aucune traduction nécessaire
     all_torrents, freed, deleted, failed, failed_entries = bulk_delete_torrents(
         client, matched, all_torrents, linked_ids, missing_ids, cross_seed_groups)
@@ -1521,6 +1913,13 @@ def do_delete(client, torrent, host_files, lib_matches, arr_plan, dependents=())
         try:
             os.remove(path)
             logger.info("fichier library supprimé : %s", path)
+            prune_empty_dirs(path)
+        except FileNotFoundError:
+            # Déjà parti, et c'est le cas NORMAL sur le chemin de suppression par
+            # saison : Sonarr a retiré ses episodefile (et leurs hardlinks) avant
+            # qu'on touche aux torrents. Un warning par fichier ferait passer une
+            # dizaine de lignes d'alerte pour une suppression parfaitement saine.
+            logger.debug("fichier library déjà absent : %s", path)
             prune_empty_dirs(path)
         except OSError as e:
             logger.warning("échec de suppression du fichier library %s : %s", path, e)

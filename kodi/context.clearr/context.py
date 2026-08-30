@@ -26,9 +26,16 @@ NAME = ADDON.getAddonInfo("name")
 # ListItem.DBTYPE -> (endpoint clearr, méthode JSON-RPC, nom du paramètre d'id,
 # clé du résultat). Les autres types sont déjà exclus par le <visible> de
 # addon.xml, ce dict fait aussi office de garde-fou côté script.
+#
+# "season" passe par le même endpoint /series que "tvshow" : clearr résout
+# toujours la SÉRIE (par ses ids externes), la saison n'étant qu'un filtre
+# envoyé à côté. Kodi n'expose d'ailleurs aucun uniqueid exploitable sur une
+# saison — il faut de toute façon remonter au tvshow parent, d'où les deux
+# appels JSON-RPC de season_target().
 KINDS = {
     "movie": ("film", "VideoLibrary.GetMovieDetails", "movieid", "moviedetails"),
     "tvshow": ("series", "VideoLibrary.GetTVShowDetails", "tvshowid", "tvshowdetails"),
+    "season": ("series", "VideoLibrary.GetSeasonDetails", "seasonid", "seasondetails"),
 }
 
 # Une suppression de série enchaîne plusieurs torrents et plusieurs appels arr :
@@ -49,6 +56,22 @@ def jsonrpc(method, params):
     return json.loads(xbmc.executeJSONRPC(json.dumps(request)))
 
 
+def season_target(dbid):
+    """(numéro de saison, dbid du tvshow parent) pour un clic sur une saison.
+
+    Deux appels : Kodi ne met pas les uniqueid de la série sur ses saisons, et
+    c'est la série que clearr doit résoudre. Le numéro de saison vient de Kodi
+    (donc de Jellyfin, donc du nom de dossier écrit par Sonarr) ; clearr le
+    revalide contre Sonarr et refuse une saison qu'il ne connaît pas, plutôt que
+    d'en deviner une."""
+    details = jsonrpc("VideoLibrary.GetSeasonDetails",
+                      {"seasonid": dbid, "properties": ["season", "tvshowid"]})
+    details = details.get("result", {}).get("seasondetails") or {}
+    if "season" not in details or "tvshowid" not in details:
+        return None, None
+    return details["season"], details["tvshowid"]
+
+
 def library_details(dbtype, dbid):
     """Titre + ids externes + chemin connus de Kodi pour cet item.
 
@@ -62,7 +85,10 @@ def library_details(dbtype, dbid):
     mode addon, Kodi ne connaîtrait qu'une URL plugin://, que clearr ne saurait
     pas rattacher à un fichier. Le préfixe, lui, peut différer de celui du
     serveur — clearr résout par suffixe, voir core.resolve_media_path."""
-    _endpoint, method, id_param, result_key = KINDS[dbtype]
+    # Une saison a déjà été convertie en (numéro, tvshowid) par son appelant :
+    # on lit ici la SÉRIE, seule porteuse des uniqueid dont clearr a besoin.
+    lookup = "tvshow" if dbtype == "season" else dbtype
+    _endpoint, method, id_param, result_key = KINDS[lookup]
     response = jsonrpc(method, {id_param: dbid, "properties": ["title", "uniqueid", "file"]})
     details = response.get("result", {}).get(result_key) or {}
     return details.get("title", ""), details.get("uniqueid") or {}, details.get("file", "")
@@ -141,6 +167,81 @@ def notify(message, failed=False):
     )
 
 
+def season_label(season):
+    """Une ligne de la liste de sélection. Volontairement courte : la boîte
+    multiselect de Kodi est étroite, un libellé long est tronqué au milieu."""
+    parts = ["{} ép.".format(season.get("episodes", 0)), season.get("size", "?")]
+    torrents = season.get("torrents", 0)
+    if torrents:
+        parts.append("{} torrent{}".format(torrents, "s" if torrents > 1 else ""))
+    else:
+        parts.append("sans torrent")
+    return "S{:02d} — {}".format(season.get("number", 0), ", ".join(parts))
+
+
+def choose_seasons(preview):
+    """Saisons à supprimer, ou None si l'utilisateur annule.
+
+    La liste vient de clearr (donc de Sonarr), jamais de la base locale de Kodi :
+    celle-ci reflète Jellyfin, qui peut connaître des saisons que le serveur n'a
+    pas — proposer de supprimer une saison inconnue du serveur ne mènerait qu'à
+    un refus après confirmation.
+
+    Une seule saison : pas de boîte, il n'y a rien à choisir.
+
+    AUCUNE présélection : avec tout pré-coché (2026-08-30), cliquer sur la saison
+    qu'on veut supprimer la décoche, et ce sont les autres qui partent. « Je
+    coche ce que je veux supprimer » est le seul sens qui ne se retourne pas
+    contre l'utilisateur."""
+    seasons = preview.get("seasons") or []
+    if len(seasons) <= 1:
+        return [s["number"] for s in seasons]
+    indexes = xbmcgui.Dialog().multiselect(
+        "Cochez les saisons à supprimer",
+        [season_label(s) for s in seasons])
+    if indexes is None:
+        return None
+    return [seasons[i]["number"] for i in indexes]
+
+
+def confirm(label, preview, dbtype, allow_purge):
+    """-1 annulé, 0 supprimer, 1 purger.
+
+    Trois boutons plutôt que deux : la purge (retrait de la série de Sonarr +
+    exclusion de liste) est une action distincte, pas une case à cocher qu'on
+    peut avoir laissée dans un état oublié. Elle n'est proposée que si TOUTES
+    les saisons sont sélectionnées — une purge partielle laisserait les saisons
+    gardées dans library/ sans plus aucun arr pour les revendiquer."""
+    if dbtype == "movie":
+        what = "ce film"
+    elif dbtype == "season":
+        what = "cette saison"
+    else:
+        what = "cette série"
+    if preview.get("managed_by_arr"):
+        scope = ("Torrents et fichiers seront supprimés. La série RESTE dans Sonarr : "
+                 "une nouvelle saison sera téléchargée normalement."
+                 if dbtype != "movie"
+                 else "Torrents, fichiers et entrée Radarr seront supprimés.")
+    else:
+        scope = "Titre absent de Sonarr/Radarr : torrents et fichiers seront supprimés."
+    message = "Supprimer {} ?\n\n[B]{}[/B]\n{}{}\n\n{}".format(
+        what, label, preview.get("summary", ""), orphan_lines(preview), scope)
+
+    if not allow_purge:
+        return 0 if xbmcgui.Dialog().yesno(NAME, message, nolabel="Annuler",
+                                           yeslabel="Supprimer") else -1
+    # yesnocustom : -1 fermé, 0 « no », 1 « yes », 2 « custom ».
+    choice = xbmcgui.Dialog().yesnocustom(
+        NAME, message + "\n« Purger » retire aussi la série de Sonarr (plus rien ne reviendra).",
+        customlabel="Purger", nolabel="Annuler", yeslabel="Supprimer")
+    if choice == 1:
+        return 0
+    if choice == 2:
+        return 1
+    return -1
+
+
 def main():
     base_url = ADDON.getSetting("clearr_url").strip().rstrip("/")
     if not base_url:
@@ -153,11 +254,22 @@ def main():
     dbtype = xbmc.getInfoLabel("ListItem.DBTYPE")
     dbid = xbmc.getInfoLabel("ListItem.DBID")
     if dbtype not in KINDS or not dbid:
-        notify("Cet élément n'est pas un film ou une série de la bibliothèque.", failed=True)
+        notify("Cet élément n'est pas un film, une série ou une saison de la bibliothèque.",
+               failed=True)
         return
 
-    title, unique_ids, path = library_details(dbtype, int(dbid))
+    season_number = None
+    lookup_id = int(dbid)
+    if dbtype == "season":
+        season_number, lookup_id = season_target(lookup_id)
+        if season_number is None:
+            notify("Saison introuvable dans la bibliothèque Kodi.", failed=True)
+            return
+
+    title, unique_ids, path = library_details(dbtype, lookup_id)
     label = title or xbmc.getInfoLabel("ListItem.Label") or "?"
+    if season_number is not None:
+        label = "{} — saison {}".format(label, season_number)
     # Mêmes clés que le corps attendu par clearr (DeleteTarget dans webapp.py) —
     # ce sont aussi les noms utilisés par Kodi dans son champ uniqueid.
     payload = {key: str(unique_ids.get(key, "")) for key in ("imdb", "tmdb", "tvdb")}
@@ -168,6 +280,8 @@ def main():
         return
 
     endpoint = KINDS[dbtype][0]
+    if season_number is not None:
+        payload["seasons"] = [season_number]
     # Prévisualisation avant de demander confirmation : la boîte de dialogue
     # annonce ce qui va réellement partir (nombre de torrents, taille) plutôt
     # que le seul titre. Elle sert aussi de garde — un titre que clearr ne sait
@@ -178,16 +292,39 @@ def main():
         xbmcgui.Dialog().ok(NAME, "{}\n\n[B]{}[/B]".format(error, label))
         return
 
-    what = "ce film" if dbtype == "movie" else "cette série et toutes ses saisons"
-    scope = ("Torrents, fichiers de la bibliothèque et entrée Sonarr/Radarr seront supprimés."
-             if preview.get("managed_by_arr")
-             else "Titre absent de Sonarr/Radarr : torrents et fichiers seront supprimés.")
-    if not xbmcgui.Dialog().yesno(
-            NAME,
-            "Supprimer {} ?\n\n[B]{}[/B]\n{}{}\n\n{}".format(
-                what, label, preview.get("summary", ""), orphan_lines(preview), scope),
-            nolabel="Annuler", yeslabel="Supprimer"):
+    # Choix des saisons : seulement depuis une série gérée par Sonarr. Un clic
+    # sur une saison a déjà désigné la sienne, et un titre hors arr n'a pas de
+    # notion de saison (clearr renvoie alors une liste vide).
+    available = [s["number"] for s in preview.get("seasons") or []]
+    if dbtype == "tvshow" and preview.get("managed_by_arr") and available:
+        chosen = choose_seasons(preview)
+        if chosen is None:
+            return
+        if not chosen:
+            notify("Aucune saison sélectionnée — rien n'a été supprimé.")
+            return
+        payload["seasons"] = chosen
+        if sorted(chosen) != sorted(available):
+            # La sélection a changé : le résumé de la première prévisualisation
+            # ne décrit plus ce qui va partir. On le recalcule plutôt que
+            # d'annoncer une taille et un nombre de torrents faux.
+            preview, error = fetch_preview(base_url, endpoint, payload)
+            if error:
+                xbmcgui.Dialog().ok(NAME, "{}\n\n[B]{}[/B]".format(error, label))
+                return
+
+    # La purge n'a de sens que sur une SÉRIE entièrement sélectionnée : jamais sur
+    # un film (Radarr retire déjà le titre de toute façon), jamais depuis une
+    # saison (on n'en a désigné qu'une, purger emporterait les autres), jamais
+    # sur un titre hors arr (rien à retirer d'un arr).
+    allow_purge = (dbtype == "tvshow" and preview.get("managed_by_arr")
+                   and sorted(payload.get("seasons") or available) == sorted(available))
+    choice = confirm(label, preview, dbtype, allow_purge)
+    if choice < 0:
         return
+    if choice == 1:
+        payload["purge"] = True
+        payload.pop("seasons", None)
 
     progress = xbmcgui.DialogProgressBG()
     progress.create(NAME, "Suppression de {}…".format(label))

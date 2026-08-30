@@ -301,6 +301,67 @@ explicitement :
   titre affiché diffère (VO/VF, ponctuation).
   Best-effort : un arr injoignable ou un fichier jamais importé ne bloque
   jamais la suppression des fichiers eux-mêmes.
+- **Suppression d'une série SAISON PAR SAISON** (2026-08-30, web + addon
+  Kodi). Deux modes, deux boutons distincts dans la modale — jamais une case
+  à cocher, l'intention doit se lire dans le bouton cliqué :
+  - **normal** (`purge=False`, le défaut) : les saisons choisies partent, la
+    série **reste dans Sonarr**, ses saisons supprimées passent en
+    `monitored: false` et `monitorNewItems` est **forcé à `"all"`** — c'est
+    tout l'intérêt : une saison future arrive quand même. Pas d'exclusion de
+    liste, donc une saison redemandée depuis Seerr revient : différence
+    voulue entre les deux boutons, pas un oubli.
+  - **purge** (`execute_delete_series`, inchangé) : tout part, série retirée
+    + exclusion. **La sélection de saisons est alors ignorée** — purger une
+    partie laisserait les saisons gardées dans `library/` sans plus aucun arr
+    pour les revendiquer, donc invisibles des trois vues.
+  Les deux chemins sont **deux fonctions séparées** (`execute_delete_seasons`
+  vs `execute_delete_series`) et non un paramètre : ils ne partagent ni
+  l'ordre des écritures Sonarr, ni ce qu'ils balaient, ni ce qu'ils
+  promettent. La TUI n'appelle que le second, donc n'a pas bougé.
+  **Le plan part des `episodefile`, jamais des dossiers `Season XX` ni des
+  torrents.** Pas des dossiers : format configurable, `Specials` pour la
+  saison 0, et une série peut n'en avoir aucun. Pas des torrents : mesuré le
+  2026-08-30, **164 des 269 `episodefile` (61 %) n'ont plus aucun torrent**
+  (Sonarr les retire du client au `seedRatio` 1.5 des indexeurs publics), des
+  saisons entières n'existant que comme fichiers `library/`. `core.
+  series_episode_files()` **lève** au lieu de dégrader, comme
+  `_arr_covered_paths()` : sans elle on ne supprimerait presque rien tout en
+  s'annonçant réussi.
+  **Ordre imposé dans `execute_delete_seasons()`** : `unmonitor` **avant**
+  `DELETE /api/v3/episodefile/bulk`. Supprimer un episodefile d'une saison
+  encore suivie déclenche la recherche automatique interne de Sonarr (piège
+  déjà documenté plus bas) — les deux répondent 200, rien ne le signalerait
+  à l'exécution, d'où un test dédié qui verrouille l'ordre. C'est **Sonarr**
+  qui retire les hardlinks `library/` (et notifie Jellyfin via
+  `onEpisodeFileDelete`, seul déclencheur actif ici — pas de `onSeriesDelete`
+  sans purge) ; les torrents ne sont supprimés qu'ensuite. Corollaire :
+  `do_delete()` traite désormais `FileNotFoundError` en `debug` et non en
+  `warning`, le fichier déjà parti étant le cas NORMAL sur ce chemin.
+  **Torrent à cheval sur une saison gardée** (pack `S01-S03`) : **conservé**,
+  seuls les hardlinks `library/` de la saison choisie partent, donc **aucun
+  espace libéré** — d'où `freed_bytes` distinct de `size_bytes` dans le plan
+  et dans le résumé Kodi. Rare (0 sur 87 torrents le 2026-08-30) mais pas
+  théorique. Un torrent qu'on n'arrive pas à rattacher à une saison connue
+  n'est jamais supprimé au jugé.
+  **Balayage des fichiers annexes borné au dossier de saison**, déduit des
+  `episodefile` — et **rien n'est balayé** si `dirname == series.path` (série
+  sans dossiers de saison) : sinon on emporterait toutes les autres saisons.
+  Les sidecars (`SIDECAR_EXTENSIONS`) sont comptés à part **pour l'affichage
+  seulement** : depuis le metadata writer une saison porte un `.nfo` par
+  épisode (21 pour One Piece S23), les lister noierait le seul cas qui mérite
+  d'être lu — une vidéo que Sonarr ne revendique pas.
+  **Rien de ce qui est supprimé ne vient du client** : le POST ne reçoit que
+  des numéros de saison (entiers), le plan est recalculé côté serveur, et une
+  saison inconnue de Sonarr est **refusée** (`ValueError` → 400 JSON sur
+  `/api/`, via un handler dédié : sans lui l'addon Kodi recevait un 500
+  `text/plain` sans champ `message`).
+  Les saisons **sans aucun fichier** ne sont pas proposées dans l'UI (One
+  Piece en aligne 22) mais restent acceptées par l'API.
+  `purge` est un **paramètre d'URL** et non un champ : les deux boutons
+  soumettent le même formulaire, et un champ caché aurait imposé un second
+  `<form>` imbriqué dans le premier — invalide en HTML. C'est ce qui a motivé
+  l'ajout de **`data-form`** à `clearr.js` (le pied d'une modale Bootstrap est
+  un frère de son corps, `closest("form")` n'y trouve rien).
 - Écrit sur mesure plutôt que d'ajouter un service tiers (Decluttarr,
   Removarr...) : aucun ne couvre « suppression Sonarr/Radarr → nettoyage
   automatique du client torrent », trou connu et non résolu de l'écosystème
@@ -355,6 +416,22 @@ explicitement :
   auraient été plus de code pour moins de cohérence. `orphan_lines()` plafonne
   à 5 noms : la boîte `yesno` de Kodi ne défile pas, au-delà le texte passe
   sous les boutons.
+- **Menu contextuel aussi sur une saison** (`DBType=season`, addon `1.1.0`) :
+  Kodi n'expose aucun `uniqueid` sur une saison, `season_target()` fait donc
+  **deux appels JSON-RPC** (`GetSeasonDetails` → numéro + `tvshowid`, puis
+  `GetTVShowDetails` pour les ids de la série). Depuis une **série**, les
+  saisons se choisissent dans un `multiselect` alimenté par la **preview
+  clearr**, jamais par `VideoLibrary.GetSeasons` : la base Kodi reflète
+  Jellyfin, qui peut connaître des saisons que Sonarr n'a pas.
+  Confirmation en `yesnocustom` à trois boutons (Annuler / Supprimer /
+  Purger) ; **« Purger » n'apparaît que sur une série dont toutes les saisons
+  sont sélectionnées** — jamais depuis une saison, jamais sur un film.
+  Deuxième preview seulement si la sélection diffère du tout : sinon le
+  résumé annoncerait une taille et un nombre de torrents faux.
+  `DeleteTarget` gagne `seasons`/`purge`, **`purge=False` par défaut** : c'est
+  un changement de comportement pour un appelant qui n'enverrait pas le champ,
+  d'où le bump d'`addon.xml` — un addon non réinstallé cesserait silencieusement
+  de purger.
 - **Dépend de jellyfin-kodi en chemins directs** (`useDirectPaths=1`) : en
   mode addon, Kodi ne connaît qu'une URL `plugin://`, inexploitable — seuls
   les titres suivis par arr resteraient supprimables.

@@ -167,7 +167,13 @@
       e.preventDefault();
       if (post.dataset.busy) return;   // garde anti double-soumission
       var donePost = busy(post);
-      var form = post.closest("form");
+      // data-form : le déclencheur n'est pas toujours DANS le formulaire qu'il
+      // soumet — le pied d'une modale Bootstrap est un frère de son corps, et
+      // un <form> qui envelopperait les deux casserait le flex de .modal-content
+      // (imbriquer deux <form> étant par ailleurs invalide en HTML). Sans ça, le
+      // choix des saisons partait vide : closest("form") ne trouvait rien.
+      var selector = post.getAttribute("data-form");
+      var form = selector ? document.querySelector(selector) : post.closest("form");
       fetch(post.getAttribute("data-post"), {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
