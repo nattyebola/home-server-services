@@ -84,6 +84,14 @@ LAN_MIDDLEWARE_RE = re.compile(r"^ {4}([A-Za-z0-9_-]+):[ \t]*\n {6}ipAllowList:"
 PROWLARR_CONTAINER = "arr-prowlarr-1"
 PROWLARR_URL = "http://localhost:9696/api/v1"
 
+# Files Sonarr/Radarr interrogées pour les compteurs d'imports coincés de la
+# carte Torrents (voir arr_stuck_imports()) : "stack/service" (pour le test
+# d'exécution), conteneur, URL interne, nom de la clé dans arr/.env.
+ARR_QUEUE_APPS = (
+    ("arr/sonarr", "arr-sonarr-1", "http://localhost:8989/api/v3", "SONARR_API_KEY"),
+    ("arr/radarr", "arr-radarr-1", "http://localhost:7878/api/v3", "RADARR_API_KEY"),
+)
+
 
 def human_size(nbytes):
     for unit in ("o", "Ko", "Mo", "Go", "To"):
@@ -231,6 +239,48 @@ def prowlarr_indexer_health():
         ({"name": i.get("name", "?"), "ok": i.get("id") not in failing_ids} for i in indexers),
         key=lambda e: e["name"].lower(),
     )
+
+
+def arr_stuck_imports(running):
+    """Entrées de file Sonarr+Radarr dont le téléchargement est fini mais
+    l'import non : {"importBlocked": n, "importPending": n}, tous arr
+    confondus. None si le compte ne peut pas être établi COMPLÈTEMENT.
+
+    Tout ou rien, contrairement au best-effort par carte du reste du fichier :
+    avec un arr injoignable on afficherait le compte de l'autre seul, donc un
+    « 0 » là où des imports peuvent être coincés. C'est exactement ce que
+    cette colonne existe pour rendre visible — rien d'autre ne le signale, ni
+    le temps, ni un redémarrage, ni la recherche périodique (voir
+    .claude/skills/manual-import) — et un faux négatif silencieux y serait
+    pire qu'un tiret.
+
+    Mêmes états que stuck_queue_records() dans scripts/manual-import.py, à
+    garder alignés : ce qui est compté ici doit être exactement ce que
+    `manual-import.py list` sait ensuite traiter."""
+    env = load_env_file(REPO_ROOT / "arr" / ".env")
+    counts = {"importBlocked": 0, "importPending": 0}
+    for service, container, base_url, key_name in ARR_QUEUE_APPS:
+        api_key = env.get(key_name)
+        if service not in running or not api_key:
+            return None
+        try:
+            # Clé passée par stdin, jamais en argument — même raison que
+            # prowlarr_indexer_health() : l'argv d'un `docker exec` est lisible
+            # dans `ps`, et ce script tourne toutes les 5 min par cron.
+            script = ('IFS= read -r k; exec curl -s -H "X-Api-Key: $k" '
+                      + shlex.quote(f"{base_url}/queue?page=1&pageSize=1000"))
+            res = subprocess.run(
+                ["docker", "exec", "-i", container, "sh", "-c", script],
+                input=api_key, capture_output=True, text=True, timeout=15,
+            )
+            records = json.loads(res.stdout)["records"]
+        except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError, TypeError):
+            return None
+        for record in records:
+            state = record.get("trackedDownloadState")
+            if state in counts:
+                counts[state] += 1
+    return counts
 
 
 def lan_middleware_names():
@@ -427,23 +477,40 @@ def render_stat_card(icon, value, label, value_class=""):
     return render("stat-card.html", icon=icon, value=value, label=label, value_class=value_class)
 
 
-def render_stat_item(value, label, value_class=""):
-    return render("stat-multi-item.html", value=value, label=label, value_class=value_class)
+def render_stat_item(value, label, value_class="", title=""):
+    """`title` rend une infobulle native (comme les libellés de tracker repliés
+    de clearr) — utilisée par la colonne Imports, dont les libellés sont trop
+    courts pour être explicites tout seuls faute de place (voir
+    render_torrents_files_card et .stat-torrents-files dans dashboard.css)."""
+    title_attr = f' title="{html.escape(title, quote=True)}"' if title else ""
+    return render("stat-multi-item.html", value=value, label=label,
+                  value_class=value_class, title_attr=title_attr)
 
 
 def render_multi_stat_column(items):
     return render("multi-stat-column.html", items="\n".join(items))
 
 
-def render_torrents_files_card(stats):
-    """Torrents (Actifs/En pause/En erreur) et Fichiers (Absents/En
-    bibliothèque/En cross-seed) fusionnés en une seule carte à 2 colonnes,
-    qui prend la largeur de 2 cartes normales (voir .stat-span-2) — demandé
-    par l'utilisateur le 2026-07-29 : 2 cartes séparées côte à côte prenaient
-    trop de place pour des infos étroitement liées (l'une compte les
-    torrents, l'autre leurs fichiers sur disque). Un seul titre "Torrents"
-    pour toute la carte (pas un par colonne, retiré le 2026-07-30 — 2 titres
-    empilés sur la même carte prêtaient à confusion)."""
+def render_torrents_files_card(stats, imports):
+    """Torrents (Actifs/En pause/En erreur), Fichiers (Absents/En
+    bibliothèque/En cross-seed) et Imports (Bloqués/En attente) fusionnés en
+    une seule carte à 3 colonnes, qui prend la largeur de 2 cartes normales
+    (voir .stat-span-2) — demandé par l'utilisateur le 2026-07-29 : 2 cartes
+    séparées côte à côte prenaient trop de place pour des infos étroitement
+    liées (l'une compte les torrents, l'autre leurs fichiers sur disque). Un
+    seul titre "Torrents" pour toute la carte (pas un par colonne, retiré le
+    2026-07-30 — 2 titres empilés sur la même carte prêtaient à confusion).
+
+    3e colonne ajoutée le 2026-08-31, sur demande, sans toucher au span de la
+    carte : le flux Monitoring est calé sur des rangées de 4 slots (voir
+    build_stats_section), un span-3 aurait décalé la carte tracker et les
+    tâches planifiées. Les colonnes tombent donc à ~137px, d'où des libellés
+    courts ("Bloqués"/"En attente") explicités par un title natif — sans titre
+    de colonne, "Bloqués" seul se lirait comme un état de torrent.
+
+    `imports` à None (un arr arrêté ou injoignable, voir arr_stuck_imports())
+    affiche "—" et non 0 : ici un zéro faux annoncerait précisément l'absence
+    de l'anomalie qu'on cherche à voir."""
     torrents_col = render_multi_stat_column([
         render_stat_item(str(stats["torrents_active"]), "Actifs"),
         render_stat_item(str(stats["torrents_paused"]), "En pause"),
@@ -460,7 +527,28 @@ def render_torrents_files_card(stats):
         render_stat_item(str(stats["torrents_linked"]), "En bibliothèque"),
         render_stat_item(str(stats["torrents_cross_seed"]), "En cross-seed"),
     ])
-    return render("multi-stat-columns-card.html", title="Torrents", columns=torrents_col + "\n" + files_col)
+    # Colorées comme "En erreur"/"Absents" au-dessus (rouge si > 0, vert
+    # sinon) : un import coincé est une anomalie, pas une valeur de service.
+    # Aucune classe en revanche quand le compte est inconnu — "—" n'est ni bon
+    # ni mauvais.
+    imports_col = render_multi_stat_column([
+        render_stat_item(
+            str(imports["importBlocked"]) if imports else "—", "Bloqués",
+            value_class=(("stat-value-critical" if imports["importBlocked"] else "stat-value-good")
+                         if imports else ""),
+            title="Imports bloqués par Sonarr/Radarr (importBlocked) — "
+                  "téléchargements terminés que l'arr a refusé d'importer",
+        ),
+        render_stat_item(
+            str(imports["importPending"]) if imports else "—", "En attente",
+            value_class=(("stat-value-critical" if imports["importPending"] else "stat-value-good")
+                         if imports else ""),
+            title="Imports en attente (importPending) — l'arr a renoncé à "
+                  "rattacher le fichier ; ne se débloque pas tout seul",
+        ),
+    ])
+    return render("multi-stat-columns-card.html", title="Torrents",
+                  columns="\n".join([torrents_col, files_col, imports_col]))
 
 
 def render_gauge_column(icon, value, label, value_class=""):
@@ -814,13 +902,17 @@ def build_stats_section(running, data_root, backup_dir):
             rows = "\n".join(render_tracker_row(t) for t in stats["trackers"])
             tracker_card = render("tracker-card.html", rows=rows)
 
-        # Torrents (actifs/en pause/en erreur) et Fichiers (absents/en
+        # Torrents (actifs/en pause/en erreur), Fichiers (absents/en
         # bibliothèque/en cross-seed — mêmes marqueurs BIB/ABS que le service
-        # clearr, arr/clearr/app/core.py, voir CLAUDE.md) fusionnés en une seule carte à
-        # 2 colonnes (voir render_torrents_files_card) — 2 cartes séparées
-        # avaient été essayées d'abord, jugées trop encombrantes côte à côte
-        # par l'utilisateur.
-        cards.append(render_torrents_files_card(stats))
+        # clearr, arr/clearr/app/core.py, voir CLAUDE.md) et Imports
+        # (bloqués/en attente, seule colonne à ne pas venir de Transmission)
+        # fusionnés en une seule carte à 3 colonnes (voir
+        # render_torrents_files_card) — 2 cartes séparées avaient été essayées
+        # d'abord, jugées trop encombrantes côte à côte par l'utilisateur.
+        # Corollaire assumé du rattachement à cette carte : vpn/transmission-vpn
+        # arrêté remplace tout le bloc par un placeholder, compteurs d'imports
+        # compris, alors qu'ils ne dépendent que des arr.
+        cards.append(render_torrents_files_card(stats, arr_stuck_imports(running)))
 
     indexers_card = render_indexers_card(running)
     if indexers_card:

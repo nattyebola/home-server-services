@@ -188,6 +188,15 @@ a.card:hover { transform: translateY(-2px); }
 .stat-torrents-files { align-items: stretch; justify-content: flex-start; gap: .6rem; }
 .stat-torrents-files > .stat-label { text-align: left; margin-bottom: -.15rem; }
 .stat-columns-row { display: flex; flex-direction: row; align-items: flex-start; justify-content: space-between; gap: 1.5rem; }
+/* La carte Torrents porte 3 colonnes depuis l'ajout des compteurs d'imports
+   coincés (2026-08-31) : à 460px de contenu et 1.5rem de gouttière, chacune
+   tombe à ~137px — assez pour le pire libellé ("En bibliothèque" + 3 chiffres)
+   mais sans marge. flex-wrap + min-width font passer la 3e colonne sous les
+   deux autres dès que la carte rétrécit (elle a bien un flex-shrink, voir
+   .stat-span-2) plutôt que de tronquer les libellés. Ciblé sur cette carte :
+   .stat-columns-row sert aussi aux cartes à 2 jauges (.stat-dual-gauge). */
+.stat-torrents-files .stat-columns-row { flex-wrap: wrap; }
+.stat-torrents-files .stat-multi-col { min-width: 120px; }
 
 /* Carte à 2 jauges (débits descendant/montant, ratios total/session) — même
    .stat-span-2/.stat-columns-row que la carte Torrents, mais chaque colonne

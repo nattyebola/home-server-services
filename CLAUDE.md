@@ -890,10 +890,29 @@ explicitement :
     capacité de ligne figée en config : le débit VPN réel dépend du pair
     distant et de l'overhead du tunnel, une valeur figée serait fausse dès le
     premier changement de serveur.
-  - Les valeurs « en erreur » de la carte Torrents sont les seules colorées
-    (rouge si `>0`, sinon vert) : 0 en téléchargement n'est pas anormal,
-    contrairement à une erreur. « Actifs » = `status != 0` (spec RPC),
-    « surveillés » = tous les torrents présents.
+  - Seules les valeurs qui signalent une **anomalie** sont colorées dans la
+    carte Torrents (rouge si `>0`, sinon vert) : « En erreur », « Absents »,
+    et depuis le 2026-08-31 les deux compteurs d'imports. 0 en téléchargement
+    n'est pas anormal, contrairement à une erreur. « Actifs » = `status != 0`
+    (spec RPC), « surveillés » = tous les torrents présents.
+  - **3e colonne « Imports » (Bloqués / En attente)** dans cette même carte,
+    demandée le 2026-08-31 : nombre d'entrées de file Sonarr+Radarr en
+    `importBlocked`/`importPending` (`arr_stuck_imports()`), les mêmes états
+    que `stuck_queue_records()` de `scripts/manual-import.py` — **à garder
+    alignés**, ce qui est compté doit être ce que `manual-import.py list` sait
+    traiter. Comble un trou de visibilité : un téléchargement fini que l'arr
+    refuse d'importer ne se débloque jamais tout seul et ne ressort nulle part
+    ailleurs (le 2026-08-29, 5 des 20 titres comptés manquants étaient là).
+    **Seule fonction du fichier en tout-ou-rien et pas en best-effort** : un
+    arr arrêté ou injoignable affiche « — », jamais le compte de l'autre seul
+    — un `0` partiel annoncerait l'absence de l'anomalie même qu'on cherche à
+    voir. Colonnes à ~137px une fois à 3 dans une carte restée `stat-span-2`
+    (un span-3 aurait décalé la carte tracker et les tâches planifiées, cf. le
+    calage en rangées de 4 slots), d'où des libellés courts explicités par un
+    `title=` natif et un `flex-wrap` ciblé dans `.stat-torrents-files`.
+    Corollaire assumé du rattachement à cette carte : `vpn/transmission-vpn`
+    arrêté remplace tout le bloc par un placeholder, compteurs d'imports
+    compris, alors qu'ils ne dépendent que des arr.
   - Indexeurs Prowlarr : liste avec un point coloré **par indexeur** plutôt
     qu'un compte agrégé, pour voir directement LEQUEL est en échec sans
     changer d'écran. `/api/v1/indexer` croisé avec `/api/v1/indexerstatus`
