@@ -479,9 +479,9 @@ def render_stat_card(icon, value, label, value_class=""):
 
 def render_stat_item(value, label, value_class="", title=""):
     """`title` rend une infobulle native (comme les libellés de tracker repliés
-    de clearr) — utilisée par la colonne Imports, dont les libellés sont trop
-    courts pour être explicites tout seuls faute de place (voir
-    render_torrents_files_card et .stat-torrents-files dans dashboard.css)."""
+    de clearr) : toutes les valeurs de la carte Torrents en portent une, la
+    place manquant pour dire en libellé ce que chaque compteur mesure
+    exactement (voir render_torrents_files_card)."""
     title_attr = f' title="{html.escape(title, quote=True)}"' if title else ""
     return render("stat-multi-item.html", value=value, label=label,
                   value_class=value_class, title_attr=title_attr)
@@ -505,27 +505,50 @@ def render_torrents_files_card(stats, imports):
     carte : le flux Monitoring est calé sur des rangées de 4 slots (voir
     build_stats_section), un span-3 aurait décalé la carte tracker et les
     tâches planifiées. Les colonnes tombent donc à ~137px, d'où des libellés
-    courts ("Bloqués"/"En attente") explicités par un title natif — sans titre
-    de colonne, "Bloqués" seul se lirait comme un état de torrent.
+    courts ("Bloqués"/"En attente") — sans titre de colonne, "Bloqués" seul se
+    lirait comme un état de torrent. Les 8 valeurs de la carte portent donc un
+    title natif donnant leur définition exacte (généralisé le 2026-08-31 : ces
+    libellés tiennent en deux mots, mais aucun ne dit ce qui est réellement
+    compté — "Actifs" est un status RPC, "Absents"/"En bibliothèque" les
+    marqueurs ABS/BIB de clearr).
 
     `imports` à None (un arr arrêté ou injoignable, voir arr_stuck_imports())
     affiche "—" et non 0 : ici un zéro faux annoncerait précisément l'absence
     de l'anomalie qu'on cherche à voir."""
     torrents_col = render_multi_stat_column([
-        render_stat_item(str(stats["torrents_active"]), "Actifs"),
-        render_stat_item(str(stats["torrents_paused"]), "En pause"),
+        render_stat_item(
+            str(stats["torrents_active"]), "Actifs",
+            title="Torrents non arrêtés côté Transmission (status != 0) : en "
+                  "téléchargement, en vérification ou en seed",
+        ),
+        render_stat_item(
+            str(stats["torrents_paused"]), "En pause",
+            title="Torrents arrêtés (status 0), terminés ou non",
+        ),
         render_stat_item(
             str(stats["torrents_errored"]), "En erreur",
             value_class="stat-value-critical" if stats["torrents_errored"] else "stat-value-good",
+            title="Torrents signalés en erreur par Transmission : tracker "
+                  "injoignable, données introuvables sur disque…",
         ),
     ])
     files_col = render_multi_stat_column([
         render_stat_item(
             str(stats["torrents_missing"]), "Absents",
             value_class="stat-value-critical" if stats["torrents_missing"] else "stat-value-good",
+            title="Torrents dont plus aucun fichier n'existe sur disque "
+                  "(marqueur ABS de clearr)",
         ),
-        render_stat_item(str(stats["torrents_linked"]), "En bibliothèque"),
-        render_stat_item(str(stats["torrents_cross_seed"]), "En cross-seed"),
+        render_stat_item(
+            str(stats["torrents_linked"]), "En bibliothèque",
+            title="Torrents dont au moins un fichier est aussi dans library/ "
+                  "par hardlink (marqueur BIB de clearr)",
+        ),
+        render_stat_item(
+            str(stats["torrents_cross_seed"]), "En cross-seed",
+            title="Entrées injectées par cross-seed, rangées sous "
+                  ".cross-seed-links/ et non sous completed/",
+        ),
     ])
     # Colorées comme "En erreur"/"Absents" au-dessus (rouge si > 0, vert
     # sinon) : un import coincé est une anomalie, pas une valeur de service.

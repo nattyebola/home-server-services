@@ -908,8 +908,14 @@ explicitement :
     — un `0` partiel annoncerait l'absence de l'anomalie même qu'on cherche à
     voir. Colonnes à ~137px une fois à 3 dans une carte restée `stat-span-2`
     (un span-3 aurait décalé la carte tracker et les tâches planifiées, cf. le
-    calage en rangées de 4 slots), d'où des libellés courts explicités par un
-    `title=` natif et un `flex-wrap` ciblé dans `.stat-torrents-files`.
+    calage en rangées de 4 slots), d'où des libellés courts et un `flex-wrap`
+    ciblé dans `.stat-torrents-files`. **Les 8 valeurs de la carte portent un
+    `title=` natif** donnant leur définition exacte (généralisé le 2026-08-31
+    depuis la seule colonne Imports) : les libellés tiennent en deux mots mais
+    aucun ne dit ce qui est compté — « Actifs » est un `status` RPC, « Absents »
+    et « En bibliothèque » les marqueurs ABS/BIB de clearr. Ces définitions
+    vivent dans `transmission-stats.py` : les reprendre de là, pas les
+    réinventer.
     Corollaire assumé du rattachement à cette carte : `vpn/transmission-vpn`
     arrêté remplace tout le bloc par un placeholder, compteurs d'imports
     compris, alors qu'ils ne dépendent que des arr.
