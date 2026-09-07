@@ -30,6 +30,18 @@
           "value": "\\b(SUBFR(A|ENCH)?)\\b(?![^()]*\\))(?<!\\([^)]*)"
         }
       ]
+    },
+    {
+      "name": "Pack NN of NN",
+      "specifications": [
+        {
+          "name": "NN of NN",
+          "implementation": "ReleaseTitleSpecification",
+          "negate": false,
+          "required": true,
+          "value": "\\[\\s*\\d{1,3}\\s+(of|из)\\s+\\d{1,3}\\s*\\]"
+        }
+      ]
     }
   ],
   "quality_profiles": [
@@ -58,7 +70,8 @@
         "Upscaled": -10000,
         "x265": 10,
         "MULTi": 100,
-        "VOSTFR": -100
+        "VOSTFR": -100,
+        "Pack NN of NN": -10000
       }
     },
     {
@@ -85,7 +98,8 @@
         "LQ (Release Title)": -10000,
         "Upscaled": -10000,
         "x265": 10,
-        "MULTi": 20
+        "MULTi": 20,
+        "Pack NN of NN": -10000
       }
     }
   ]

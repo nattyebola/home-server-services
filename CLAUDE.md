@@ -639,8 +639,8 @@ explicitement :
   Résout les profils **par nom, jamais par id** (propres à chaque instance —
   c'est précisément pourquoi un dump d'API brut ne serait pas reproductible).
   Idempotent et best-effort par arr.
-  `arr/profiles/sonarr-anime.json` couvre les 2 custom formats qui nous
-  appartiennent (`FRENCH`, `VOSTFR (hors suffixe)`) et les profils
+  `arr/profiles/sonarr-anime.json` couvre les 3 custom formats qui nous
+  appartiennent (`FRENCH`, `VOSTFR (hors suffixe)`, `Pack NN of NN`) et les profils
   `Anime (Fansub)*` : aucun `trash_id` ne les couvrait, donc rien ne les
   recréait sur une installation neuve et rien ne rattrapait leur dérive.
   **Le JSON fait autorité** : tout custom format absent de `scores` est remis
@@ -1164,6 +1164,43 @@ d'attente ou d'un échappement.
   en temps qu'il se remplit réellement.
 
 ### Sonarr / Radarr / Prowlarr
+
+- **Un compte d'épisodes dans le titre (`[09 of 12]`) est lu par Sonarr comme
+  un numéro d'épisode absolu.** Diagnostiqué le 2026-09-04 sur des packs
+  d'uploaders russes de Nyaa.si (`… [2026] [09 of 12] [WEBRip] [1080p] [RUS +
+  JAP]`, où `09 of 12` veut dire « 9 épisodes sur 12 sortis ») :
+  `/api/v3/parse` renvoie `absoluteEpisodeNumbers: [12]`, donc Sonarr grabe le
+  pack en croyant obtenir l'épisode 12 — justement manquant — puis refuse
+  d'importer son contenu réel (E01→E09, déjà présents en mieux). 14,25 Go
+  immobilisés en `importPending`, sur 2 séries.
+  **Ce n'est PAS la boucle de regrab par `cutoffFormatScore`** (documentée plus
+  bas) : aucun upgrade n'est en jeu, les fichiers en place satisfont le cutoff.
+  Toucher à un score de cutoff n'y changerait rien.
+  Fix : custom format **`Pack NN of NN`** (`ReleaseTitleSpecification`,
+  `\[\s*\d{1,3}\s+(of|из)\s+\d{1,3}\s*\]`) scoré **-10000** sur les deux
+  profils anime — leur `minFormatScore: 0` transforme ça en rejet au grab, même
+  mécanique que `LQ`/`BR-DISK`/`Upscaled`.
+  **Cible le schéma de titre, pas la langue**, et c'est délibéré : le défaut est
+  que le parseur ne sait pas lire ce format, donc une release ainsi nommée n'est
+  de toute façon jamais grabable correctement, quelle que soit son origine. Un
+  ciblage par langue a été **écarté après mesure** — le CF du guide
+  `Language: Not Original` matche 6 fichiers VOSTFR parfaitement légitimes
+  (tout *Tomb Raider King*, en japonais, parce que sa langue d'origine est le
+  coréen), donc le scorer négativement bloquerait tous les anime non japonais
+  d'origine. Ne pas reproposer cette voie.
+  Validé selon la méthode de la section regex plus bas : sur un corpus de 1099
+  titres réels (historique + blocklist + `sceneName`/`relativePath` des
+  episodefiles), **3 matchs, tous voulus, 0 faux positif**, et **0 désaccord**
+  entre .NET (`/api/v3/parse` + CF jetable) et Python `re` sur les 411 titres à
+  risque (ceux contenant `of` ou `[…chiffre…]`).
+  Portée volontairement limitée aux profils anime : ce schéma de nommage vient
+  de Nyaa.si, qui n'est interrogé que pour les anime. À étendre à
+  `WEB-2160p (Combined)` (donc via `recyclarr.yml`, pas ce JSON) s'il y
+  apparaissait.
+  La blocklist ne suffisait pas comme parade : la même release y était **déjà**
+  depuis le 2026-08-29 et a quand même été regrabée le 03-09 — Sonarr y matche
+  le titre de release + l'indexeur, un renommage ou un autre indexeur passe à
+  travers.
 
 - **Ni Sonarr ni Radarr ne re-cherche un manquant tout seul** : aucune tâche
   planifiée de recherche des manquants depuis Sonarr v3 (leur
