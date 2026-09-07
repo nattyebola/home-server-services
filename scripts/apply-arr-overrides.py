@@ -416,20 +416,65 @@ def apply_radarr_language(container, base_url, api_key, profile_name):
 # script déclaratif doit tenir.
 MEDIA_MANAGEMENT_OVERRIDES = {"copyUsingHardlinks": True}
 
+# --- renommage des fichiers à l'import --------------------------------------
+# Activé le 2026-09-07, les deux arr laissaient jusque-là le nom brut de la
+# release. Jellyfin résout la saison d'un épisode par le SxxExx du NOM DE
+# FICHIER, qui prime sur le dossier `Season NN` : une release nommée par son
+# groupe en saison 1 + numérotation absolue (« One Piece S01E1172 … », pratique
+# de Tsundere-Raws) atterrissait dans une saison 1 fantôme côté Jellyfin, donc
+# côté Kodi, alors que Sonarr l'avait correctement rangée en S23E17 et que son
+# `.nfo` disait bien `<season>23</season>` — un NFO ne peut plus déplacer un
+# item entre saisons, celle-ci est figée à la résolution du chemin.
+#
+# **Ces deux champs n'agissent qu'à l'import.** Les fichiers déjà en place ne
+# bougent pas, et c'est voulu : le rattrapage rétroactif (`RenameFiles`) a été
+# écarté après mesure sur les 390 episodefiles du 2026-09-07 —
+#   - Jellyfin identifie ses items par chemin, donc un renommage = ancien item
+#     supprimé + nouveau créé, le `UserData` restant attaché à l'ancien id :
+#     62 épisodes marqués vus et 5 positions de reprise seraient perdus, Kodi
+#     compris (sa table vient de jellyfin-kodi).
+#   - 49 des 390 fichiers n'ont pas de `sceneName` (imports manuels). Or un CF
+#     `ReleaseTitleSpecification` est réévalué APRÈS import sur `sceneName`
+#     s'il existe, sinon sur le nom de fichier : les renommer au format en
+#     place, qui ne porte aucun token de langue, leur retirerait
+#     `FRENCH`/`VOSTFR`/`MULTi`. 16 passeraient sous le `cutoffFormatScore` de
+#     leur profil, donc remis en recherche au prochain RSS sync — du quota
+#     indexeur brûlé pour des fichiers inchangés. Le cas One Piece a donc été
+#     corrigé à la main, en gardant `VOSTFR` dans le nouveau nom (score
+#     inchangé, 50).
+#
+# Corollaire : NE PAS ajouter le format de nommage à ces overrides sans y
+# reporter d'abord le token de langue (`{MediaInfo AudioLanguages}` ou
+# `{Custom Formats}`). Le format en place ne porte ni langue ni groupe de
+# release ; le versionner tel quel inviterait au rattrapage écarté ci-dessus.
+# Pour les imports à venir la question ne se pose pas : une release grabée
+# depuis un indexeur a toujours son `sceneName`, le renommage est donc neutre
+# sur son score.
+SONARR_NAMING_OVERRIDES = {"renameEpisodes": True}
+RADARR_NAMING_OVERRIDES = {"renameMovies": True}
 
-def apply_media_management(label, container, base_url, api_key, overrides):
-    config = api_get(container, base_url, api_key, "/config/mediamanagement")
+
+def apply_config_overrides(label, container, base_url, api_key, section, overrides):
+    """Aligne quelques champs d'une section /config/<section> d'un arr.
+
+    Un seul gabarit pour toutes ces sections (`mediamanagement`, `naming`) :
+    elles ont la même forme — un objet unique porteur d'un `id`, qu'on relit,
+    compare champ à champ et repasse entier au PUT. Une fonction par section
+    aurait recopié ces six lignes à l'identique.
+    """
+    path = f"/config/{section}"
+    config = api_get(container, base_url, api_key, path)
     # Même leçon que _arr_covered_paths dans clearr : une réponse d'erreur
     # Servarr est un JSON valide ({"message": ...}), donc isinstance ne suffit
     # pas — on exige le champ qu'on va réellement utiliser.
     if not isinstance(config, dict) or "id" not in config:
-        raise RuntimeError(f"{label}: /config/mediamanagement n'a pas renvoyé un objet exploitable")
+        raise RuntimeError(f"{label}: {path} n'a pas renvoyé un objet exploitable")
     current = {k: config.get(k) for k in overrides}
     if current == overrides:
         return []
     config.update(overrides)
-    api_put(container, base_url, api_key, f"/config/mediamanagement/{config['id']}", config)
-    return [f"{label} mediamanagement: {current} -> {overrides}"]
+    api_put(container, base_url, api_key, f"{path}/{config['id']}", config)
+    return [f"{label} {section}: {current} -> {overrides}"]
 
 
 def set_field(body, name, value):
@@ -824,10 +869,19 @@ def main():
     # a donc pas de course à perdre ici — seul un changement manuel dans l'UI
     # peut faire dériver ce réglage.
     try:
-        changed += apply_media_management("Sonarr", SONARR_CONTAINER, SONARR_URL,
-                                          sonarr_api_key, MEDIA_MANAGEMENT_OVERRIDES)
+        changed += apply_config_overrides("Sonarr", SONARR_CONTAINER, SONARR_URL,
+                                          sonarr_api_key, "mediamanagement",
+                                          MEDIA_MANAGEMENT_OVERRIDES)
     except Exception as e:
         errors.append(f"Sonarr (mediamanagement): {e}")
+    # Bloc à part du précédent : deux sections de config distinctes, une erreur
+    # sur l'une ne doit pas laisser l'autre en dérive.
+    try:
+        changed += apply_config_overrides("Sonarr", SONARR_CONTAINER, SONARR_URL,
+                                          sonarr_api_key, "naming",
+                                          SONARR_NAMING_OVERRIDES)
+    except Exception as e:
+        errors.append(f"Sonarr (naming): {e}")
     # Les deux réglages Radarr que recyclarr fait dériver, donc sous `settle`
     # pour la même raison que les tailles Sonarr — le champ `language` vit sur le
     # profil qualité, que recyclarr réécrit aussi.
@@ -859,10 +913,17 @@ def main():
     except Exception as e:
         errors.append(f"Radarr (metadata): {e}")
     try:
-        changed += apply_media_management("Radarr", RADARR_CONTAINER, RADARR_URL,
-                                          radarr_api_key, MEDIA_MANAGEMENT_OVERRIDES)
+        changed += apply_config_overrides("Radarr", RADARR_CONTAINER, RADARR_URL,
+                                          radarr_api_key, "mediamanagement",
+                                          MEDIA_MANAGEMENT_OVERRIDES)
     except Exception as e:
         errors.append(f"Radarr (mediamanagement): {e}")
+    try:
+        changed += apply_config_overrides("Radarr", RADARR_CONTAINER, RADARR_URL,
+                                          radarr_api_key, "naming",
+                                          RADARR_NAMING_OVERRIDES)
+    except Exception as e:
+        errors.append(f"Radarr (naming): {e}")
     # Bloc à part, et par arr : le PUT d'un indexeur est le seul de ce script à
     # dépendre d'un service tiers joignable (le tracker lui-même, testé par
     # Sonarr/Radarr au moment de l'écriture même avec forceSave).

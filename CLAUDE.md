@@ -508,6 +508,45 @@ explicitement :
   `imdbId`/`tmdbId`/`tvdbId` des objets arr aux `ProviderIds` des items
   Jellyfin **appariés par chemin** (`/library/...` côté Jellyfin ↔
   `/data_root/library/...` côté arr).
+- **Renommage des fichiers à l'import activé sur les deux arr**
+  (`renameEpisodes`/`renameMovies`, 2026-09-07, portés par
+  `scripts/apply-arr-overrides.py`) : **Jellyfin résout la saison d'un épisode
+  par le `SxxExx` du NOM DE FICHIER, qui prime sur le dossier `Season NN`** —
+  et un `.nfo` ne peut pas rattraper ça, la saison étant figée à la résolution
+  du chemin (le NFO n'a corrigé que le titre et le numéro d'épisode).
+  Déclencheur : `One Piece S01E1172 …-Tsundere-Raws.mkv`, nommé par son groupe
+  en saison 1 + numérotation absolue, rangé en **S1E17** par Jellyfin donc par
+  Kodi, alors que Sonarr l'avait correctement importé en S23E17 dans
+  `Season 23` et que son `.nfo` disait `<season>23</season>`.
+  **Le toggle n'agit qu'à l'import : aucun rattrapage rétroactif n'a été fait,
+  et il ne faut pas en lancer un** (`RenameFiles`/`RenameSeries` renommerait
+  les 390 fichiers en place). Deux coûts mesurés le 2026-09-07 :
+  - Jellyfin identifie ses items **par chemin** : renommer = ancien item
+    supprimé + nouveau créé, et le `UserData` reste sur l'ancien id. **62
+    épisodes marqués vus et 5 positions de reprise** seraient perdus, Kodi
+    compris (sa table vient de jellyfin-kodi).
+  - **49 des 390 fichiers n'ont pas de `sceneName`** (imports manuels). Un CF
+    `ReleaseTitleSpecification` est réévalué **après** import sur `sceneName`
+    s'il existe, **sinon sur le nom de fichier** — c'est pour ça qu'un
+    renommage peut changer un score alors que les profils ne servent qu'au
+    choix d'une release. Le format en place ne portant aucun token de langue,
+    ces fichiers perdraient `FRENCH`/`VOSTFR`/`MULTi` : **16 passeraient sous
+    le `cutoffFormatScore`** de leur profil, donc remis en recherche au
+    prochain RSS sync — du quota indexeur brûlé pour des fichiers inchangés.
+    Corollaire : ne pas versionner le format de nommage dans les overrides sans
+    y reporter d'abord la langue (`{MediaInfo AudioLanguages}` ou
+    `{Custom Formats}`). Pour les imports à venir la question ne se pose pas,
+    une release grabée depuis un indexeur a toujours son `sceneName`.
+  Le cas One Piece a donc été corrigé **à la main et à l'unité**, en gardant
+  `VOSTFR` dans le nouveau nom (`One Piece S23E17 VOSTFR …`) puis
+  `RescanSeries` : `cfScore` inchangé à 50, aucun regrab, hardlink et seed
+  intacts (l'inode ne bouge pas, le nom sous `.transmission/data` non plus).
+  Seule perte, annoncée : la position de reprise de cet épisode.
+  **Piège de diagnostic** : `GET /api/v3/rename?seriesId=…` renvoie `[]` tant
+  que `renameEpisodes` est à `false` — Sonarr construit le nom cible avec le
+  même code que l'import, qui retourne le nom d'origine dans ce cas. Donc ni
+  preview ni `RenameFiles` ne fonctionnent avant d'avoir activé le toggle, et
+  un `[]` ne veut pas dire « tout est déjà conforme ».
 - **Connexion Sonarr/Radarr → Jellyfin entièrement provisionnée**
   (`JELLYFIN_FIELDS`/`JELLYFIN_TRIGGERS` dans
   `scripts/apply-arr-overrides.py`), création incluse.
@@ -635,7 +674,8 @@ explicitement :
   Périmètre : tailles de palier « Quality Definition » et champ `language` des
   deux profils principaux (Sonarr `WEB-2160p (Combined)`, Radarr `[SQP] SQP-1
   WEB (2160p)`), config anime (`arr/profiles/sonarr-anime.json`), connexions
-  Jellyfin, metadata writer, ratio des indexeurs publics.
+  Jellyfin, metadata writer, ratio des indexeurs publics, renommage des
+  fichiers à l'import (`renameEpisodes`/`renameMovies`).
   Résout les profils **par nom, jamais par id** (propres à chaque instance —
   c'est précisément pourquoi un dump d'API brut ne serait pas reproductible).
   Idempotent et best-effort par arr.
