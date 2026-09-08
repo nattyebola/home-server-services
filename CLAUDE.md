@@ -1176,6 +1176,42 @@ d'attente ou d'un échappement.
   `middleware "hsts@docker" does not exist` sortent pendant ~5 s, le temps que
   le provider docker livre les labels du conteneur traefik lui-même.
 
+### Transmission
+
+- **`transmission-remote -w <dir>` placé AVANT `-a` change le répertoire de
+  téléchargement PAR DÉFAUT de la session, pas la destination du torrent
+  ajouté.** Les options sont traitées de gauche à droite : tant que `-a` n'a pas
+  été lu, la requête `torrent-add` n'existe pas et `-w` part en `session-set`.
+  L'aide (« When used in conjunction with `--add`, set the new torrent's
+  download folder. Otherwise, set the default download folder ») ne dit rien de
+  l'ordre. **Toujours écrire `-a <magnet> -w <dir>`, jamais l'inverse.**
+  Vécu le 2026-09-07 : `transmission-remote -w /data/completed/anime -a "$m"`
+  pour 4 magnets. Le contrôle fait dans la foulée (`-t <id> -i` → `Location:
+  /data/completed/anime`) était vert — normal, le défaut venait justement de
+  basculer — et le dégât est resté invisible 5 h.
+  **Deux raisons pour lesquelles ça ne reste pas local à Transmission** :
+  - Sonarr/Radarr n'envoient **pas** de chemin absolu quand une catégorie est
+    configurée (`tvCategory=sonarr` / `movieCategory=radarr`, cf.
+    `scripts/provision.py`) : à chaque grab ils font un `session-get`, lisent le
+    `download-dir` courant et y collent la catégorie. Tout ce qu'ils ont grabé
+    ensuite a atterri dans `completed/anime/{sonarr,radarr}`.
+  - La bibliothèque « Animés » de Jellyfin scanne `/media/anime`
+    (= `completed/anime`) en plus de `/library/anime` : les deux dossiers de
+    catégorie y sont devenus **deux séries nommées « sonarr » et « radarr »**,
+    répliquées jusque dans Kodi.
+  Réparation : `session-set` pour remettre `/data/completed`, puis
+  `torrent-set-location … move=true` (jamais un `mv` : Transmission perdrait
+  les fichiers). Un move sur le même disque est un `rename`, donc **l'inode est
+  conservé** et les hardlinks `library/` survivent — vérifié par `stat -c '%i %h'`
+  avant/après. **En revanche les symlinks cross-seed ne survivent pas** : ils
+  portent le chemin absolu vu par le conteneur, il faut les repointer à la main
+  (`ln -sfn`) sous `.cross-seed-links/<tracker>/`.
+- **`settings.json` n'est réécrit qu'à l'arrêt du daemon** : un réglage changé
+  en RPC vit uniquement en session. Corollaire dans les deux sens — un `docker
+  restart` grave la valeur courante (donc une dérive), et une correction faite
+  en éditant le fichier à chaud est perdue. Lire l'état réel par `session-get`,
+  jamais par `settings.json`.
+
 ### Sauvegarde et restauration
 
 - **`scripts/backup.sh` dumpait silencieusement la mauvaise base Postgres
