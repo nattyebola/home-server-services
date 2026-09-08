@@ -675,7 +675,8 @@ explicitement :
   deux profils principaux (Sonarr `WEB-2160p (Combined)`, Radarr `[SQP] SQP-1
   WEB (2160p)`), config anime (`arr/profiles/sonarr-anime.json`), connexions
   Jellyfin, metadata writer, ratio des indexeurs publics, renommage des
-  fichiers à l'import (`renameEpisodes`/`renameMovies`).
+  fichiers à l'import (`renameEpisodes`/`renameMovies`), rejet des
+  téléchargements non-média (`failDownloads`), catégorie Anime de Nyaa.si.
   Résout les profils **par nom, jamais par id** (propres à chaque instance —
   c'est précisément pourquoi un dump d'API brut ne serait pas reproductible).
   Idempotent et best-effort par arr.
@@ -1204,6 +1205,45 @@ d'attente ou d'un échappement.
   en temps qu'il se remplit réellement.
 
 ### Sonarr / Radarr / Prowlarr
+
+- **Une release peut être une archive ou un exécutable, et le titre ne le dit
+  pas.** Deux cas rencontrés, un `.exe` puis `Ted Lasso S04E06 …Atmos.zipx` le
+  2026-09-07 (1,1 Go, vrai ZIP — magic `PK\x03\x04`), tous deux grabés sur
+  Nyaa.si. La garde d'import de Sonarr les détecte (« Caution: Found potentially
+  dangerous file with extension ») mais **s'arrête là** : l'entrée reste en
+  `importPending` sans limite, rien ne la purge et l'épisode reste manquant.
+  **Un custom format ne peut PAS traiter ce cas** : l'extension n'est pas dans
+  le titre de la release (`Ted Lasso S04E06 1080p ATVP WEB-DL DDP5 1 Atmos` en
+  base, vérifié dans l'historique de grab et la blocklist), seulement dans le
+  nom du fichier du torrent — un `ReleaseTitleSpecification` n'a donc rien à
+  matcher au grab. Ne pas repartir sur cette piste.
+  La blocklist ne suffit pas non plus : la même release, blocklistée le 09-06,
+  a été regrabée le 09-07 sous un autre infoHash (deux uploads du même titre).
+  Fix, deux couches, toutes deux portées par `scripts/apply-arr-overrides.py` :
+  - **`failDownloads: [0, 1]`** (Executables + Potentially Dangerous) sur tous
+    les indexeurs des deux arr : l'arr marque le download **échoué** au lieu de
+    l'attendre, et `autoRedownloadFailed` (déjà à `true`) enchaîne blocklist par
+    hash → retrait du client → nouvelle recherche excluant la release. Validé en
+    conditions réelles le 2026-09-07 : `downloadFailed / "Failed download
+    detected"` 3 min après activation, torrent retiré, 1,1 Go libéré, sans
+    intervention.
+  - **`cat-id: 1` (Anime) sur l'indexeur Nyaa.si de Prowlarr** : à `0`
+    (« All categories », le défaut) Nyaa renvoie aussi ses catégories Live
+    Action, Audio et Software. A/B sur la même requête (« Nogizaka46 ») : 75
+    résultats dont 63 Live Action à `0`, contre 1 résultat et 0 Live Action à
+    `1` ; les recherches d'anime sont inchangées (« One Piece » : 75 dans les
+    deux cas). Coût nul mesuré : sur 578 grabs Sonarr, Nyaa.si n'avait servi que
+    **2 fois** pour une série non-anime — les deux grabs de l'archive Ted Lasso
+    — les 197 grabs de séries standard venant de TR4KER/YggReborn/C411/V3X, et
+    0 grab Nyaa.si sur les 34 derniers de Radarr.
+  **Piège de placement, mesuré le 2026-09-07** : le champ `categories` d'un
+  indexeur synchronisé est **réécrit par l'`ApplicationIndexerSync`** de
+  Prowlarr (vidé à `[]` côté Sonarr, remis à `[5000]` après un sync) — restreindre
+  Nyaa.si par là ne pouvait pas tenir, d'où le passage par `cat-id` chez
+  Prowlarr, qui fait autorité. Même piège que `seedCriteria.seedRatio`.
+  **`failDownloads`, lui, SURVIT au sync** : Prowlarr ne l'expose pas sur son
+  propre objet indexeur, il ne peut donc pas l'écraser — c'est pourquoi ce
+  réglage vit côté arr et n'a pas de pendant Prowlarr.
 
 - **Un compte d'épisodes dans le titre (`[09 of 12]`) est lu par Sonarr comme
   un numéro d'épisode absolu.** Diagnostiqué le 2026-09-04 sur des packs

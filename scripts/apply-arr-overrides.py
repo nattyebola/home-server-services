@@ -118,6 +118,70 @@ PUBLIC_INDEXER_SEED_RATIO = 1.5
 PROWLARR_PUBLIC_PRIVACY = "public"
 PROWLARR_SEED_RATIO_FIELD = "torrentBaseSettings.seedRatio"
 
+# --- rejet des téléchargements dont le contenu n'est pas un média ---
+#
+# Chaque indexeur Torznab/Newznab porte un champ `failDownloads` (options 0 =
+# Executables, 1 = Potentially Dangerous) : au traitement d'un téléchargement
+# terminé, l'arr marque le download comme ÉCHOUÉ au lieu de le laisser en
+# attente indéfinie dans la file. Combiné à `autoRedownloadFailed` (déjà à true
+# sur les deux arr), la chaîne complète devient automatique : échec -> torrent
+# blocklisté par hash -> retiré du client -> nouvelle recherche excluant cette
+# release.
+#
+# Déclencheur : deux releases d'archive/exécutable grabées sur Nyaa.si (un .exe,
+# puis `Ted Lasso S04E06 …Atmos.zipx` le 2026-09-07 — 1,1 Go de vrai ZIP, magic
+# PK\x03\x04). La garde d'import de Sonarr les détectait bien (« Caution: Found
+# potentially dangerous file with extension: .zipx ») mais s'arrêtait là :
+# l'entrée restait en `importPending`, sans que rien ne la purge ni ne relance
+# la recherche.
+#
+# Pourquoi PAS un custom format, contrairement au CF `Pack NN of NN` qui traite
+# une autre release mal formée : l'extension n'est PAS dans le titre de la
+# release (`Ted Lasso S04E06 1080p ATVP WEB-DL DDP5 1 Atmos` en base, vérifié
+# dans l'historique de grab et la blocklist), seulement dans le nom du fichier
+# du torrent. Un `ReleaseTitleSpecification` ne peut donc rien matcher au grab —
+# l'information n'existe qu'après téléchargement, ce qui est précisément le
+# moment où `failDownloads` agit.
+# La blocklist seule ne suffisait pas non plus : la même release, déjà
+# blocklistée le 2026-09-06, a été regrabée le 2026-09-07 sous un autre
+# infoHash (deux uploads distincts du même titre), Sonarr matchant titre +
+# indexeur.
+#
+# Vérifié le 2026-09-07 : ce champ SURVIT à l'ApplicationIndexerSync de Prowlarr
+# (relecture après un sync déclenché à la main), contrairement à
+# `seedCriteria.seedRatio` et à `categories` — Prowlarr ne l'expose pas sur son
+# propre objet indexeur, il ne peut donc pas l'écraser. C'est pour ça que ce
+# réglage vit côté arr et n'a pas de pendant Prowlarr ici.
+INDEXER_FAIL_DOWNLOADS_FIELD = "failDownloads"
+INDEXER_FAIL_DOWNLOADS = [0, 1]
+
+# --- Nyaa.si restreint à sa catégorie Anime ---
+#
+# `cat-id` est un champ de la définition Cardigann `nyaasi` : il fixe la
+# catégorie interrogée côté site. À 0 (« All categories », le défaut) Nyaa
+# renvoie aussi ses catégories Live Action, Audio et Software — c'est par là
+# qu'une release live-action a atterri dans Sonarr, et c'est la source possible
+# d'un exécutable.
+#
+# Mesuré le 2026-09-07 : sur 578 grabs Sonarr, Nyaa.si n'avait servi que 2 fois
+# pour une série non-anime, et ce sont exactement les deux grabs de l'archive
+# Ted Lasso ; les 197 grabs de séries standard viennent de TR4KER/YggReborn/
+# C411/V3X. Côté Radarr, 0 grab Nyaa.si sur les 34 derniers. La restriction ne
+# coûte donc aucune source réellement utilisée.
+# Effet vérifié par A/B sur la même requête (« Nogizaka46 ») : 75 résultats dont
+# 63 en Live Action à cat-id 0, contre 1 résultat (Anime Music Video) et 0 Live
+# Action à cat-id 1 — les recherches d'anime, elles, sont inchangées (« One
+# Piece » : 75 résultats dans les deux cas).
+#
+# Posé côté PROWLARR et pas via le champ `categories` des indexeurs
+# synchronisés : ce dernier est réécrit par l'ApplicationIndexerSync (mesuré le
+# 2026-09-07, `categories` remis de [] à [5000] après un sync), même piège que
+# seedRatio. Rattachement par `definitionFile`, pas par id : les ids d'indexeur
+# Prowlarr ne sont pas stables (voir CLAUDE.md, section cross-seed).
+NYAA_DEFINITION_FILE = "nyaasi"
+NYAA_CATEGORY_FIELD = "cat-id"
+NYAA_ANIME_CATEGORY = 1
+
 # --- connexion "Emby/Jellyfin" de Sonarr/Radarr (refresh ciblé de Jellyfin) ---
 #
 # Entièrement déclarée ici : nom, cible réseau, mapping de chemins et
@@ -671,6 +735,58 @@ def apply_public_indexer_seed_ratio(label, container, base_url, api_key, public_
     return changed
 
 
+def apply_indexer_fail_downloads(label, container, base_url, api_key):
+    """Pose INDEXER_FAIL_DOWNLOADS sur chaque indexeur qui expose le champ, pour
+    que l'arr traite un téléchargement contenant un exécutable ou un fichier
+    « potentiellement dangereux » comme un échec plutôt que de le laisser en
+    attente dans la file (voir le commentaire de INDEXER_FAIL_DOWNLOADS).
+
+    Le champ n'existe que sur les implémentations Torznab/Newznab : un indexeur
+    qui ne le déclare pas est sauté, jamais complété — `set_field` ajouterait
+    sinon une clé inconnue au corps envoyé à l'API.
+
+    `forceSave=true` pour la même raison que les passes seedRatio : l'arr teste
+    la connexion à l'indexeur au moment du PUT et ces trackers répondent
+    régulièrement 520/530."""
+    changed = []
+    for indexer in api_get(container, base_url, api_key, "/indexer"):
+        current = next((f.get("value") for f in indexer["fields"]
+                        if f["name"] == INDEXER_FAIL_DOWNLOADS_FIELD), None)
+        if current is None:
+            continue                  # implémentation sans ce champ
+        if sorted(current) == INDEXER_FAIL_DOWNLOADS:
+            continue
+        set_field(indexer, INDEXER_FAIL_DOWNLOADS_FIELD, INDEXER_FAIL_DOWNLOADS)
+        api_put(container, base_url, api_key,
+                f"/indexer/{indexer['id']}?forceSave=true", indexer)
+        changed.append(f"{label} indexeur {indexer['name']!r}: "
+                       f"failDownloads {current} -> {INDEXER_FAIL_DOWNLOADS}")
+    return changed
+
+
+def apply_prowlarr_nyaa_category(prowlarr_api_key):
+    """Restreint l'indexeur Nyaa.si de Prowlarr à sa catégorie Anime. Rattaché
+    par `definitionFile`, donc silencieux (et sans erreur) sur un déploiement
+    qui n'a pas cet indexeur — c'est un réglage propre à cette définition
+    Cardigann, pas une règle générale sur les indexeurs."""
+    changed = []
+    for indexer in api_get(PROWLARR_CONTAINER, PROWLARR_URL, prowlarr_api_key, "/indexer"):
+        definition = next((f.get("value") for f in indexer["fields"]
+                           if f["name"] == "definitionFile"), None)
+        if definition != NYAA_DEFINITION_FILE:
+            continue
+        current = next((f.get("value") for f in indexer["fields"]
+                        if f["name"] == NYAA_CATEGORY_FIELD), None)
+        if current == NYAA_ANIME_CATEGORY:
+            continue
+        set_field(indexer, NYAA_CATEGORY_FIELD, NYAA_ANIME_CATEGORY)
+        api_put(PROWLARR_CONTAINER, PROWLARR_URL, prowlarr_api_key,
+                f"/indexer/{indexer['id']}?forceSave=true", indexer)
+        changed.append(f"Prowlarr indexeur {indexer['name']!r}: "
+                       f"{NYAA_CATEGORY_FIELD} {current} -> {NYAA_ANIME_CATEGORY} (Anime)")
+    return changed
+
+
 def spec_body(spec):
     """Un champ `fields` complet est inutile à l'écriture : Sonarr ne lit que
     `name`/`value`, et tout stocker (label/helpText traduits par l'UI, ordre,
@@ -924,6 +1040,24 @@ def main():
                                           RADARR_NAMING_OVERRIDES)
     except Exception as e:
         errors.append(f"Radarr (naming): {e}")
+    # Ne dépend pas de Prowlarr, contrairement aux deux passes seedRatio qui
+    # suivent : le champ n'existe que côté arr et Prowlarr ne l'écrase pas
+    # (voir le commentaire de INDEXER_FAIL_DOWNLOADS), donc cette passe tourne
+    # même si Prowlarr est injoignable ou sa clé absente.
+    for label, container, url, key in (("Sonarr", SONARR_CONTAINER, SONARR_URL, sonarr_api_key),
+                                       ("Radarr", RADARR_CONTAINER, RADARR_URL, radarr_api_key)):
+        try:
+            changed += apply_indexer_fail_downloads(label, container, url, key)
+        except Exception as e:
+            errors.append(f"{label} (failDownloads): {e}")
+    # Bloc à part des deux passes seedRatio : elles ont besoin de la liste des
+    # indexeurs publics, celle-ci non — elle se rattache par definitionFile.
+    if prowlarr_api_key:
+        try:
+            changed += apply_prowlarr_nyaa_category(prowlarr_api_key)
+        except Exception as e:
+            errors.append(f"Prowlarr (catégorie Nyaa.si): {e}")
+
     # Bloc à part, et par arr : le PUT d'un indexeur est le seul de ce script à
     # dépendre d'un service tiers joignable (le tracker lui-même, testé par
     # Sonarr/Radarr au moment de l'écriture même avec forceSave).
