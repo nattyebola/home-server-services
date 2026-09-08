@@ -663,6 +663,19 @@ explicitement :
   (bootstrap) et créer le compte propriétaire de Seerr. **Une clé API suffit
   en revanche pour créer une bibliothèque** — ne pas réintroduire de
   dépendance aux identifiants dans `make provision`.
+  **Une seule forme d'authentification est encore acceptée par l'API Jellyfin :
+  `Authorization: MediaBrowser Token="<jeton>"`** (`jellyfin_auth()`), pour une
+  clé API comme pour un token de session. Jellyfin 12.0.0 a retiré les deux
+  autres, historiquement équivalentes : le paramètre d'URL `?api_key=` **et**
+  l'en-tête `X-Emby-Token` répondent désormais **401** (les deux vérifiés le
+  2026-09-08, quelques heures après la mise à niveau automatique — le volet
+  Jellyfin de `make api-keys`/`make provision` était cassé sans que rien ne le
+  signale, le cron n'appelant pas ce script). La clé stockée, elle, reste
+  valide : un 401 ici veut dire « mauvaise forme d'en-tête », pas « clé à
+  regénérer » — et la relire par `?api_key=` pour « vérifier » ne prouverait
+  que ça. Les connexions Sonarr/Radarr → Jellyfin n'ont pas bougé (leur
+  implémentation .NET envoie déjà la bonne forme, `testall` valide des deux
+  côtés).
   Détail sans conséquence : après suppression d'une bibliothèque Jellyfin,
   celle-ci reste un moment listée par l'endpoint que Seerr interroge (cache
   côté Jellyfin) — elle arrive désactivée côté Seerr. Corollaire voulu : une

@@ -292,6 +292,20 @@ def cross_seed_api_key():
     return lines[-1]
 
 
+def jellyfin_auth(token):
+    """En-tête d'authentification Jellyfin — même forme pour une clé API et pour
+    un token de session obtenu par `jellyfin_token()`.
+
+    Jellyfin 12.0.0 a retiré les deux autres formes que l'API acceptait
+    historiquement : le paramètre d'URL `?api_key=` ET l'en-tête `X-Emby-Token`
+    répondent tous les deux 401 depuis la 12 (vérifié le 2026-09-08 sur cette
+    installation, juste après la mise à niveau), seul
+    `Authorization: MediaBrowser Token="..."` passe. Un helper plutôt que la
+    chaîne recopiée sur chaque appel : c'est une forme qui a déjà bougé une
+    fois."""
+    return ("Authorization", f'MediaBrowser Token="{token}"')
+
+
 def jellyfin_token(admin_user, admin_password):
     """Jellyfin n'accepte pas la création d'une clé API par clé API : il faut un
     token de session obtenu avec les identifiants admin (d'où jellyfin/.env)."""
@@ -311,15 +325,15 @@ def jellyfin_api_key(token):
     sinon en crée une. Jellyfin expose les clés en clair sur /Auth/Keys, ce qui
     permet de les relire après création — l'API ne renvoie rien à la création."""
     existing = request(PROXY_CONTAINER, f"{JELLYFIN_URL}/Auth/Keys",
-                       secret_header=("X-Emby-Token", token))
+                       secret_header=jellyfin_auth(token))
     for item in (existing or {}).get("Items", []):
         if item.get("AppName") == JELLYFIN_KEY_APP:
             return item["AccessToken"], False
     request(PROXY_CONTAINER,
             f"{JELLYFIN_URL}/Auth/Keys?App={JELLYFIN_KEY_APP.replace(' ', '%20')}",
-            "POST", secret_header=("X-Emby-Token", token))
+            "POST", secret_header=jellyfin_auth(token))
     after = request(PROXY_CONTAINER, f"{JELLYFIN_URL}/Auth/Keys",
-                    secret_header=("X-Emby-Token", token))
+                    secret_header=jellyfin_auth(token))
     for item in (after or {}).get("Items", []):
         if item.get("AppName") == JELLYFIN_KEY_APP:
             return item["AccessToken"], True
@@ -368,7 +382,7 @@ def provision_jellyfin_libraries(jellyfin_key, done, skipped):
     la création d'une clé API elle-même — donc `make provision` ne dépend que de
     arr/.env."""
     existing = request(PROXY_CONTAINER, f"{JELLYFIN_URL}/Library/VirtualFolders",
-                       secret_header=("X-Emby-Token", jellyfin_key)) or []
+                       secret_header=jellyfin_auth(jellyfin_key)) or []
     by_name = {v["Name"]: v for v in existing}
     for library in JELLYFIN_LIBRARIES:
         current = by_name.get(library["name"])
@@ -381,7 +395,7 @@ def provision_jellyfin_libraries(jellyfin_key, done, skipped):
                 f"{JELLYFIN_URL}/Library/VirtualFolders"
                 f"?name={urllib.parse.quote(library['name'])}"
                 f"&collectionType={library['collection_type']}&refreshLibrary=true",
-                "POST", secret_header=("X-Emby-Token", jellyfin_key),
+                "POST", secret_header=jellyfin_auth(jellyfin_key),
                 body={"LibraryOptions": {"PathInfos": [{"Path": library["path"]}],
                                           "EnableRealtimeMonitor": True,
                                           "LocalMetadataReaderOrder": JELLYFIN_METADATA_READER_ORDER}})
