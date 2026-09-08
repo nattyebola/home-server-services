@@ -1,6 +1,9 @@
 # local tooling config (machine/session-specific)
 .claude/settings.local.json
 server.geany
+# rtk (proxy CLI branché sur Claude Code par un hook global) écrit son état et
+# ses filtres par dépôt — outil de l'utilisateur, pas de l'infra
+.rtk/
 
 # Python bytecode cache (scripts/*.py, arr/clearr/app/)
 __pycache__/
