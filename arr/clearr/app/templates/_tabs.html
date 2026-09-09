@@ -18,6 +18,15 @@
        data-get="/tab/series" data-target="#tab-content">Séries</a>
   </li>
   <li class="nav-item" role="presentation">
+    {# Animés = les séries dont Sonarr dit seriesType == "anime" (core.is_anime).
+       Même source, même gabarit et mêmes routes de suppression que Séries : ce
+       n'est qu'un filtre, voir webapp.ARR_TABS. #}
+    <a href="#" role="tab" class="nav-link {{ 'active' if active == 'animes' else '' }}"
+       aria-selected="{{ 'true' if active == 'animes' else 'false' }}"
+       {% if active == 'animes' %}aria-current="page"{% endif %}
+       data-get="/tab/animes" data-target="#tab-content">Animés</a>
+  </li>
+  <li class="nav-item" role="presentation">
     <a href="#" role="tab" class="nav-link {{ 'active' if active == 'films' else '' }}"
        aria-selected="{{ 'true' if active == 'films' else 'false' }}"
        {% if active == 'films' %}aria-current="page"{% endif %}

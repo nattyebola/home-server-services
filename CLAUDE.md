@@ -177,13 +177,37 @@ explicitement :
   supplémentaire, symlinks cross-seed déjà résolus). Best-effort : un
   torrent jamais importé n'a ni jaquette ni lien, un arr injoignable dégrade
   la vue sans la casser.
-- **Un seul gabarit par comportement partagé entre les 3 vues** :
+- **Un seul gabarit par comportement partagé entre les vues** :
   `templates/_meta.html` (cellule titre : jaquette + liens),
   `templates/details.html` (fiche « toutes les informations connues », en
   modale, purement descriptive), `render_arr_tab(tab, ...)` + `ARR_TABS`
-  pour Séries/Films. Sans ça le même bloc serait écrit deux ou trois fois.
+  pour Séries/Animés/Films. Sans ça le même bloc serait écrit deux ou trois fois.
   `core.find_series_by_id`/`find_movie_by_id` plutôt que des `next((...))`
   recopiés dans les routes.
+- **4 onglets web : Torrents / Séries / Animés / Films** (2026-09-09).
+  Séries et Animés sont **deux vues filtrées d'une seule liste Sonarr** :
+  même `fetch`, même gabarit `series_tab.html`, mêmes routes de suppression
+  `/series/{id}/...` — seuls le prédicat `select` de la spec `ARR_TABS` et les
+  libellés (`count_label`/`empty_label`, portés par la spec pour qu'elle reste
+  la seule source) changent. Pas d'`animes_tab.html` : il aurait été la copie
+  mot pour mot du premier.
+  **Le critère est `seriesType == "anime"` (`core.is_anime`), pas le root
+  folder** : les deux concordent parfaitement ici (21 anime / 13 standard le
+  2026-09-09), mais `library/anime` est un chemin propre à cette installation
+  (cf. `ARR_ROOT_FOLDERS` de `provision.py`) là où `seriesType` est la notion
+  par laquelle Sonarr lui-même distingue un anime — c'est ce champ qui active
+  sa numérotation absolue. Une série mal typée dans Sonarr sort dans le mauvais
+  onglet, volontairement : la correction se fait dans Sonarr, pas par une
+  heuristique de chemin.
+  **L'onglet d'origine voyage jusqu'à la modale** (`&tab=` sur le lien confirm,
+  champ caché `tab` dans `confirm_series.html`) : les deux onglets postent sur
+  la même route, et sans ça une suppression depuis Animés rerendait la liste
+  des séries standard — donc une vue où le titre supprimé n'était de toute
+  façon pas. Ce nom vient du client, d'où `arr_tab_name()` qui le ramène à une
+  valeur de `ARR_TABS` (un `ARR_TABS[tab]` nu lèverait un KeyError, donc un 500
+  nu, sur une valeur inventée).
+  **La TUI n'a pas bougé** (`core.VIEWS` reste à 3), comme les autres ajouts
+  récents.
 - **Erreur réseau rendue en bandeau lisible**
   (`@app.exception_handler(RuntimeError)`) plutôt qu'un 500 brut — la TUI
   avait déjà ce filet dans `run()`, le web non (chaque route peut lever

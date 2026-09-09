@@ -13,6 +13,9 @@
   <input type="hidden" name="sort" value="{{ sort }}">
   <input type="hidden" name="reverse" value="{{ '1' if reverse else '0' }}">
   <input type="hidden" name="filter" value="{{ filter_str }}">
+  {# Séries et Animés postent tous les deux sur /series/{id}/delete : sans ce
+     champ, une suppression faite depuis Animés rerendait l'onglet Séries. #}
+  <input type="hidden" name="tab" value="{{ tab }}">
 
 {% if seasons %}
 {# RIEN n'est coché par défaut. Le 2026-08-30, avec toutes les cases pré-cochées,

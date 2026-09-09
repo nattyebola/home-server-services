@@ -24,7 +24,7 @@ templates = Jinja2Templates(directory=os.path.join(APP_DIR, "templates"))
 app = FastAPI(title="clearr")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-DEFAULT_SORT = {"torrents": "AGE", "series": "TITRE", "films": "TITRE"}
+DEFAULT_SORT = {"torrents": "AGE", "series": "TITRE", "animes": "TITRE", "films": "TITRE"}
 
 
 def _compute_asset_version():
@@ -277,20 +277,43 @@ def film_row(m):
 # deux fois). La vue Torrents, elle, garde sa fonction propre : elle part de
 # Transmission (load_full_state) et non d'un arr, et gère les groupes
 # cross-seed.
+#
+# Séries et Animés partagent la MÊME source (Sonarr), le même gabarit et les
+# mêmes routes de suppression (/series/{id}/...) : ce sont deux vues filtrées
+# d'une seule liste, séparées par `select` (core.is_anime) — d'où `template` et
+# les libellés dans la spec plutôt qu'un animes_tab.html qui aurait été la copie
+# mot pour mot de series_tab.html. `select=None` = pas de filtre.
 ARR_TABS = {
-    "series": {"fetch": core.fetch_series_list, "fields": core.SERIES_SORT_FIELDS, "row": series_row},
-    "films": {"fetch": core.fetch_movies_list, "fields": core.FILMS_SORT_FIELDS, "row": film_row},
+    "series": {"fetch": core.fetch_series_list, "fields": core.SERIES_SORT_FIELDS, "row": series_row,
+               "template": "series_tab.html", "select": lambda s: not core.is_anime(s),
+               "count_label": "série(s)", "empty_label": "Aucune série"},
+    "animes": {"fetch": core.fetch_series_list, "fields": core.SERIES_SORT_FIELDS, "row": series_row,
+               "template": "series_tab.html", "select": core.is_anime,
+               "count_label": "animé(s)", "empty_label": "Aucun animé"},
+    "films": {"fetch": core.fetch_movies_list, "fields": core.FILMS_SORT_FIELDS, "row": film_row,
+              "template": "films_tab.html", "select": None,
+              "count_label": "film(s)", "empty_label": "Aucun film"},
 }
+
+# Les deux onglets Sonarr renvoient vers les mêmes routes de suppression, qui
+# doivent rerendre l'onglet d'où l'utilisateur vient — le nom arrive donc du
+# client (champ de formulaire) et doit être ramené à une valeur connue, sinon
+# ARR_TABS[tab] lèverait un KeyError (500 nu) sur une valeur inventée.
+def arr_tab_name(tab, fallback="series"):
+    return tab if tab in ARR_TABS else fallback
 
 
 def render_arr_tab(tab, sort, reverse, filter_str, message=None, message_kind="success"):
     spec = ARR_TABS[tab]
     items = spec["fetch"]()
+    if spec["select"]:
+        items = [i for i in items if spec["select"](i)]
     selected = core.filter_by_title(items, filter_str)
     core.sort_items(selected, spec["fields"], field_index(spec["fields"], sort), reverse)
     return render(
-        f"{tab}_tab.html",
-        active=tab,
+        spec["template"],
+        active=tab, tab=tab,
+        count_label=spec["count_label"], empty_label=spec["empty_label"],
         sort=sort, reverse=reverse, filter_str=filter_str,
         qs=query_string(sort, reverse, filter_str),
         columns=build_columns(tab, spec["fields"], sort, reverse, filter_str),
@@ -313,6 +336,11 @@ def tab_torrents(sort: str = DEFAULT_SORT["torrents"], reverse: str = "0", filte
 @app.get("/tab/series", response_class=HTMLResponse)
 def tab_series(sort: str = DEFAULT_SORT["series"], reverse: str = "0", filter: str = ""):
     return HTMLResponse(render_arr_tab("series", sort, reverse == "1", filter))
+
+
+@app.get("/tab/animes", response_class=HTMLResponse)
+def tab_animes(sort: str = DEFAULT_SORT["animes"], reverse: str = "0", filter: str = ""):
+    return HTMLResponse(render_arr_tab("animes", sort, reverse == "1", filter))
 
 
 @app.get("/tab/films", response_class=HTMLResponse)
@@ -818,7 +846,8 @@ def _delete_movie(movie, state):
 # --- suppression d'une série entière (vue Séries) ---
 
 @app.get("/series/{sid}/confirm", response_class=HTMLResponse)
-def series_confirm(sid: int, sort: str = DEFAULT_SORT["series"], reverse: str = "0", filter: str = ""):
+def series_confirm(sid: int, sort: str = DEFAULT_SORT["series"], reverse: str = "0", filter: str = "",
+                    tab: str = "series"):
     """Écran de choix des saisons + purge. Chaque ligne de saison porte SON
     bilan, donc reste exacte quelle que soit la sélection : c'est ce qui évite
     un recalcul côté navigateur (clearr.js n'a aucune logique métier) sans pour
@@ -857,14 +886,14 @@ def series_confirm(sid: int, sort: str = DEFAULT_SORT["series"], reverse: str = 
             sum(s for _t, hf, _lm in unimported for _p, s in hf)),
         straddling=[{"name": t["name"], "seasons": ", ".join(f"S{n:02d}" for n in touched)}
                     for t, touched in straddling],
-        sort=sort, reverse=reverse == "1", filter_str=filter,
+        sort=sort, reverse=reverse == "1", filter_str=filter, tab=arr_tab_name(tab),
     ))
 
 
 @app.post("/series/{sid}/delete", response_class=HTMLResponse)
 def series_delete(sid: int, purge: str = "0", seasons: list[int] = Form(default=[]),
                    sort: str = Form(DEFAULT_SORT["series"]), reverse: str = Form("0"),
-                   filter: str = Form("")):
+                   filter: str = Form(""), tab: str = Form("series")):
     """`seasons` ne porte que des numéros de saison, jamais un chemin : rien de
     ce qui sera supprimé ne vient du client, le plan est recalculé côté serveur
     à partir des seuls entiers reçus (même règle que « Orphelins library/ »).
@@ -875,9 +904,13 @@ def series_delete(sid: int, purge: str = "0", seasons: list[int] = Form(default=
     modale soumettent le même formulaire (celui des cases à cocher), seule leur
     cible diffère. Un champ caché aurait dû vivre dans un second <form>, donc
     imbriqué dans le premier — invalide en HTML."""
+    # Séries et Animés partagent cette route : sans cet onglet renvoyé par le
+    # formulaire, une suppression depuis Animés rerendait la liste des séries
+    # standard, donc une vue où le titre supprimé n'était de toute façon pas.
+    tab = arr_tab_name(tab)
     series = core.find_series_by_id(sid)
     if not series:
-        return HTMLResponse(render_arr_tab("series", sort, reverse == "1", filter,
+        return HTMLResponse(render_arr_tab(tab, sort, reverse == "1", filter,
                                                message="Série déjà supprimée.", message_kind="warning"))
     state = core.load_full_state()
     try:
@@ -890,7 +923,7 @@ def series_delete(sid: int, purge: str = "0", seasons: list[int] = Form(default=
     except Exception as e:
         core.logger.error("échec de la suppression de la série %r : %s", series["title"], e)
         message, kind = f"ÉCHEC (voir {core.LOG_PATH}) : {e}", "danger"
-    return HTMLResponse(render_arr_tab("series", sort, reverse == "1", filter, message=message, message_kind=kind))
+    return HTMLResponse(render_arr_tab(tab, sort, reverse == "1", filter, message=message, message_kind=kind))
 
 
 # --- suppression d'un film (vue Films) ---

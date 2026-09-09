@@ -555,6 +555,21 @@ def fetch_series_list():
     return series
 
 
+def is_anime(series):
+    """Sépare les onglets Séries et Animés du web (voir webapp.ARR_TABS).
+
+    Le critère est `seriesType`, le champ par lequel Sonarr lui-même distingue
+    un anime (c'est lui qui active sa numérotation absolue), et PAS le root
+    folder : les deux concordent parfaitement sur ce déploiement (21 anime / 13
+    standard, vérifié le 2026-09-09), mais un chemin `library/anime` est propre
+    à cette installation là où `seriesType` est une notion Sonarr — le même
+    genre de raison qui met les root folders dans provision.py plutôt qu'en dur
+    ici. Une série mal typée dans Sonarr apparaît dans le mauvais onglet : c'est
+    voulu, la correction se fait dans Sonarr, pas par une heuristique de chemin.
+    """
+    return series.get("seriesType") == "anime"
+
+
 def fetch_movies_list():
     movies = arr_api(RADARR_URL, RADARR_API_KEY, "GET", "/api/v3/movie")
     if not movies:
