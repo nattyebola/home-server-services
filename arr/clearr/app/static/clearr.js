@@ -56,6 +56,7 @@
     clearAlert();
     el.innerHTML = body;
     showModalIfTarget(target);
+    syncEmptySwitches();
   }
 
   // Désactive le déclencheur le temps de la requête et affiche un spinner
@@ -140,6 +141,37 @@
   // survolée sans qu'aucun mouseout ne soit émis — la vignette resterait
   // affichée dans le vide.
   window.addEventListener("scroll", hidePoster, true);
+
+  // --- Switch « Afficher les titres sans fichier » --------------------------
+  // Le masquage lui-même est purement CSS, depuis data-clearr-empty sur <html>
+  // (posé avant le rendu du <body>, voir page.html) : rien à rejouer après un
+  // swap de fragment, et aucun aller-retour serveur au basculement.
+  // Seul l'état COCHÉ de la case ne peut pas venir du CSS, et la case vit DANS
+  // le fragment remplacé — d'où cette resynchro après chaque swap.
+  var EMPTY_KEY = "clearr.showEmpty";
+
+  function syncEmptySwitches() {
+    var shown = document.documentElement.getAttribute("data-clearr-empty") === "show";
+    document.querySelectorAll("[data-show-empty]").forEach(function (box) {
+      box.checked = shown;
+    });
+  }
+
+  document.addEventListener("change", function (e) {
+    var box = e.target.closest("[data-show-empty]");
+    if (!box) return;
+    if (box.checked) {
+      document.documentElement.setAttribute("data-clearr-empty", "show");
+    } else {
+      document.documentElement.removeAttribute("data-clearr-empty");
+    }
+    try {
+      localStorage.setItem(EMPTY_KEY, box.checked ? "1" : "0");
+    } catch (err) {
+      // Préférence non mémorisable : le basculement reste valable pour la
+      // session en cours, ce qui vaut mieux que de ne rien faire.
+    }
+  });
 
   document.addEventListener("click", function (e) {
     // Les liens IMDb/TVDB/TMDB/Sonarr/Radarr sont de vrais liens externes
@@ -236,6 +268,7 @@
         clearAlert();
         el.innerHTML = html;
         showModalIfTarget(target);
+        syncEmptySwitches();
         var newInput = el.querySelector('[name="' + name + '"]');
         if (newInput) {
           newInput.focus();
@@ -247,4 +280,6 @@
       });
     }, 300);
   });
+
+  syncEmptySwitches();   // rendu initial : #tab-content vient de page.html
 })();

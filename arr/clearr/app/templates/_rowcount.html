@@ -1,0 +1,32 @@
+{# Ligne de compte + switch « titres sans fichier », partagée par les onglets
+   Séries / Animés / Films — un seul gabarit plutôt que le même bloc recopié
+   dans series_tab.html et films_tab.html, comme title_cell dans _meta.html.
+
+   Les DEUX comptes sont rendus ensemble et c'est le CSS qui choisit lequel
+   s'affiche (data-clearr-empty sur <html>, voir clearr.css) : réécrire le texte
+   en JS après chaque swap de fragment aurait fait clignoter le mauvais chiffre
+   au passage, et le masquage des lignes est déjà purement CSS pour la même
+   raison.
+
+   Le switch n'est rendu que si l'onglet contient de tels titres, mais il se base
+   sur empty_total (tout l'onglet) et pas sur empty_count (la sélection filtrée) :
+   sinon un filtre textuel ne ramenant aucun titre sans fichier ferait
+   disparaître le switch, sans plus aucun moyen de le rebasculer. #}
+{% macro count_and_switch(shown, total, empty_count, empty_total, label) -%}
+<div class="d-flex align-items-center gap-3 flex-wrap mb-2">
+  <p class="text-body-secondary small mb-0">
+    <span class="count-when-hidden">{{ shown - empty_count }}/{{ total }} {{ label }}{% if empty_count %} · {{ empty_count }} sans fichier masqué(s){% endif %}</span><span class="count-when-shown">{{ shown }}/{{ total }} {{ label }}</span>
+  </p>
+  {% if empty_total %}
+  <div class="form-check form-switch small mb-0">
+    <input class="form-check-input" type="checkbox" role="switch" id="show-empty" data-show-empty>
+    {# title= natif et pas un tooltip Bootstrap : le bundle Popper n'est pas
+       vendoré, donc aucun tooltip/popover n'est disponible. #}
+    <label class="form-check-label text-body-secondary" for="show-empty"
+           title="Titres suivis dont aucun fichier n'est sur le disque : rien à nettoyer. Attention, ils peuvent encore porter des torrents grabés jamais importés — visibles dans l'onglet Torrents, et seule « Purger » les emporte.">
+      Afficher les titres sans fichier
+    </label>
+  </div>
+  {% endif %}
+</div>
+{%- endmacro %}

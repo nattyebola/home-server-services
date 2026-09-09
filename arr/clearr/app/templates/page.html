@@ -18,6 +18,20 @@
     apply();
     mq.addEventListener("change", apply);
   })();
+
+  // Titres sans fichier masqués par défaut : clearr sert à nettoyer, et le
+  // nombre de titres suivis en attente de diffusion ne peut que croître.
+  // Posé ici, sur <html>, pour deux raisons : avant le rendu du <body> il n'y
+  // a aucun flash des lignes masquées, et l'attribut vit hors de #tab-content
+  // (remplacé en entier à chaque swap de fragment) donc rien n'est à rejouer.
+  // localStorage sous try/catch : il lève en navigation privée stricte.
+  (function () {
+    try {
+      if (localStorage.getItem("clearr.showEmpty") === "1") {
+        document.documentElement.setAttribute("data-clearr-empty", "show");
+      }
+    } catch (e) { /* pas de préférence mémorisable : on reste sur le défaut */ }
+  })();
 </script>
 </head>
 <body>

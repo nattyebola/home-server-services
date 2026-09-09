@@ -178,3 +178,23 @@ tr.collapsing {
 #modal .modal-title {
   min-width: 0;
 }
+
+/* Titres sans fichier (switch « Afficher les titres sans fichier »).
+
+   Piloté par data-clearr-empty sur <html>, posé AVANT le rendu du <body>
+   (page.html) comme data-bs-theme : l'état vit donc hors de #tab-content, qui
+   est remplacé en entier à chaque clic d'onglet, tri ou frappe dans le filtre —
+   un masquage porté par une classe DANS le fragment aurait dû être rejoué en JS
+   après chaque swap, avec un flash des lignes masquées entre les deux.
+
+   Écrit en :not([...="show"]) et pas en [...="hide"] : sans attribut (JS
+   désactivé, localStorage bloqué, premier rendu) le comportement par défaut
+   reste le masquage, qui est celui demandé. */
+:root:not([data-clearr-empty="show"]) .row-empty,
+:root:not([data-clearr-empty="show"]) .count-when-shown {
+  display: none;
+}
+
+:root[data-clearr-empty="show"] .count-when-hidden {
+  display: none;
+}

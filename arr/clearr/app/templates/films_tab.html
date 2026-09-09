@@ -1,4 +1,5 @@
 {% from "_meta.html" import title_cell %}
+{% from "_rowcount.html" import count_and_switch %}
 {% include "_tabs.html" %}
 {% if message %}<div class="alert alert-{{ message_kind }} py-2">{{ message }}</div>{% endif %}
 
@@ -9,7 +10,7 @@
          placeholder="Filtrer par titre…" data-live autocomplete="off">
 </form>
 
-<p class="text-body-secondary small mb-2">{{ rows|length }}/{{ total }} {{ count_label }}</p>
+{{ count_and_switch(rows|length, total, empty_count, empty_total, count_label) }}
 
 <div class="table-responsive">
 <table class="table table-sm table-hover align-middle small mb-0">
@@ -28,7 +29,7 @@
   </thead>
   <tbody>
     {% for m in rows %}
-    <tr>
+    <tr{% if m.empty %} class="row-empty"{% endif %}>
       <td class="{{ 'text-success-emphasis' if m.monitored else '' }}">{{ '✓' if m.monitored else '' }}</td>
       <td class="{{ 'text-success-emphasis' if m.has_file else '' }}">{{ '✓' if m.has_file else '' }}</td>
       <td>{{ m.year }}</td>

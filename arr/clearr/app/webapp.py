@@ -286,12 +286,15 @@ def film_row(m):
 ARR_TABS = {
     "series": {"fetch": core.fetch_series_list, "fields": core.SERIES_SORT_FIELDS, "row": series_row,
                "template": "series_tab.html", "select": lambda s: not core.is_anime(s),
+               "empty": core.series_without_files,
                "count_label": "série(s)", "empty_label": "Aucune série"},
     "animes": {"fetch": core.fetch_series_list, "fields": core.SERIES_SORT_FIELDS, "row": series_row,
                "template": "series_tab.html", "select": core.is_anime,
+               "empty": core.series_without_files,
                "count_label": "animé(s)", "empty_label": "Aucun animé"},
     "films": {"fetch": core.fetch_movies_list, "fields": core.FILMS_SORT_FIELDS, "row": film_row,
               "template": "films_tab.html", "select": None,
+              "empty": core.movie_without_files,
               "count_label": "film(s)", "empty_label": "Aucun film"},
 }
 
@@ -310,6 +313,17 @@ def render_arr_tab(tab, sort, reverse, filter_str, message=None, message_kind="s
         items = [i for i in items if spec["select"](i)]
     selected = core.filter_by_title(items, filter_str)
     core.sort_items(selected, spec["fields"], field_index(spec["fields"], sort), reverse)
+    # `empty` marque la ligne, il ne la retire pas : le masquage est fait par
+    # CSS depuis data-clearr-empty sur <html> (voir page.html), donc il survit
+    # à chaque swap de fragment sans rien à rejouer en JS, et le switch ne
+    # coûte aucun aller-retour serveur.
+    #   - empty_count : masqués DANS la sélection courante, ce que le compte
+    #     affiché doit retrancher ;
+    #   - empty_total : masquables dans tout l'onglet, ce qui décide de la
+    #     présence du switch — sinon un filtre textuel ne ramenant aucun titre
+    #     sans fichier ferait disparaître le switch, laissant l'utilisateur sans
+    #     moyen de le rebasculer.
+    rows = [dict(spec["row"](i), empty=spec["empty"](i)) for i in selected]
     return render(
         spec["template"],
         active=tab, tab=tab,
@@ -317,7 +331,9 @@ def render_arr_tab(tab, sort, reverse, filter_str, message=None, message_kind="s
         sort=sort, reverse=reverse, filter_str=filter_str,
         qs=query_string(sort, reverse, filter_str),
         columns=build_columns(tab, spec["fields"], sort, reverse, filter_str),
-        rows=[spec["row"](i) for i in selected], total=len(items),
+        rows=rows, total=len(items),
+        empty_count=sum(1 for r in rows if r["empty"]),
+        empty_total=sum(1 for i in items if spec["empty"](i)),
         message=message, message_kind=message_kind,
     )
 

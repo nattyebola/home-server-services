@@ -555,6 +555,28 @@ def fetch_series_list():
     return series
 
 
+# Un titre sans aucun fichier sur le disque n'a RIEN à nettoyer : c'est du
+# contenu suivi en attente de diffusion ou de release. clearr le masque par
+# défaut dans les vues Séries/Animés/Films (switch pour le révéler, voir
+# webapp.ARR_TABS et templates/_rowcount.html) — leur nombre ne peut que
+# croître avec le temps, alors que la vocation de l'outil est de montrer ce
+# qui occupe de la place.
+#
+# ATTENTION, ce n'est pas « rien à supprimer » : une série sans fichier peut
+# encore porter des torrents grabés jamais importés (core.series_grabbed_torrents,
+# 14 torrents / 18,4 Go mesurés sur 6 séries le 2026-09-09), que seule la purge
+# emporte. C'est précisément pour ça que c'est un SWITCH et pas un filtre en dur,
+# et que le compte des titres masqués reste affiché. Le rattachement de ces
+# torrents coûte un appel history par série : hors de question au rendu d'un
+# onglet, d'où un critère qui s'en tient à ce que l'objet arr porte déjà.
+def series_without_files(series):
+    return not (series.get("statistics") or {}).get("episodeFileCount", 0)
+
+
+def movie_without_files(movie):
+    return not movie.get("hasFile")
+
+
 def is_anime(series):
     """Sépare les onglets Séries et Animés du web (voir webapp.ARR_TABS).
 

@@ -244,6 +244,43 @@ explicitement :
   Bootstrap 5.3 ne suit pas `prefers-color-scheme` tout seul — un script en
   tête de `page.html` pose `data-bs-theme` avant le rendu du `<body>` pour
   éviter un flash clair→sombre.
+- **Titres sans fichier masqués par défaut dans Séries/Animés/Films**
+  (2026-09-09), révélés par un switch « Afficher les titres sans fichier ».
+  Demandé : la vocation de clearr est de montrer ce qui occupe de la place, et
+  le nombre de titres suivis en attente de diffusion ne peut que croître (7/16
+  séries et 14/42 films au moment de l'ajout, soit 21 lignes de bruit).
+  Critère `core.series_without_files`/`movie_without_files` : ce que l'objet arr
+  porte déjà (`statistics.episodeFileCount`, `hasFile`), **jamais un appel
+  supplémentaire** — au rendu d'un onglet c'est la seule contrainte qui compte.
+  **Ce n'est PAS « rien à supprimer »** : une série sans fichier peut encore
+  porter des torrents grabés jamais importés (`series_grabbed_torrents`), que
+  seule la purge emporte. C'est pour ça que c'est un **switch et pas un filtre
+  en dur**, que le compte des masqués reste affiché (« 9/16 série(s) · 7 sans
+  fichier masqué(s) »), et que le `title=` du switch renvoie vers l'onglet
+  Torrents. Les rattacher au rendu coûterait un appel history par série.
+  **Masquage 100 % CSS depuis `data-clearr-empty` sur `<html>`**, posé par le
+  script de tête de `page.html` à côté de `data-bs-theme` : `#tab-content` est
+  remplacé en entier à chaque clic d'onglet, tri et frappe dans le filtre, donc
+  une classe portée par le fragment aurait dû être rejouée en JS après chaque
+  swap — avec un flash des lignes masquées entre les deux. Le switch ne coûte
+  aucun aller-retour serveur, et l'état survit aux swaps.
+  Écrit en `:not([data-clearr-empty="show"])` et non `[…="hide"]` : sans
+  attribut (JS coupé, `localStorage` qui lève en navigation privée) le défaut
+  reste le masquage, celui qui est demandé.
+  Les **deux comptes sont rendus ensemble**, le CSS choisit lequel s'affiche —
+  réécrire le texte en JS après chaque swap aurait fait clignoter le mauvais
+  chiffre. Seul l'état *coché* de la case ne peut pas venir du CSS, d'où
+  `syncEmptySwitches()` appelé aux 3 points d'entrée (les 2 chemins de swap +
+  le rendu initial, qui vient de `page.html` et ne passe pas par `swapInto`).
+  Le switch vit **hors du `<form>` de filtre** : dedans, il serait sérialisé
+  dans les paramètres du filtre en direct.
+  Sa présence tient à `empty_total` (tout l'onglet) et non `empty_count` (la
+  sélection filtrée) : sinon un filtre textuel ne ramenant aucun titre sans
+  fichier ferait disparaître le switch, sans plus aucun moyen de le rebasculer.
+  Un onglet sans aucun titre masquable ne l'affiche pas du tout (Animés, 0/21).
+  Gabarit unique `templates/_rowcount.html` (macro `count_and_switch`), comme
+  `title_cell` de `_meta.html` — sinon le bloc serait recopié dans
+  `series_tab.html` et `films_tab.html`.
 - **Suppression toujours confirmée par une modale**, composant Modal natif
   de Bootstrap plutôt qu'un `<dialog>` fait main : focus trap / Échap /
   clic-sur-le-fond déjà corrects, les réimplémenter aurait été strictement
