@@ -362,6 +362,43 @@ explicitement :
   `<form>` imbriqué dans le premier — invalide en HTML. C'est ce qui a motivé
   l'ajout de **`data-form`** à `clearr.js` (le pied d'une modale Bootstrap est
   un frère de son corps, `closest("form")` n'y trouve rien).
+- **Torrents grabés pour une série mais JAMAIS IMPORTÉS**
+  (`core.series_grabbed_torrents()`, 2026-09-09) : la purge d'une série les
+  emporte désormais aussi. `find_series_torrents()` ne rattache que par hardlink
+  sous le dossier de la série — un grab que Sonarr a refusé d'importer
+  (« Series title mismatch », numérotation absolue…) n'a aucun fichier
+  `library/`, donc aucun `lib_matches`, donc était **structurellement invisible**
+  de la vue Séries. Déclencheur : une série purgée depuis clearr, bien retirée de
+  Sonarr, laissant **5 torrents et 21,97 Go** derrière elle, visibles de la seule
+  vue Torrents. Mesuré dans la foulée sur le catalogue : **14 torrents / 18,4 Go
+  sur 6 séries** étaient dans ce cas. Couvre du même coup le torrent dont Sonarr
+  a supprimé le fichier après un upgrade en le laissant en seed.
+  **Le rattachement vient de Sonarr, jamais du nom** : `GET
+  /api/v3/history/series?seriesId=…&eventType=1` (liste plate, non paginée) porte
+  `seriesId` **et** `downloadId` = l'infoHash, croisé avec le `hashString` des
+  torrents — d'où l'ajout de ce champ aux `fields` de `list_torrents()`.
+  Rapprocher des titres serait strictement moins sûr sur un chemin qui supprime
+  des fichiers : deux séries homonymes suffiraient à effacer l'une pour l'autre.
+  Le filtre `seriesId` est **refait côté client** — celui de `/api/v3/history`
+  laisse passer d'autres séries (piège documenté plus bas), on ne parie pas sur
+  le fait que `/history/series` soit mieux tenu.
+  **ORDRE IMPOSÉ : appeler AVANT `DELETE /api/v3/series/{id}`.** Sonarr purge
+  l'historique d'une série avec elle ; après le retrait le rattachement n'existe
+  plus et la liste revient simplement **vide, sans erreur**. Les appelants
+  (`_delete_series` purge, les 2 sites de `tui.py`) le calculent donc avant et
+  concatènent à `matched` — `execute_delete_series` ne les distingue pas, son
+  `still_covered` ne lisant que des `lib_matches` (vides ici, volontairement).
+  **Best-effort**, contrairement à `_arr_covered_paths()`/`series_episode_files()`
+  qui lèvent : un échec fait *rater* des torrents, il n'en fait jamais supprimer
+  à tort — bloquer toute la purge pour un complément coûterait plus qu'il ne
+  protège.
+  **Volontairement absent du chemin saison par saison** : ces torrents
+  n'appartiennent à aucune saison connue (aucun `episodefile`), donc
+  `execute_delete_seasons` ne peut pas les rattacher — et la preview partielle ne
+  les compte pas, sinon elle annoncerait une taille jamais libérée. L'écran de
+  confirmation web les liste dans une section à part disant explicitement
+  « emporté(s) uniquement par Purger », même règle que les orphelins : ne jamais
+  promettre pour un bouton ce que seul l'autre fait.
 - Écrit sur mesure plutôt que d'ajouter un service tiers (Decluttarr,
   Removarr...) : aucun ne couvre « suppression Sonarr/Radarr → nettoyage
   automatique du client torrent », trou connu et non résolu de l'écosystème

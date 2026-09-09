@@ -189,9 +189,13 @@ class TransmissionClient:
         # publics (voir PUBLIC_INDEXER_SEED_RATIO dans apply-arr-overrides.py),
         # donc ce qui décide quand un torrent cessera de partager — affiché dans
         # la fiche détail, où « ratio 1.90 » seul ne dit pas s'il reste du chemin.
+        # hashString : seule clé commune avec les arr, dont l'historique de grab
+        # et la file désignent un téléchargement par son infoHash — c'est ce qui
+        # permet à series_grabbed_torrents() de rattacher un torrent jamais
+        # importé à sa série sans rapprocher des titres.
         fields = ["id", "name", "addedDate", "downloadDir", "totalSize",
                   "files", "trackerStats", "percentDone", "uploadRatio", "status",
-                  "seedRatioLimit", "seedRatioMode"]
+                  "seedRatioLimit", "seedRatioMode", "hashString"]
         torrents = self.call("torrent-get", {"fields": fields})["torrents"]
         logger.info("liste torrents récupérée : %d torrents", len(torrents))
         return torrents
@@ -786,6 +790,65 @@ def find_series_torrents(all_torrents, library_index, cross_seed_child_ids, seri
         lib_matches = find_library_matches(host_files, library_index)
         if any(p.startswith(prefix) for p, _s in lib_matches):
             result.append((t, host_files, lib_matches))
+    return result
+
+
+def series_grabbed_torrents(series_id, all_torrents, cross_seed_child_ids, exclude_ids=()):
+    """Torrents encore chez le client que Sonarr a GRABÉS pour cette série mais
+    qui n'ont jamais atterri dans library/ — donc invisibles de
+    find_series_torrents(), qui ne rattache que par hardlink sous le dossier de
+    la série.
+
+    Comble le seul angle mort de la suppression par série. Un grab que Sonarr a
+    refusé d'importer (« Series title mismatch », titre qui ne se parse pas,
+    numérotation absolue d'anime) reste dans completed/ sans aucun fichier
+    library/, donc sans lib_matches, donc absent de `matched`. Vécu le
+    2026-09-09 : la série bien retirée de Sonarr, et 5 torrents / 21,97 Go
+    laissés derrière, visibles de la seule vue Torrents. Couvre du même coup le
+    torrent dont Sonarr a supprimé le fichier après un upgrade en le laissant en
+    seed : plus de hardlink, donc lui aussi hors de `matched`.
+
+    **Le rattachement vient de Sonarr, jamais d'une heuristique sur le nom** :
+    son historique de grab porte `seriesId` ET `downloadId` (l'infoHash), donc
+    le lien est celui qu'il a lui-même établi au grab. Rapprocher des titres
+    serait strictement moins sûr sur un chemin qui supprime des fichiers — deux
+    séries homonymes suffiraient à effacer l'une pour l'autre (c'est déjà la
+    raison pour laquelle tout le module compare des chemins, pas des noms).
+
+    **ORDRE IMPOSÉ : appeler AVANT `DELETE /api/v3/series/{id}`.** Sonarr purge
+    l'historique d'une série en même temps qu'elle ; après le retrait le lien
+    n'existe plus et ces torrents redeviennent introuvables. Aucune erreur ne le
+    signalerait — la liste reviendrait simplement vide.
+
+    Best-effort (liste vide si l'historique est injoignable), contrairement à
+    _arr_covered_paths() et series_episode_files() qui lèvent : ici un échec
+    fait RATER des torrents, il n'en fait jamais supprimer à tort. Bloquer toute
+    la purge pour ce complément coûterait plus qu'il ne protège.
+    """
+    records = arr_api(SONARR_URL, SONARR_API_KEY, "GET", "/api/v3/history/series",
+                      params={"seriesId": series_id, "eventType": 1})
+    if not records:
+        return []
+    # /history/series rend une liste plate, non paginée. Le filtre est refait
+    # côté client : celui de /api/v3/history laisse passer des entrées d'autres
+    # séries (cf. CLAUDE.md), on ne parie pas sur le fait que cet endpoint-ci
+    # soit mieux tenu — c'est une ligne pour supprimer la question.
+    grabbed = {str(r.get("downloadId") or "").upper()
+               for r in records if r.get("seriesId") == series_id}
+    grabbed.discard("")
+    if not grabbed:
+        return []
+    exclude_ids = set(exclude_ids)
+    result = []
+    for t in all_torrents:
+        if t["id"] in cross_seed_child_ids or t["id"] in exclude_ids:
+            continue
+        if str(t.get("hashString") or "").upper() in grabbed:
+            # lib_matches vide et non calculé : par construction ces torrents
+            # n'ont aucun fichier sous library/ — c'est ce qui les a fait
+            # manquer. Les laisser vides garde intact le still_covered
+            # d'execute_delete_series, qui ne raisonne que sur des lib_matches.
+            result.append((t, torrent_host_files(t), []))
     return result
 
 
@@ -1430,6 +1493,15 @@ def execute_delete_series(client, series, matched, all_torrents, cross_seed_grou
     l'appelant pour l'écran de confirmation — pas recalculé ici, ça évite de
     rescanner tous les torrents une deuxième fois pour le même résultat) + les
     fichiers résiduels de son dossier, puis retire la série de Sonarr
+
+    `matched` porte deux origines depuis le 2026-09-09, et l'appelant les
+    concatène : les torrents rattachés par hardlink (find_series_torrents) et
+    ceux rattachés par l'historique de grab de Sonarr (series_grabbed_torrents),
+    dont les lib_matches sont vides puisqu'ils n'ont jamais été importés. Rien
+    ici ne les distingue — le calcul de still_covered ne lit que des
+    lib_matches, une liste vide n'y change rien — mais l'appelant, lui, doit
+    avoir appelé series_grabbed_torrents AVANT d'arriver ici : le DELETE plus
+    bas emporte l'historique qui porte ce rattachement.
     (deleteFiles=false : les fichiers ont déjà été supprimés ici même, comme
     pour un film via plan_radarr_deletion) avec exclusion de liste pour ne
     jamais la voir revenir via un import list sync.

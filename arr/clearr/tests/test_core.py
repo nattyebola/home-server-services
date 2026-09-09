@@ -551,6 +551,88 @@ class ExecuteDeleteSeasons(unittest.TestCase):
         self.assertNotIn("/api/v3/episodefile/bulk", [p for _m, p in self.calls])
 
 
+class SeriesGrabbedTorrents(unittest.TestCase):
+    """Le rattachement d'un torrent JAMAIS IMPORTÉ à sa série.
+
+    find_series_torrents ne voit qu'un torrent ayant un hardlink sous le dossier
+    de la série. Un grab que Sonarr a refusé d'importer n'en a aucun : le
+    2026-09-09, une série purgée depuis clearr a laissé 5 torrents et 21,97 Go
+    derrière elle, la série étant bien retirée de Sonarr. Le seul lien qui
+    survit à ce cas est l'historique de grab, qui porte seriesId + downloadId.
+
+    Ce que ces tests verrouillent : le rattachement par infoHash et rien
+    d'autre (jamais par le nom), l'exclusion de ce que `matched` couvre déjà, et
+    le fait qu'un historique injoignable dégrade au lieu de bloquer la purge."""
+
+    def setUp(self):
+        self.addCleanup(setattr, core, "arr_api", core.arr_api)
+        self.torrents = [
+            {"id": 1, "name": "Serie.S01E01-GRP", "hashString": "aaaa", "downloadDir": "/data/completed/sonarr",
+             "files": [{"name": "a.mkv", "length": 10}]},
+            {"id": 2, "name": "Autre.Serie.S01E01-GRP", "hashString": "bbbb", "downloadDir": "/data/completed/sonarr",
+             "files": [{"name": "b.mkv", "length": 20}]},
+        ]
+
+    def _stub_history(self, records):
+        def arr_api(base, key, method, path, params=None, json_body=None):
+            return records if path.endswith("/history/series") else None
+        core.arr_api = arr_api
+
+    def test_rattache_par_infohash(self):
+        """Le hash de l'historique désigne le torrent, majuscules comprises :
+        Sonarr rend le downloadId en capitales, Transmission le hashString en
+        minuscules."""
+        self._stub_history([{"seriesId": 7, "downloadId": "AAAA"}])
+        got = core.series_grabbed_torrents(7, self.torrents, set())
+        self.assertEqual([t["id"] for t, _hf, _lm in got], [1])
+
+    def test_ignore_les_autres_series(self):
+        """Filtre côté client en plus du filtre serveur : celui de
+        /api/v3/history laisse passer des entrées d'autres séries (CLAUDE.md),
+        et ici une entrée de trop supprimerait les fichiers d'une AUTRE série."""
+        self._stub_history([{"seriesId": 99, "downloadId": "AAAA"},
+                            {"seriesId": 7, "downloadId": "BBBB"}])
+        got = core.series_grabbed_torrents(7, self.torrents, set())
+        self.assertEqual([t["id"] for t, _hf, _lm in got], [2])
+
+    def test_jamais_par_le_nom(self):
+        """Un titre qui ressemble ne suffit pas : sans entrée d'historique
+        portant son hash, le torrent n'est pas touché. C'est ce qui empêche deux
+        séries homonymes de s'effacer l'une l'autre."""
+        self._stub_history([{"seriesId": 7, "downloadId": "CCCC"}])
+        self.assertEqual(core.series_grabbed_torrents(7, self.torrents, set()), [])
+
+    def test_exclut_ce_que_matched_couvre_deja(self):
+        """Un torrent bien importé est déjà dans `matched` ; le rendre deux fois
+        le ferait compter en double dans le bilan annoncé à l'utilisateur."""
+        self._stub_history([{"seriesId": 7, "downloadId": "AAAA"},
+                            {"seriesId": 7, "downloadId": "BBBB"}])
+        got = core.series_grabbed_torrents(7, self.torrents, set(), exclude_ids={1})
+        self.assertEqual([t["id"] for t, _hf, _lm in got], [2])
+
+    def test_exclut_les_enfants_cross_seed(self):
+        """Comme find_series_torrents : un enfant cross-seed est cascadé avec son
+        parent par bulk_delete_torrents, le lister à part le supprimerait deux
+        fois."""
+        self._stub_history([{"seriesId": 7, "downloadId": "AAAA"}])
+        self.assertEqual(core.series_grabbed_torrents(7, self.torrents, {1}), [])
+
+    def test_historique_injoignable_degrade(self):
+        """Best-effort, contrairement à _arr_covered_paths : un échec ici fait
+        RATER des torrents, il n'en fait jamais supprimer à tort. Lever
+        bloquerait toute la purge pour un complément."""
+        self._stub_history(None)
+        self.assertEqual(core.series_grabbed_torrents(7, self.torrents, set()), [])
+
+    def test_lib_matches_vide(self):
+        """execute_delete_series calcule still_covered à partir des seuls
+        lib_matches : une liste vide est ce qui garde ce calcul intact quand on
+        concatène ces entrées à `matched`."""
+        self._stub_history([{"seriesId": 7, "downloadId": "AAAA"}])
+        (_t, host_files, lib_matches), = core.series_grabbed_torrents(7, self.torrents, set())
+        self.assertEqual(lib_matches, [])
+        self.assertTrue(host_files, "les fichiers doivent être résolus, eux")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

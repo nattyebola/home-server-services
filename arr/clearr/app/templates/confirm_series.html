@@ -45,6 +45,18 @@
 <div class="alert alert-warning py-2 small">Aucune saison avec des fichiers : il n'y a rien à supprimer ici. Utilisez « Purger » pour retirer la série de Sonarr.</div>
 {% endif %}
 
+{% if unimported %}
+{# Grabés par Sonarr pour cette série mais jamais importés (« Series title
+   mismatch », numérotation absolue…) : aucun fichier sous library/, donc
+   invisibles de find_series_torrents et des lignes de saison ci-dessus. Ils ne
+   partent QU'AVEC « Purger » — le dire, sinon l'écran promettrait pour le
+   bouton de gauche ce que seul celui de droite fait. #}
+<p class="mb-1 mt-3 small text-warning-emphasis">{{ unimported|length }} torrent(s) grabé(s) pour cette série mais jamais importé(s) — {{ unimported_size }}, emporté(s) uniquement par « Purger » :</p>
+<ul class="small text-body-secondary mb-0">
+  {% for t in unimported %}<li class="text-truncate" title="{{ t.name }}">{{ t.name }} ({{ t.size }}){% if t.seeding %} 🌱{% endif %}</li>{% endfor %}
+</ul>
+{% endif %}
+
 {% if straddling %}
 {# Rare (0 sur 87 torrents le 2026-08-30) mais pas théorique : un pack S01-S03
    peut arriver au prochain grab. Conservé, donc aucun espace libéré pour ses

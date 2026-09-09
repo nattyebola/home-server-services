@@ -659,6 +659,14 @@ def main(stdscr):
             try:
                 matched = core.find_series_torrents(all_torrents, library_index, cross_seed_child_ids,
                                                      series["path"])
+                # Concaténés avant la confirmation, donc l'écran annonce déjà le
+                # bon total : ces torrents grabés pour la série mais jamais
+                # importés n'ont aucun fichier library/, donc find_series_torrents
+                # ne peut pas les voir. À calculer AVANT execute_delete_series,
+                # qui emporte l'historique Sonarr d'où vient le rattachement.
+                matched += core.series_grabbed_torrents(
+                    series["id"], all_torrents, cross_seed_child_ids,
+                    {t["id"] for t, _hf, _lm in matched})
                 if confirm_delete_series(stdscr, series, matched):
                     all_torrents, freed, deleted, failed, arr_ok = core.execute_delete_series(
                         client, series, matched, all_torrents, cross_seed_groups, linked_ids, missing_ids)
@@ -734,6 +742,14 @@ def main(stdscr):
             try:
                 matched = core.find_series_torrents(all_torrents, library_index, cross_seed_child_ids,
                                                      series["path"])
+                # Concaténés avant la confirmation, donc l'écran annonce déjà le
+                # bon total : ces torrents grabés pour la série mais jamais
+                # importés n'ont aucun fichier library/, donc find_series_torrents
+                # ne peut pas les voir. À calculer AVANT execute_delete_series,
+                # qui emporte l'historique Sonarr d'où vient le rattachement.
+                matched += core.series_grabbed_torrents(
+                    series["id"], all_torrents, cross_seed_child_ids,
+                    {t["id"] for t, _hf, _lm in matched})
                 all_torrents, freed, deleted, failed, arr_ok = core.execute_delete_series(
                     client, series, matched, all_torrents, cross_seed_groups, linked_ids, missing_ids)
                 cross_seed_groups, cross_seed_child_ids = core.build_cross_seed_groups(all_torrents)

@@ -749,16 +749,28 @@ def _delete_series(series, state, seasons=None, purge=False):
     if purge:
         matched = core.find_series_torrents(state["all_torrents"], state["library_index"],
                                              state["cross_seed_child_ids"], series["path"])
-        *_, arr_ok = core.execute_delete_series(state["client"], series, matched, state["all_torrents"],
+        # AVANT execute_delete_series, qui retire la série de Sonarr et emporte
+        # avec elle l'historique de grab d'où vient ce rattachement. Ces
+        # torrents-là n'ont aucun fichier library/, donc find_series_torrents ne
+        # peut structurellement pas les voir.
+        unimported = core.series_grabbed_torrents(
+            series["id"], state["all_torrents"], state["cross_seed_child_ids"],
+            {t["id"] for t, _hf, _lm in matched})
+        *_, arr_ok = core.execute_delete_series(state["client"], series, matched + unimported,
+                                                 state["all_torrents"],
                                                  state["cross_seed_groups"], state["linked_ids"],
                                                  state["missing_ids"])
+        extra = (f" ({len(unimported)} torrent(s) jamais importé(s) emporté(s), "
+                 f"{core.human_size(sum(s for _t, hf, _lm in unimported for _p, s in hf))})"
+                 if unimported else "")
         if not arr_ok:
             # Les fichiers sont partis mais Sonarr suit toujours la série : sans ce
             # message l'utilisateur lisait « Série supprimée » en vert pendant que
             # la série se remettait en file de téléchargement.
-            return (f"Série supprimée : {series['title']} — ATTENTION : le retrait côté Sonarr a ÉCHOUÉ, "
-                    "la série est encore suivie et sera re-téléchargée. À retirer à la main dans Sonarr.")
-        return f"Série supprimée : {series['title']}"
+            return (f"Série supprimée : {series['title']}{extra} — ATTENTION : le retrait côté Sonarr "
+                    "a ÉCHOUÉ, la série est encore suivie et sera re-téléchargée. À retirer à la main "
+                    "dans Sonarr.")
+        return f"Série supprimée : {series['title']}{extra}"
 
     plan = core.plan_season_deletion(state, series, seasons or [])
     _t, freed, deleted, failed, arr_ok = core.execute_delete_seasons(
@@ -816,6 +828,16 @@ def series_confirm(sid: int, sort: str = DEFAULT_SORT["series"], reverse: str = 
         return HTMLResponse("<p>Série introuvable. Fermez et rafraîchissez.</p>")
     state = core.load_full_state()
     rows, straddling = core.season_breakdown(state, series)
+    # Annoncés parce que « Purger » les emporte : sans cette section l'écran
+    # promettait moins que ce qu'il faisait, comme la modale d'avant l'ajout des
+    # fichiers sans torrent. Le second find_series_torrents (season_breakdown en
+    # fait déjà un) ne coûte qu'un parcours en mémoire — les inodes sont déjà
+    # résolus par load_full_state.
+    matched = core.find_series_torrents(state["all_torrents"], state["library_index"],
+                                         state["cross_seed_child_ids"], series["path"])
+    unimported = core.series_grabbed_torrents(
+        series["id"], state["all_torrents"], state["cross_seed_child_ids"],
+        {t["id"] for t, _hf, _lm in matched})
     # Les saisons sans aucun fichier ne sont pas proposées : il n'y a rien à
     # supprimer, et One Piece en aligne 22 (les saisons antérieures que Sonarr
     # connaît sans qu'on les ait jamais téléchargées) — les afficher noierait
@@ -828,6 +850,11 @@ def series_confirm(sid: int, sort: str = DEFAULT_SORT["series"], reverse: str = 
         "confirm_series.html",
         series_id=sid, series_title=series["title"], seasons=seasons,
         hidden_seasons=len(rows) - len(seasons),
+        unimported=[{"name": t["name"], "size": core.human_size(sum(s for _p, s in hf)),
+                     "seeding": core.is_seeding(t)}
+                    for t, hf, _lm in unimported],
+        unimported_size=core.human_size(
+            sum(s for _t, hf, _lm in unimported for _p, s in hf)),
         straddling=[{"name": t["name"], "seasons": ", ".join(f"S{n:02d}" for n in touched)}
                     for t, touched in straddling],
         sort=sort, reverse=reverse == "1", filter_str=filter,
@@ -1022,14 +1049,23 @@ def _preview_arr_series(series, state, target=None):
         # series_confirm) : execute_delete_series les supprime aussi, l'addon Kodi
         # doit donc pouvoir les nommer avant de demander confirmation.
         orphans = core.series_orphan_files(matched, series["path"])
+        # SEULEMENT en purge : execute_delete_seasons ne touche pas ces
+        # torrents-là (ils n'appartiennent à aucune saison connue, faute de
+        # fichier importé), donc les compter dans une preview partielle
+        # annoncerait une taille que la suppression ne libérerait jamais.
+        unimported = core.series_grabbed_torrents(
+            series["id"], state["all_torrents"], state["cross_seed_child_ids"],
+            {t["id"] for t, _hf, _lm in matched}) if purge else []
+        all_matched = matched + unimported
         return {
             "title": series["title"],
-            "torrents": len(matched),
-            "seeding": sum(1 for t, _hf, _lm in matched if core.is_seeding(t)),
-            "files": sum(len(host_files) for _t, host_files, _lm in matched) + len(orphans),
+            "torrents": len(all_matched),
+            "seeding": sum(1 for t, _hf, _lm in all_matched if core.is_seeding(t)),
+            "files": sum(len(host_files) for _t, host_files, _lm in all_matched) + len(orphans),
             "orphan_files": len(orphans),
             "orphans": [{"name": os.path.basename(p), "size": core.human_size(s)} for p, s in orphans],
-            "size_bytes": sum(s for _t, host_files, _lm in matched for _p, s in host_files)
+            "unimported": len(unimported),
+            "size_bytes": sum(s for _t, host_files, _lm in all_matched for _p, s in host_files)
                           + sum(s for _p, s in orphans),
             "seasons": listed, "straddling": len(straddling), "purge": purge,
         }
