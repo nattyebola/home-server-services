@@ -51,6 +51,7 @@ ARRS = {
         "queue_id_field": "episodeId",
         "target_key": "episodes",
         "title_key": "series",
+        "unknown_param": "includeUnknownSeriesItems=true",
     },
     "radarr": {
         "container": "arr-radarr-1",
@@ -59,6 +60,7 @@ ARRS = {
         "queue_id_field": "movieId",
         "target_key": "movie",
         "title_key": "movie",
+        "unknown_param": "includeUnknownMovieItems=true",
     },
 }
 
@@ -122,9 +124,18 @@ def api_post(arr, api_key, path, obj):
 def stuck_queue_records(arr, api_key):
     """Entrées de la file dont le téléchargement est fini mais l'import non.
     `importPending` compte autant qu'`importBlocked` : l'arr y range aussi ce
-    qu'il a renoncé à rattacher, et ça ne se débloque pas tout seul."""
+    qu'il a renoncé à rattacher, et ça ne se débloque pas tout seul.
+
+    `includeUnknown*Items` est indispensable et son nom diffère d'un arr à
+    l'autre (d'où `unknown_param` dans ARRS) : sans lui la file masque toute
+    entrée dont le titre n'est plus au catalogue, alors que c'est justement le
+    cas qui ne se résout jamais seul. Le volet séries manquait — 5 entrées
+    `importBlocked` restaient invisibles ici comme sur le dashboard (constaté le
+    2026-09-09). Garder aligné avec ARR_QUEUE_APPS de
+    scripts/generate-dashboard.py, qui compte ce que cette fonction sait traiter."""
     queue = api_get(arr, api_key, "/queue?page=1&pageSize=1000"
-                                  "&includeSeries=true&includeMovie=true&includeUnknownMovieItems=true")
+                                  "&includeSeries=true&includeMovie=true"
+                                  f"&{arr['unknown_param']}")
     return [r for r in queue.get("records", [])
             if r.get("trackedDownloadState") in ("importBlocked", "importPending")]
 

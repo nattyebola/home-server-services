@@ -954,7 +954,20 @@ explicitement :
     `importBlocked`/`importPending` (`arr_stuck_imports()`), les mêmes états
     que `stuck_queue_records()` de `scripts/manual-import.py` — **à garder
     alignés**, ce qui est compté doit être ce que `manual-import.py list` sait
-    traiter. Comble un trou de visibilité : un téléchargement fini que l'arr
+    traiter.
+    **`GET /api/v3/queue` masque par défaut les entrées orphelines**, et le
+    paramètre qui les réintègre n'a pas le même nom d'un arr à l'autre :
+    `includeUnknownSeriesItems=true` (Sonarr) / `includeUnknownMovieItems=true`
+    (Radarr). Une entrée devient orpheline dès que son titre quitte le
+    catalogue — un download que l'arr voit toujours chez le client alors que la
+    série a été retirée — donc précisément un import qui ne se débloquera
+    jamais seul. Les deux scripts l'ont ignoré : `arr_stuck_imports()` ne
+    passait aucun des deux, `stuck_queue_records()` seulement le volet films.
+    5 entrées `importBlocked` sont ainsi restées invisibles des deux, la carte
+    affichant un **0 vert** — le faux négatif silencieux que son propre
+    docstring dit vouloir éviter. Corrigé le 2026-09-09 (`unknown_param` dans
+    `ARR_QUEUE_APPS` et dans `ARRS`). Ne jamais conclure « 0 import bloqué »
+    d'une lecture de file sans ces paramètres. Comble un trou de visibilité : un téléchargement fini que l'arr
     refuse d'importer ne se débloque jamais tout seul et ne ressort nulle part
     ailleurs (le 2026-08-29, 5 des 20 titres comptés manquants étaient là).
     **Seule fonction du fichier en tout-ou-rien et pas en best-effort** : un

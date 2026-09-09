@@ -86,10 +86,22 @@ PROWLARR_URL = "http://localhost:9696/api/v1"
 
 # Files Sonarr/Radarr interrogées pour les compteurs d'imports coincés de la
 # carte Torrents (voir arr_stuck_imports()) : "stack/service" (pour le test
-# d'exécution), conteneur, URL interne, nom de la clé dans arr/.env.
+# d'exécution), conteneur, URL interne, nom de la clé dans arr/.env, et le
+# paramètre « inclure les entrées orphelines » propre à chaque arr.
+#
+# Ce dernier n'est PAS optionnel et son nom diffère d'un arr à l'autre : sans
+# lui, `GET /queue` masque toute entrée dont le titre n'est (plus) au catalogue
+# — typiquement un download que l'arr voit chez le client alors que la série ou
+# le film a été retiré. Ce sont justement des imports qui ne se débloqueront
+# jamais seuls, donc exactement ce que cette carte existe pour montrer. Vécu le
+# 2026-09-09 : 5 entrées `importBlocked` invisibles ici, la carte affichant un
+# 0 vert rassurant. Le garder aligné avec stuck_queue_records() de
+# scripts/manual-import.py, qui a le même besoin.
 ARR_QUEUE_APPS = (
-    ("arr/sonarr", "arr-sonarr-1", "http://localhost:8989/api/v3", "SONARR_API_KEY"),
-    ("arr/radarr", "arr-radarr-1", "http://localhost:7878/api/v3", "RADARR_API_KEY"),
+    ("arr/sonarr", "arr-sonarr-1", "http://localhost:8989/api/v3", "SONARR_API_KEY",
+     "includeUnknownSeriesItems=true"),
+    ("arr/radarr", "arr-radarr-1", "http://localhost:7878/api/v3", "RADARR_API_KEY",
+     "includeUnknownMovieItems=true"),
 )
 
 
@@ -259,7 +271,7 @@ def arr_stuck_imports(running):
     `manual-import.py list` sait ensuite traiter."""
     env = load_env_file(REPO_ROOT / "arr" / ".env")
     counts = {"importBlocked": 0, "importPending": 0}
-    for service, container, base_url, key_name in ARR_QUEUE_APPS:
+    for service, container, base_url, key_name, unknown_param in ARR_QUEUE_APPS:
         api_key = env.get(key_name)
         if service not in running or not api_key:
             return None
@@ -268,7 +280,8 @@ def arr_stuck_imports(running):
             # prowlarr_indexer_health() : l'argv d'un `docker exec` est lisible
             # dans `ps`, et ce script tourne toutes les 5 min par cron.
             script = ('IFS= read -r k; exec curl -s -H "X-Api-Key: $k" '
-                      + shlex.quote(f"{base_url}/queue?page=1&pageSize=1000"))
+                      + shlex.quote(f"{base_url}/queue?page=1&pageSize=1000"
+                                    f"&{unknown_param}"))
             res = subprocess.run(
                 ["docker", "exec", "-i", container, "sh", "-c", script],
                 input=api_key, capture_output=True, text=True, timeout=15,
