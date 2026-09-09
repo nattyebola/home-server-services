@@ -663,19 +663,40 @@ explicitement :
   (bootstrap) et créer le compte propriétaire de Seerr. **Une clé API suffit
   en revanche pour créer une bibliothèque** — ne pas réintroduire de
   dépendance aux identifiants dans `make provision`.
-  **Une seule forme d'authentification est encore acceptée par l'API Jellyfin :
-  `Authorization: MediaBrowser Token="<jeton>"`** (`jellyfin_auth()`), pour une
-  clé API comme pour un token de session. Jellyfin 12.0.0 a retiré les deux
-  autres, historiquement équivalentes : le paramètre d'URL `?api_key=` **et**
-  l'en-tête `X-Emby-Token` répondent désormais **401** (les deux vérifiés le
+  **`Authorization: MediaBrowser Token="<jeton>"`** (`jellyfin_auth()`) est la
+  seule forme d'authentification que Jellyfin 12.0.0 accepte **par défaut**,
+  pour une clé API comme pour un token de session : il a désactivé les deux
+  autres, historiquement équivalentes — le paramètre d'URL `?api_key=` **et**
+  l'en-tête `X-Emby-Token` répondaient **401** (les deux vérifiés le
   2026-09-08, quelques heures après la mise à niveau automatique — le volet
   Jellyfin de `make api-keys`/`make provision` était cassé sans que rien ne le
   signale, le cron n'appelant pas ce script). La clé stockée, elle, reste
   valide : un 401 ici veut dire « mauvaise forme d'en-tête », pas « clé à
   regénérer » — et la relire par `?api_key=` pour « vérifier » ne prouverait
-  que ça. Les connexions Sonarr/Radarr → Jellyfin n'ont pas bougé (leur
-  implémentation .NET envoie déjà la bonne forme, `testall` valide des deux
-  côtés).
+  que ça. **`scripts/provision.py` reste sur la forme `MediaBrowser Token`** :
+  c'est la seule qui ne dépend d'aucun réglage serveur.
+  **En revanche les connexions Sonarr/Radarr → Jellyfin, elles, ont bien
+  cassé — affirmé le contraire ici, à tort.** Leur implémentation .NET
+  (`MediaBrowserProxy`) envoie `X-Emby-Token` : depuis la mise à niveau, tout
+  rafraîchissement ciblé de bibliothèque échouait en `401 Unauthorized` sur
+  `GET /Items` (`Unable to process notification queue for Jellyfin`, 4 fois
+  côté Sonarr et 1 côté Radarr entre le 2026-09-08 09:28 et le 2026-09-09
+  03:19). Dégradation silencieuse et pas panne : Jellyfin retombait sur son
+  propre watcher.
+  **`POST /api/v3/notification/testall` ne détecte PAS ce cas** : il répond
+  `isValid: true` alors que le chemin réel est en 401 — il ne sonde qu'un
+  endpoint public. Ne jamais s'en servir seul pour conclure qu'une connexion
+  Jellyfin fonctionne ; reproduire la vraie requête
+  (`docker exec arr-sonarr-1 curl -H "X-Emby-Token: …" http://jellyfin:8096/Items?…`).
+  Réparé le 2026-09-09 en repassant **`EnableLegacyAuthorization` à `true`**
+  côté Jellyfin, ce qui réautorise `X-Emby-Token` et `?api_key=` sans rien
+  ouvrir en anonyme (sans jeton c'est toujours 401). Écrit **par l'API**
+  (`GET` puis `POST /System/Configuration`, objet complet), pas en éditant
+  `config/config/system.xml` : Jellyfin réécrit ce fichier lui-même, une
+  édition à chaud serait perdue — même piège que le `settings.json` de Seerr.
+  Le réglage est pris en compte **sans redémarrage**.
+  À surveiller : c'est un sursis, pas une cible. Le jour où Jellyfin retirera
+  le flag, seul un correctif upstream côté Servarr débloquera ces connexions.
   Détail sans conséquence : après suppression d'une bibliothèque Jellyfin,
   celle-ci reste un moment listée par l'endpoint que Seerr interroge (cache
   côté Jellyfin) — elle arrive désactivée côté Seerr. Corollaire voulu : une
