@@ -42,6 +42,25 @@
           "value": "\\[\\s*\\d{1,3}\\s+(of|из)\\s+\\d{1,3}\\s*\\]"
         }
       ]
+    },
+    {
+      "name": "Subs non-FR (JSub/ESub)",
+      "specifications": [
+        {
+          "name": "Marqueur de sous-titres",
+          "implementation": "ReleaseTitleSpecification",
+          "negate": false,
+          "required": true,
+          "value": "\\b(?:Japanese|English)[-\\s]Subs?\\b|\\b[EJ]-?Subs?\\b"
+        },
+        {
+          "name": "Aucun marqueur FR",
+          "implementation": "ReleaseTitleSpecification",
+          "negate": true,
+          "required": true,
+          "value": "\\b(?:MULTi|Multi-Subs?|Multi-Audio|VOST.*?FR(?:E|A)?|SUBFR(?:A|ENCH)?|TRUEFRENCH|FRENCH|VFF|VFQ|VF)\\b"
+        }
+      ]
     }
   ],
   "quality_profiles": [
@@ -71,7 +90,8 @@
         "x265": 10,
         "MULTi": 100,
         "VOSTFR": -100,
-        "Pack NN of NN": -10000
+        "Pack NN of NN": -10000,
+        "Subs non-FR (JSub/ESub)": -10000
       }
     },
     {
@@ -99,7 +119,8 @@
         "Upscaled": -10000,
         "x265": 10,
         "MULTi": 20,
-        "Pack NN of NN": -10000
+        "Pack NN of NN": -10000,
+        "Subs non-FR (JSub/ESub)": -10000
       }
     }
   ]

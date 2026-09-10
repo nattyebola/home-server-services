@@ -1463,6 +1463,43 @@ d'attente ou d'un échappement.
   le titre de release + l'indexeur, un renommage ou un autre indexeur passe à
   travers.
 
+- **Ne PAS bloquer le groupe ToonsHub** (demandé le 2026-09-10, écarté après
+  mesure) : le postulat « ils ne font pas de VOSTFR » est faux. Sur 39 grabs,
+  **26 sont tagués `Multi-Subs`/`MULTi`**, et **8 des 10 fichiers ToonsHub en
+  place portent réellement une piste `fre`** (lue dans `mediaInfo.subtitles`,
+  pas déduite du titre). Ils sont la source principale de 8 séries suivies —
+  un `ReleaseGroupSpecification` aurait coupé l'approvisionnement de la moitié
+  du catalogue anime pour traiter une minorité de releases.
+  Ce qui pollue, c'est leur variante **sans français**, et elle s'annonce dans
+  le titre : `(… Japanese Sub …)`, `(English-Sub)`, et le token `ESub` du nom
+  de fichier (`MSubs` = multi, à ne pas confondre — `\b[EJ]-?Subs?\b` ne le
+  matche pas, il n'y a pas de frontière de mot dans `MSubs`).
+  D'où le custom format **`Subs non-FR (JSub/ESub)`** dans
+  `arr/profiles/sonarr-anime.json`, scoré **-10000** sur les deux profils anime
+  (`minFormatScore: 0` ⇒ rejet au grab, même mécanique que `Pack NN of NN`).
+  **Deux specs `required: true`, pas une** : le marqueur de sous-titres, ET une
+  garde `negate: true` sur les marqueurs FR — sans elle un hypothétique
+  `(Multi-Subs, English-Sub)` serait rejeté à tort.
+  **Ciblé sur le schéma de nommage, pas sur le groupe**, délibérément : la même
+  annonce « sous-titres dans une seule langue non française » mérite le même
+  traitement de n'importe quel groupe.
+  Validé selon la méthode de la section regex plus bas : corpus de 833 titres
+  réels (historique + blocklist + `sceneName`/`relativePath`), **10 matchs, tous
+  voulus, 0 faux positif**, et **0 désaccord** .NET (`/api/v3/parse` + CF
+  jetable supprimé après) / Python `re` sur les 273 titres contenant « sub ».
+  **Contrairement au suffixe entre parenthèses du piège de la boucle de regrab,
+  ce CF est volontairement symétrique** : il matche aussi bien le titre de
+  release (`(English-Sub)`) que le nom de fichier (`ESub`), donc un fichier déjà
+  importé score -10000 comme la release — pas d'asymétrie grab/fichier, et les
+  fichiers sans FR déjà en place deviennent éligibles à un vrai remplacement.
+  **Trou connu, non traité** : `Multi-Subs` est une promesse du titre, pas une
+  garantie. `One.Punch.Man.S03E07 …BILI…MSubs-ToonsHub` n'a que `eng/ind/tha`
+  en sous-titres. Rien dans le titre ne permet de le voir — seul un contrôle
+  post-import du `mediaInfo` le détecterait, non fait.
+  Ne pas confondre avec les releases **`RUS + JAP`** (titres cyrilliques
+  d'uploaders russes de Nyaa.si) : elles ne viennent pas de ToonsHub et sont
+  déjà couvertes par `Pack NN of NN`.
+
 - **Ni Sonarr ni Radarr ne re-cherche un manquant tout seul** : aucune tâche
   planifiée de recherche des manquants depuis Sonarr v3 (leur
   `/api/v3/system/task` ne liste que RSS Sync / Refresh / Import List Sync).
