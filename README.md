@@ -378,7 +378,7 @@ et leurs arguments directement depuis le `Makefile`.
 | `make config STACK=<nom>` | affiche la config résolue (debug des `${VAR}`) |
 | `make logs STACK=<nom>` | logs en direct |
 | `make update STACK=<nom>` | pull + rebuild + recrée (+ maintenance `occ` si `nextcloud`) |
-| `make update-all` | `update` sur nextcloud, vpn, jellyfin, arr, seerr (continue même si un stack échoue, résumé + prune images + refresh dashboard à la fin) |
+| `make update-all` | `update` sur nextcloud, vpn, jellyfin, arr, seerr, traefik — **seulement les stacks qui ont au moins un conteneur démarré**, les autres sont listées comme sautées (continue même si un stack échoue, résumé + prune images + refresh dashboard à la fin) |
 | `make backup` | sauvegarde restic (aussi via cron) |
 | `make restore SNAPSHOT=<id\|latest>` | restaure un snapshot dans un dossier à part et **affiche** les étapes à faire à la main — n'écrit jamais sur le live |
 | `make test` | tests des chemins destructifs de `clearr` (stdlib, aucune dépendance à installer, ne touche ni la bibliothèque ni les API arr) |

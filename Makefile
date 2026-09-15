@@ -181,20 +181,43 @@ update: require-env-shared network ## STACK=<nom> — pull/rebuild puis recrée 
 # previous digest orphaned, see CLAUDE.md image-tag decision) and refreshes
 # the dashboard so it reflects the new containers without waiting for the
 # next 5-min cron tick.
-update-all: ## — `update` sur toutes les stacks, prune les images orphelines, régénère le dashboard
-	@failed=""; \
+# Une stack sans AUCUN conteneur démarré est sautée : `update` finit par un
+# `up -d`, qui ne se contente pas de recréer l'existant mais démarre tout ce
+# que le compose file déclare — une stack volontairement arrêtée (déploiement
+# qui n'utilise pas nextcloud, stack coupée le temps d'une maintenance)
+# remontait donc toute seule, sans que rien ne le signale. Le test porte sur
+# la stack entière, pas service par service : si au moins un conteneur tourne
+# la stack est considérée active et mise à jour en entier (ce qui relance au
+# passage un service isolé qui serait tombé — voulu). Les stacks sautées sont
+# listées à la fin, `make update STACK=<nom>` reste le moyen d'en mettre une
+# à jour sans la démarrer au préalable... à ceci près qu'il la démarrera.
+update-all: ## — `update` sur les stacks démarrées, prune les images orphelines, régénère le dashboard
+	@# Sans ce garde, un daemon injoignable ferait sortir tous les `docker ps`
+	@# vides : chaque stack serait déclarée arrêtée, donc sautée, et update-all
+	@# se terminerait en SUCCÈS sans avoir rien mis à jour.
+	@docker ps -q >/dev/null || (echo "docker ne répond pas — rien mis à jour" >&2 && exit 1)
+	@failed=""; skipped=""; \
 	for s in $(UPDATE_STACKS); do \
+		if [ -z "$$(docker ps -q --filter status=running --filter label=com.docker.compose.project=$$s)" ]; then \
+			echo "\n======================== skip $$s (aucun conteneur démarré) ========================\n"; \
+			skipped="$$skipped $$s"; \
+			continue; \
+		fi; \
 		echo "\n======================== update $$s ========================\n"; \
 		$(MAKE) update STACK=$$s || failed="$$failed $$s"; \
 	done; \
 	docker image prune -f; \
 	$(MAKE) dashboard-refresh; \
 	echo ""; \
+	if [ -n "$$skipped" ]; then \
+		echo "stack(s) arrêtée(s), non mise(s) à jour :$$skipped"; \
+		echo "  (\`make update STACK=<nom>\` pour en mettre une à jour — elle sera démarrée)"; \
+	fi; \
 	if [ -n "$$failed" ]; then \
 		echo "échec(s) :$$failed" >&2; \
 		exit 1; \
 	fi; \
-	echo "tous les stacks mis à jour avec succès"
+	echo "stacks démarrées mises à jour avec succès"
 
 # régénère dashboard/html/index.html à partir des labels Traefik réels
 # (docker compose config) et de l'état d'exécution courant (docker ps) —
