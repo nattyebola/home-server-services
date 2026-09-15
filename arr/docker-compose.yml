@@ -79,6 +79,7 @@ services:
       # côté Sonarr en conséquence.
       - ${DATA_ROOT}:/data_root
       - ./scripts/cross-seed-notify.sh:/config/custom-cross-seed-notify.sh:ro
+      - ./scripts/mark-finale.sh:/config/custom-mark-finale.sh:ro
       - /etc/localtime:/etc/localtime:ro
     env_file:
       - .env

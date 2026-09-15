@@ -90,3 +90,18 @@ MAILTO=""
 # the placeholders below are substituted by `make cron-install` with this
 # checkout's absolute path and DATA_ROOT — never hardcode literals here.
 0 5 * * 1 __REPO_ROOT__/scripts/require-running.sh arr/sonarr arr/radarr && python3 __REPO_ROOT__/scripts/search-missing.py >> __REPO_ROOT__/arr/search-missing.log 2>&1 && date +\%s > __DATA_ROOT__/.cron-status/search-missing
+
+# Repose the season/series finale markers in the episode .nfo files, nightly.
+# Sonarr's Custom Script hook (see scripts/provision.py) already covers
+# import/upgrade/rename, which is what makes the marker show up in Kodi as
+# soon as the episode does; this is the net for what has no trigger at all:
+# a manual rescan rewriting the .nfo, and a finaleType or series status
+# revised on TVDB without any file moving. 2am avoids the other heavy jobs
+# (recyclarr at midnight, backup Sunday 3am, logrotate 4:30, search-missing
+# Monday 5am). Guarded by require-running.sh so this is a silent no-op
+# rather than a failed docker exec when the arr stack is stopped. Success
+# marker consumed by the "Tâches planifiées" card (see
+# cron_marker_age_seconds()).
+# the placeholders below are substituted by `make cron-install` with this
+# checkout's absolute path and DATA_ROOT — never hardcode literals here.
+0 2 * * * __REPO_ROOT__/scripts/require-running.sh arr/sonarr && docker exec arr-sonarr-1 sh /config/custom-mark-finale.sh --all >> __REPO_ROOT__/arr/mark-finales.log 2>&1 && date +\%s > __DATA_ROOT__/.cron-status/mark-finales

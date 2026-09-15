@@ -48,6 +48,71 @@ ou aux connexions arr → Jellyfin.
   `imdbId`/`tmdbId`/`tvdbId` des objets arr aux `ProviderIds` des items
   Jellyfin **appariés par chemin** (`/library/...` côté Jellyfin ↔
   `/data_root/library/...` côté arr).
+- **Marqueurs de fin de saison / de série dans le `<title>` des `.nfo`**
+  (`arr/scripts/mark-finale.sh`, 2026-09-15) : `†` fin de saison, `‡` fin de
+  série, `½` mi-saison, en préfixe du titre d'épisode. Demandé pour repérer
+  les finales dans le **listing de saison de Kodi**.
+  **Le `<title>` du `.nfo` est le seul canal qui y arrive**, les deux autres
+  ayant été vérifiés et écartés :
+  - Sonarr n'expose **aucun token de renommage** pour `finaleType` — testé sur
+    `/config/naming/examples`, `{Episode FinaleType}` et `{FinaleType}` se
+    comportent exactement comme un token inventé (remplacés par du vide), et
+    `Sonarr.Core.dll` ne connaît `FinaleType` que comme champ de modèle.
+  - **Kodi n'offre aucun hook de décoration des listings** : un
+    `kodi.context.item` ne s'exécute qu'au clic, et le label vient directement
+    de `MyVideos*.db` (`episode.c00`). L'alternative — un `xbmc.service` qui
+    réécrit `c00` — a été écartée : `objects/tvshows.py` de jellyfin-kodi
+    réécrit le titre à chaque resync **sans garde de checksum** (son
+    `get_checksum()` est du code mort), et le marqueur ne serait visible que
+    dans Kodi, pas dans Jellyfin web/mobile.
+  **`finaleType` seul ne dit PAS que la série est finie** : TVDB marque le
+  dernier épisode diffusé, pas une fin définitive — 6 des 16 séries marquées
+  `series` étaient encore `continuing` au moment de l'ajout. D'où la règle
+  croisée : `series` + `status == ended` → `‡`, `series` sur tout autre statut
+  → `†`. Ce repli n'est pas cosmétique : un épisode ne porte **qu'une** valeur
+  de `finaleType`, donc un `series` non confirmé qu'on laisserait sans
+  marqueur priverait la saison de sa propre fin de saison.
+  **Pas d'emoji, vérifié police par police** : `NotoSans-Regular.ttf` (skin
+  Estuary) ne couvre que 2 840 codepoints et `arial.ttf` (repli de Kodi)
+  34 515, aucune des deux n'atteignant le plan 1 — et aucune police emoji
+  n'est installée sur l'hôte. Un 🏁 s'afficherait en tofu. Les trois glyphes
+  retenus sont dans la police du skin **elle-même**, donc sans dépendance au
+  mécanisme de repli. Même raisonnement que la croix `✕` de clearr.
+  **Trois pièges de manipulation des `.nfo`, tous silencieux** — c'est
+  pourquoi le patch se fait par **numéro de ligne, sans parser le XML**, et
+  pourquoi `xmlstarlet` a été écarté après coup :
+  - un `.nfo` de fichier multi-épisodes contient **deux `<episodedetails>`
+    racine** (format Kodi, mais XML illégal) : xmlstarlet rejette le fichier
+    entier avec « Extra content at the end of the document » (Amphibia
+    S01E19-E20) ;
+  - une **apostrophe dans le chemin** casse son expression XPath interne
+    (« FROM - S01E10 - Oh, the Places We'll Go » → `Invalid expression`) —
+    fréquent dans les titres anglais ;
+  - `xmlstarlet sel` **sans `-T`** rend les entités non décodées (`&amp;`),
+    que `ed -u` ré-échappe : le titre se dégradait en `&amp;amp;` à chaque
+    passage, donc ne se stabilisait jamais et était réécrit sans fin (vu sur
+    « Question & Answer », Dorohedoro S02E11). Rester dans la forme échappée
+    du fichier supprime le problème par construction — le glyphe ajouté n'a
+    rien à échapper.
+  La ligne de remplacement passe par un **fichier**, pas par `awk -v` : même
+  piège d'échappement que `scripts/install-crontab.sh`.
+  **Deux appelants, une seule implémentation** (pas de python dans l'image
+  Sonarr, mais curl/jq/sed/awk y sont ; script monté en `ro` sur `/config`
+  comme `cross-seed-notify.sh`) :
+  - la Connection Custom Script de Sonarr (`provision.py`), sur
+    **Import/Upgrade/Rename** — c'est elle qui rend le marqueur présent *dès
+    la première apparition* de l'épisode dans Kodi : le hook s'exécute en ~1 s
+    là où Jellyfin ne scanne que 60 s plus tard (`LibraryMonitorDelay`), donc
+    il lit un `.nfo` déjà marqué, sans passe supplémentaire ;
+  - `make mark-finales` / le cron de 2 h (`--all`), filet pour ce qu'aucun
+    déclencheur ne signale : un **rescan manuel** qui réécrit les `.nfo`, et un
+    `finaleType`/`status` **révisé côté TVDB** sans qu'aucun fichier ne bouge.
+  Le script est **idempotent et réversible** (il retire un marqueur devenu
+  faux avant de reposer le bon) — vérifié : 29 titres au premier passage,
+  0 au second. Le mode hook fait **deux passes espacées de 5 s** parce qu'on
+  ne sait pas si Sonarr écrit le `.nfo` avant ou après avoir lancé le script :
+  même classe que les écritures Servarr asynchrones de `CLAUDE.md`, on ne
+  parie pas sur l'ordre, on repasse.
 - **Renommage des fichiers à l'import activé sur les deux arr**
   (`renameEpisodes`/`renameMovies`, 2026-09-07, portés par
   `scripts/apply-arr-overrides.py`) : **Jellyfin résout la saison d'un épisode

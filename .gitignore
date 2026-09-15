@@ -46,6 +46,8 @@ arr/recyclarr-sync.log
 arr/recyclarr-sync.log.*
 arr/search-missing.log
 arr/search-missing.log.*
+arr/mark-finales.log
+arr/mark-finales.log.*
 
 # VPN client credentials (private key + certs, not infra-as-code)
 vpn/custom/

@@ -153,6 +153,8 @@ ARR_TAGS = ["pour-les-enfants"]
 # rejette, ce qui empêche d'enregistrer la connexion (voir ISSUES.md). Le chemin
 # est celui du montage dans arr/docker-compose.yml.
 CROSS_SEED_SCRIPT = "/config/custom-cross-seed-notify.sh"
+# Sonarr seulement : finaleType n'existe pas côté Radarr.
+FINALE_SCRIPT = "/config/custom-mark-finale.sh"
 
 # 14c — profils qualité et dossiers que Seerr doit utiliser, désignés par NOM :
 # les ids sont propres à l'instance. Ces profils sont créés par
@@ -476,6 +478,31 @@ def provision_cross_seed_script(name, api_key, done, skipped):
                    {"name": "arguments", "value": ""}],
     }, api_key)
     done.append(f"{name} : Connection cross-seed (Custom Script) ajoutée")
+
+
+def provision_finale_script(name, api_key, done, skipped):
+    """Connection Custom Script qui marque les fins de saison/série dans les
+    .nfo (arr/scripts/mark-finale.sh).
+
+    onRename en plus de onDownload/onUpgrade : un renommage réécrit le .nfo
+    sans qu'aucun import n'ait lieu, le marqueur sauterait sinon jusqu'au
+    passage du cron. Aucun déclencheur n'existe en revanche pour un rescan
+    manuel ni pour un finaleType révisé côté TVDB — c'est précisément ce que
+    rattrape `make mark-finales`.
+    """
+    existing = arr_request(name, "/notification", api_key=api_key)
+    if any(n["implementation"] == "CustomScript"
+           and field_value(n, "path") == FINALE_SCRIPT for n in existing):
+        return
+    arr_request(name, "/notification", "POST", {
+        "name": "mark-finale", "implementation": "CustomScript",
+        "configContract": "CustomScriptSettings",
+        "onGrab": False, "onDownload": True, "onUpgrade": True, "onRename": True,
+        "includeHealthWarnings": False, "tags": [],
+        "fields": [{"name": "path", "value": FINALE_SCRIPT},
+                   {"name": "arguments", "value": ""}],
+    }, api_key)
+    done.append(f"{name} : Connection mark-finale (Custom Script) ajoutée")
 
 
 def provision_prowlarr_indexers(arr_env, done, skipped):
@@ -802,6 +829,9 @@ def command_services(shared, done, skipped, errors):
                  done, skipped, errors, name, api_key)
         run_step(f"{name} Connection cross-seed", provision_cross_seed_script,
                  done, skipped, errors, name, api_key)
+        if name == "sonarr":
+            run_step(f"{name} Connection mark-finale", provision_finale_script,
+                     done, skipped, errors, name, api_key)
 
     def prowlarr_apps(done, skipped):
         if not arr_env.get("PROWLARR_API_KEY"):

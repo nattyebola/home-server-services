@@ -13,7 +13,7 @@ STACKS := traefik jellyfin nextcloud vpn arr seerr
 # reflète donc l'état d'après redémarrage.
 UPDATE_STACKS := nextcloud vpn jellyfin arr seerr traefik
 
-.PHONY: help require-env-shared network up down config logs update update-all backup restore cron-install dashboard-refresh clearr arr-overrides search-missing recyclarr-sync kodi-install api-keys provision switch-lan-only-middleware test
+.PHONY: help require-env-shared network up down config logs update update-all backup restore cron-install dashboard-refresh clearr arr-overrides search-missing mark-finales recyclarr-sync kodi-install api-keys provision switch-lan-only-middleware test
 
 # `make` sans argument affiche l'aide plutôt que de lancer la première cible
 # (c'était `network`, qui ne dit rien de ce que le reste sait faire).
@@ -242,6 +242,15 @@ provision: ## — crée les objets de config des UI (biblios Jellyfin, objets ar
 # `recyclarr-sync`, voir scripts/crontab.
 arr-overrides: ## — réapplique les réglages arr que recyclarr écrase (aussi enchaîné par cron)
 	@python3 scripts/apply-arr-overrides.py
+
+# repose les marqueurs de fin de saison / fin de série / mi-saison dans le
+# <title> des .nfo d'épisode — seul canal qui remonte jusqu'au listing de Kodi
+# (voir .claude/docs/arr-config.md). Filet du hook Custom Script de Sonarr, qui
+# couvre déjà import/upgrade/renommage : reste un rescan manuel, ou un
+# finaleType/status révisé côté TVDB, qu'aucun déclencheur ne signale.
+# Idempotent et réversible (retire un marqueur devenu faux), donc relançable.
+mark-finales: ## — repose les marqueurs de fin de saison/série dans les .nfo (filet du hook Sonarr)
+	@docker exec arr-sonarr-1 sh /config/custom-mark-finale.sh --all
 
 # relance une recherche sur les épisodes/films manquants déjà sortis — ni Sonarr
 # ni Radarr n'ont de tâche planifiée pour ça, donc ce que le flux RSS a raté à
