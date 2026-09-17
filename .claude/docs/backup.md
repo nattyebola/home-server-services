@@ -10,6 +10,13 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   `restic check --read-data-subset=5%` + `restic forget --group-by host
   --keep-weekly 8 --prune` + tag git `backup-YYYY-MM-DD` si l'infra a changé
   depuis le dernier tag de ce type, poussé sur `origin`.
+  **Le tag est sauté si `user.name`/`user.email` ne sont pas configurés** pour
+  le repo : sur un déploiement tiers `git tag -a` échouerait faute d'identité
+  et ferait planter le script *après* un backup pourtant réussi, et on ne veut
+  pas de tags de sauvegardes qui ne sont pas les nôtres. Le test porte sur
+  `git config --get`, pas sur `git var GIT_COMMITTER_IDENT` : ce dernier
+  fabrique une identité depuis le compte Unix et le hostname, donc il
+  réussirait là où `git tag -a` échoue.
   Le dump est **supprimé du staging après le backup** : il porte les hachages
   de mots de passe et les jetons d'application de Nextcloud, il n'a pas à
   rester en clair sur le disque une fois dans le dépôt chiffré.

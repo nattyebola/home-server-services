@@ -165,26 +165,40 @@ echo "==> pruning old snapshots (keep last 8 weekly, ~2 months)"
 restic forget --group-by host --keep-weekly 8 --prune
 
 echo "==> tagging infra repo state, if it changed since the last backup tag"
-last_tag="$(git -C "$REPO_ROOT" tag --list 'backup-*' --sort=-creatordate | head -n1)"
-last_tag_commit=""
-[ -n "$last_tag" ] && last_tag_commit="$(git -C "$REPO_ROOT" rev-list -n1 "$last_tag")"
-current_commit="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+# Le tag n'a de sens que sur un déploiement dont les commits sont publiés : sur
+# une install tierce, `git tag -a` échouerait de toute façon faute d'identité
+# (« unable to auto-detect email address »), et ferait planter le script APRÈS
+# un backup pourtant réussi. Pas d'identité configurée = pas de tag.
+# `git config --get` volontairement, pas `git var GIT_COMMITTER_IDENT` : ce
+# dernier fabrique une identité depuis le compte Unix et le hostname, donc il
+# réussirait là où `git tag -a` échoue et recréerait les tags qu'on veut éviter.
+git_name="$(git -C "$REPO_ROOT" config --get user.name || true)"
+git_email="$(git -C "$REPO_ROOT" config --get user.email || true)"
 
-if [ "$last_tag_commit" != "$current_commit" ]; then
-	new_tag="backup-$(date +%F)"
-	if git -C "$REPO_ROOT" tag --list "$new_tag" | grep -q .; then
-		echo "tag $new_tag already exists for an earlier commit today — moving it to HEAD"
-		git -C "$REPO_ROOT" tag -d "$new_tag" >/dev/null
-	fi
-	git -C "$REPO_ROOT" tag -a "$new_tag" -m "Infra state at backup $(date +%F)"
-	echo "created git tag $new_tag"
-	if git -C "$REPO_ROOT" remote get-url origin >/dev/null 2>&1; then
-		git -C "$REPO_ROOT" push --force origin "$new_tag"
-	else
-		echo "no 'origin' remote configured yet — tag stays local for now" >&2
-	fi
+if [ -z "$git_name" ] || [ -z "$git_email" ]; then
+	echo "no git identity (user.name/user.email) — skipping the infra tag"
 else
-	echo "infra unchanged since $last_tag — no new tag"
+	last_tag="$(git -C "$REPO_ROOT" tag --list 'backup-*' --sort=-creatordate | head -n1)"
+	last_tag_commit=""
+	[ -n "$last_tag" ] && last_tag_commit="$(git -C "$REPO_ROOT" rev-list -n1 "$last_tag")"
+	current_commit="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+
+	if [ "$last_tag_commit" != "$current_commit" ]; then
+		new_tag="backup-$(date +%F)"
+		if git -C "$REPO_ROOT" tag --list "$new_tag" | grep -q .; then
+			echo "tag $new_tag already exists for an earlier commit today — moving it to HEAD"
+			git -C "$REPO_ROOT" tag -d "$new_tag" >/dev/null
+		fi
+		git -C "$REPO_ROOT" tag -a "$new_tag" -m "Infra state at backup $(date +%F)"
+		echo "created git tag $new_tag"
+		if git -C "$REPO_ROOT" remote get-url origin >/dev/null 2>&1; then
+			git -C "$REPO_ROOT" push --force origin "$new_tag"
+		else
+			echo "no 'origin' remote configured yet — tag stays local for now" >&2
+		fi
+	else
+		echo "infra unchanged since $last_tag — no new tag"
+	fi
 fi
 
 echo "==> done: $(restic snapshots --latest 1 --compact)"
