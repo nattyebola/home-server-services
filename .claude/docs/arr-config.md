@@ -315,7 +315,9 @@ ou aux connexions arr → Jellyfin.
   WEB (2160p)`), config anime (`arr/profiles/sonarr-anime.json`), connexions
   Jellyfin, metadata writer, ratio des indexeurs publics, renommage des
   fichiers à l'import (`renameEpisodes`/`renameMovies`), rejet des
-  téléchargements non-média (`failDownloads`), catégorie Anime de Nyaa.si.
+  téléchargements non-média (`failDownloads`), catégorie Anime de Nyaa.si,
+  section `host` des trois arr (`trustedNetworks`/`allowedHosts`, voir
+  ci-dessous).
   Résout les profils **par nom, jamais par id** (propres à chaque instance —
   c'est précisément pourquoi un dump d'API brut ne serait pas reproductible).
   Idempotent et best-effort par arr.
@@ -343,6 +345,35 @@ ou aux connexions arr → Jellyfin.
   Une passe qui corrige remet le compteur à
   zéro, donc une écriture en deux temps ne conclut pas sur la première
   accalmie.
+- **`trustedNetworks` des trois arr = le réseau Docker du proxy, pas le LAN**
+  (2026-09-17). `authenticationRequired: disabledForLocalAddresses` ne
+  reconnaît plus une IP LAN relayée par Traefik : les trois arr s'étaient mis
+  à exiger un login depuis le LAN, **et le symptôme visible n'était pas
+  l'authentification** mais les trois cartes grisées sur le dashboard, dont la
+  sonde `<img>` tombait sur la redirection vers `/login`. Le raisonnement
+  complet et les mesures sont dans le commentaire de `trusted_proxy_networks()`
+  (`scripts/apply-arr-overrides.py`) ; l'essentiel :
+  - le champ désigne les **proxies** dont le `X-Forwarded-For` est cru, pas les
+    adresses tenues pour locales — y mettre `LAN_CIDR` ne restreint rien et
+    laisse croire le contraire ;
+  - une fois le proxy reconnu, `disabledForLocalAddresses` accepte **toute**
+    adresse RFC1918 et refuse une IP publique : la restriction au LAN reste
+    donc l'affaire de l'`ipAllowList` de Traefik, et une fenêtre
+    `make switch-lan-only-middleware` fait bien redemander un mot de passe ;
+  - `allowedHosts` est **obligatoire** dès que l'auth n'est pas `Enabled` (le
+    PUT part en 400 sinon), et sa liste doit couvrir les appelants internes
+    (`sonarr`, `localhost`) autant que le nom public, sous peine de casser
+    Prowlarr → applications, cross-seed et Seerr silencieusement.
+  Ces réglages ne sont **relus qu'au démarrage** : après un
+  `make arr-overrides` qui les corrige, redémarrer les conteneurs concernés,
+  sinon `config.xml` est à jour et le comportement inchangé.
+  Le subnet est **inspecté à chaque exécution** (`docker network inspect
+  traefik-public`) au lieu d'être figé : Docker le réattribue à la recréation
+  du réseau, et une valeur périmée ferait revenir la panne sans rien signaler —
+  le cron quotidien la rattrape désormais seul. Ce qui reste à vérifier sur un
+  autre déploiement se lit en comparant deux lignes : le subnet du réseau et le
+  `ForwardedHeadersConfigurator|Trusting forwarded headers from ...` que chaque
+  arr affiche à son démarrage.
 - **`scripts/search-missing.py` (`make search-missing`)**, cron hebdomadaire
   le lundi 5h : relance une recherche sur les épisodes/films manquants
   **déjà sortis**. Comble un trou structurel — **ni Sonarr ni Radarr n'a de

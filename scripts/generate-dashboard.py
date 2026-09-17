@@ -68,6 +68,14 @@ LOGO_FILE = {
 # de route /favicon.ico du tout (404) — la sonde échouait donc aussi bien en
 # LAN qu'en WAN, grisant la carte pour tout le monde. Pointé vers l'asset
 # statique servi par clearr lui-même plutôt que d'ajouter une route dédiée.
+# Les trois Servarr ont grisé de la même façon le 2026-09-17, sans que leur
+# /favicon.ico soit en cause : ils s'étaient mis à rediriger toute requête vers
+# /login parce que `disabledForLocalAddresses` ne reconnaît plus une IP LAN
+# relayée par Traefik. La sonde n'était que le symptôme visible — corrigé côté
+# arr (`trustedNetworks`, voir scripts/apply-arr-overrides.py), pas ici. Le
+# réflexe à garder : une carte grisée alors que le conteneur est `healthy` peut
+# venir de l'authentification du service, pas du chemin sondé ; vérifier d'abord
+# `curl -o /dev/null -w '%{http_code} %{content_type}'` sur l'URL data-probe.
 PROBE_PATH = {
     "vpn/transmission-proxy": "/transmission/web/images/favicon.ico",
     "arr/clearr": "/static/favicon.png",

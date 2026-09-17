@@ -46,6 +46,12 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   ceux-ci échouent pareil bloqués ou non par CORS, donc ne distinguent pas un
   403 d'un succès). Chemin de la sonde dans `PROBE_PATH` : ne pas supposer
   `/favicon.ico` générique, `transmission-proxy` le redirige vers du HTML.
+  **Une carte grisée alors que le conteneur est `healthy` ne vient pas
+  forcément du chemin sondé** : le 2026-09-17, les trois arr grisaient parce
+  qu'ils redirigeaient tout vers `/login` (voir `trustedNetworks` dans
+  `.claude/docs/arr-config.md`) — le dashboard était le symptôme, pas la cause.
+  Réflexe de diagnostic : `curl -o /dev/null -w '%{http_code} %{content_type}'`
+  sur l'URL `data-probe` de la carte, avant de toucher à `PROBE_PATH`.
   Exclu des moteurs/crawlers par trois voies redondantes (volontaire, couvre
   les crawlers qui ne parsent pas le HTML) : `<meta name="robots">`,
   `dashboard/assets/robots.txt` et l'en-tête `X-Robots-Tag`. Garder

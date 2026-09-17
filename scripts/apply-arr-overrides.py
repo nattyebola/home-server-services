@@ -517,6 +517,88 @@ MEDIA_MANAGEMENT_OVERRIDES = {"copyUsingHardlinks": True}
 SONARR_NAMING_OVERRIDES = {"renameEpisodes": True}
 RADARR_NAMING_OVERRIDES = {"renameMovies": True}
 
+# Section /config/host des trois arr : de quoi rendre à
+# `authenticationRequired: disabledForLocalAddresses` le comportement que son
+# nom annonce quand on est derrière un reverse proxy (constaté le 2026-09-17,
+# les trois arr demandaient un login depuis le LAN).
+#
+# `trustedNetworks` n'est PAS « les adresses tenues pour locales », malgré ce
+# que le nom suggère : c'est la liste des PROXIES dont l'en-tête
+# `X-Forwarded-For` est cru. Il faut donc y mettre le réseau Docker d'où
+# Traefik parle, surtout pas le LAN. Mesuré sur Sonarr en injectant l'en-tête
+# à la main :
+#
+#   trustedNetworks vide, ou = LAN     XFF 192.168.0.50 -> 302 /login
+#   trustedNetworks = 172.16.0.0/12    XFF 192.168.0.50 -> 200
+#                                      XFF 10.9.9.9     -> 200
+#                                      XFF 203.0.113.7  -> 302 /login
+#
+# Tant que le proxy n'est pas reconnu, la seule présence d'un `X-Forwarded-For`
+# suffit à faire exiger l'authentification — garde délibérée, une requête
+# relayée par un inconnu ne peut pas être dite locale. Une fois le proxy
+# reconnu, c'est l'IP transmise qui décide, et `disabledForLocalAddresses`
+# accepte toute adresse RFC1918, pas seulement le LAN : y mettre `LAN_CIDR` ne
+# restreint donc rien et ne ferait que laisser croire le contraire.
+#
+# Deux propriétés vérifiées qui font tenir l'ensemble :
+#   - la restriction au LAN reste assurée par l'`ipAllowList` de Traefik, pas
+#     ici. Pendant une fenêtre `make switch-lan-only-middleware`, un visiteur
+#     WAN arrive avec une IP publique et se voit donc demander un mot de passe.
+#   - un `X-Forwarded-For` forgé par le client ne contourne rien : Traefik
+#     ajoute l'IP réelle en dernier et c'est celle-là qui est retenue (testé
+#     depuis le LAN avec `XFF: 203.0.113.7`, en-tête forgé sans effet).
+#
+# Le subnet est relu à chaque exécution (voir trusted_proxy_networks) plutôt
+# qu'écrit en dur : Docker le réattribue à chaque recréation du réseau, et une
+# valeur figée ferait silencieusement revenir la panne ci-dessus — le cron
+# quotidien rattrape le changement tout seul.
+TRAEFIK_NETWORK = "traefik-public"
+# Repli si le réseau est introuvable : la plage où Docker pioche par défaut.
+# Ni une valeur vide (le PUT partirait en 400) ni un subnet deviné ne seraient
+# préférables — celle-ci est juste dans le cas courant, et fausse exactement
+# dans le cas qu'un `default-address-pools` maison aurait déjà rendu visible.
+TRUSTED_PROXY_FALLBACK = "172.16.0.0/12"
+
+
+def trusted_proxy_networks():
+    """Subnets du réseau par lequel Traefik joint les arr, pour `trustedNetworks`.
+
+    IPv6 compris s'il y en a un : `IPAM.Config` porte les deux familles, et en
+    omettre une reviendrait à ne pas reconnaître le proxy sur cette
+    famille-là — soit le login qui revient, pour un client v6 seulement.
+
+    Renvoie (subnets, résolu) : le drapeau distingue le repli d'un réseau
+    réellement inspecté, qu'une simple comparaison à TRUSTED_PROXY_FALLBACK
+    confondrait le jour où les deux coïncident.
+    """
+    res = subprocess.run(["docker", "network", "inspect", TRAEFIK_NETWORK,
+                          "--format", "{{range .IPAM.Config}}{{.Subnet}} {{end}}"],
+                         capture_output=True, text=True, timeout=15)
+    subnets = res.stdout.split() if res.returncode == 0 else []
+    if not subnets:
+        return TRUSTED_PROXY_FALLBACK, False
+    return ",".join(subnets), True
+
+
+# `allowedHosts` vient avec : les Servarr REFUSENT le PUT (400, "Allowed Hosts
+# is required when 'Authentication Required' is not 'Enabled'") tant que ce
+# champ est vide — c'est leur garde anti-DNS-rebinding, qui devient obligatoire
+# dès qu'on rouvre l'accès sans mot de passe. Les noms ne sont pas décoratifs,
+# chacun correspond à un appelant réel :
+#   <service>.<domaine>  le navigateur, via Traefik (seul chemin exposé — les
+#                        ports des arr ne sont publiés sur aucune interface) ;
+#   <service>            Prowlarr -> applications, cross-seed et Seerr, qui se
+#                        parlent par le nom de service Docker ;
+#   localhost/127.0.0.1  le healthcheck du compose file et les `docker exec` de
+#                        ce script comme de provision.py.
+# En oublier un ne casse pas l'arr mais l'un de ces appelants, silencieusement
+# et seulement au prochain sync — d'où la liste explicite plutôt qu'un `*`.
+def host_overrides(networks, domain, service):
+    return {
+        "trustedNetworks": networks,
+        "allowedHosts": f"{service}.{domain},{service},localhost,127.0.0.1",
+    }
+
 
 def apply_config_overrides(label, container, base_url, api_key, section, overrides):
     """Aligne quelques champs d'une section /config/<section> d'un arr.
@@ -930,6 +1012,15 @@ def main():
     # existante est quand même maintenue, mais pas créée si elle manque.
     jellyfin_api_key = arr_env.get("JELLYFIN_API_KEY")
     prowlarr_api_key = arr_env.get("PROWLARR_API_KEY")
+    # `.env.shared` et pas arr/.env : DOMAIN y est déjà, c'est lui qui nomme les
+    # routeurs Traefik des arr et donc leur `allowedHosts` (voir host_overrides).
+    # Absent = étape sautée avec une note, jamais un nom d'hôte deviné : une
+    # liste fausse ne casserait pas l'arr mais ses appelants, silencieusement.
+    try:
+        shared_env = load_env_file(os.path.join(REPO_ROOT, ".env.shared"))
+    except OSError:
+        shared_env = {}
+    domain = shared_env.get("DOMAIN")
 
     changed = []
     notes = []
@@ -1050,6 +1141,28 @@ def main():
             changed += apply_indexer_fail_downloads(label, container, url, key)
         except Exception as e:
             errors.append(f"{label} (failDownloads): {e}")
+    # Les trois arr ensemble, Prowlarr compris : contrairement au reste du
+    # script, ce réglage n'a rien de propre au rôle de chaque instance — elles
+    # sont derrière le même proxy et servies au même LAN.
+    if domain:
+        proxy_networks, resolved = trusted_proxy_networks()
+        if not resolved:
+            notes.append(f"réseau {TRAEFIK_NETWORK} introuvable : "
+                         f"trustedNetworks posé sur le repli {TRUSTED_PROXY_FALLBACK}")
+        for label, container, url, key in (("Sonarr", SONARR_CONTAINER, SONARR_URL, sonarr_api_key),
+                                           ("Radarr", RADARR_CONTAINER, RADARR_URL, radarr_api_key),
+                                           ("Prowlarr", PROWLARR_CONTAINER, PROWLARR_URL, prowlarr_api_key)):
+            if not key:
+                continue
+            try:
+                changed += apply_config_overrides(label, container, url, key, "host",
+                                                  host_overrides(proxy_networks, domain,
+                                                                 label.lower()))
+            except Exception as e:
+                errors.append(f"{label} (host): {e}")
+    else:
+        notes.append("DOMAIN absent de .env.shared : section host laissée telle quelle")
+
     # Bloc à part des deux passes seedRatio : elles ont besoin de la liste des
     # indexeurs publics, celle-ci non — elle se rattache par definitionFile.
     if prowlarr_api_key:
