@@ -151,7 +151,16 @@ services :
   (dossiers supplémentaires à exposer dans Nextcloud) vont eux aussi dans
   un `docker-compose.override.yml`, pas dans le fichier de base.
 - `web` : `nginxinc/nginx-unprivileged` + config PHP-FPM, écoute sur 8080.
-- `news-updater` : rafraîchit périodiquement l'app News de Nextcloud.
+- `news-updater` : rafraîchit périodiquement l'app News de Nextcloud. Il
+  s'authentifie avec un compte admin — c'est ce qui lui permet de mettre à
+  jour les flux de *tous* les utilisateurs, pas seulement les siens — mais
+  via un **mot de passe d'application** dédié (révocable seul), lu dans
+  `news-updater/config.ini` et non passé en variable d'environnement :
+  l'entrypoint de l'image recopie ses variables dans `--user`/`--password`,
+  où le secret devient lisible par n'importe quel utilisateur local avec un
+  `ps` sur l'hôte. Seul service Nextcloud à tourner sous `PUID:PGID` plutôt
+  qu'en root, sans quoi `cap_drop: ALL` (donc plus de `CAP_DAC_OVERRIDE`)
+  l'empêcherait de lire ce fichier en `600`.
 
 ### VPN / Transmission (`vpn/`)
 
@@ -369,6 +378,8 @@ Ce qui est sauvegardé : la base Nextcloud (dump `pg_dump` cohérent, pas
 une copie brute des fichiers Postgres), le webroot Nextcloud, les configs
 Jellyfin/arr (`prowlarr`/`sonarr`/`radarr`/`cross-seed`/`recyclarr`)/Seerr/
 Transmission, les `.env` de `traefik`/`nextcloud`/`vpn`/`arr`, `.env.shared`,
+les deux fichiers gitignorés qui ne sont pas des `.env`
+(`arr/profiles/prowlarr-indexers.json`, `nextcloud/news-updater/config.ini`),
 et un **manifeste des digests d'images exacts** en cours d'exécution
 (toutes les stacks, y compris `arr`/`seerr`) — utile car ce repo reste
 volontairement sur des tags `:latest` (voir [Versions des
@@ -402,7 +413,12 @@ Commandes et procédure de restauration : voir
   `.env.shared.example` à la racine. `docker compose` ne charge pas ces
   fichiers tout seul (il ne cherche un `.env` que dans le dossier de la
   stack) : passer par le `Makefile` plutôt que par `docker compose` en
-  direct.
+  direct. Exception quand l'image elle-même recopie ses variables
+  d'environnement dans la ligne de commande du process : le secret passe
+  alors par un fichier gitignoré + son `.example`, monté en lecture seule
+  (`nextcloud/news-updater/config.ini`). Tout fichier de cette catégorie doit
+  être ajouté à `scripts/backup.sh`, qui ne ramasse automatiquement que les
+  `.env`.
 - **Portabilité des montages hôte** : tout montage qui reflète un choix
   personnel (quelles bibliothèques exposer, sous quel chemin) vit dans un
   `docker-compose.override.yml` gitignoré, templaté par un

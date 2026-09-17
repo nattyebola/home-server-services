@@ -52,6 +52,10 @@ arr/mark-finales.log.*
 # VPN client credentials (private key + certs, not infra-as-code)
 vpn/custom/
 
+# Nextcloud News updater credentials (Nextcloud app password) — see the
+# .example next to it; mounted as a folder by nextcloud/docker-compose.yml
+nextcloud/news-updater/config.ini
+
 # restic backup repository + staging data (large/binary, not infra-as-code —
 # see scripts/backup.sh; the repo password lives here too, never commit it)
 sauvegarde/

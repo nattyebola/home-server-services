@@ -109,16 +109,27 @@ services:
   news-updater:
     image: kr3ssh/nextcloud-news-updater
     restart: unless-stopped
+    # L'image démarre root sans en avoir besoin (un script Python qui ne fait
+    # que des requêtes HTTP) et `cap_drop: ALL` lui retire CAP_DAC_OVERRIDE :
+    # root ne peut alors PAS lire le config.ini en 600 monté ci-dessous.
+    # Tourner sous le compte qui possède le fichier règle les deux.
+    user: "${PUID}:${PGID}"
     volumes:
       - /etc/localtime:/etc/localtime:ro
+      # Le dossier, pas le fichier seul : un bind-mount de fichier reste figé
+      # sur l'inode capturé au démarrage si on remplace le fichier au lieu de
+      # l'éditer en place (voir CLAUDE.md).
+      - ./news-updater:/config:ro
     depends_on:
       - app
-    environment:
-      - NEXTCLOUD_URL=https://nextcloud.${DOMAIN}
-      - NEXTCLOUD_ADMIN_USER=${NEXTCLOUD_ADMIN_USER}
-      - NEXTCLOUD_ADMIN_PASSWORD=${NEXTCLOUD_ADMIN_PASSWORD}
-    env_file:
-      - .env
+    # Identifiants passés par fichier plutôt que par les variables
+    # NEXTCLOUD_ADMIN_* que lit l'entrypoint de l'image : celui-ci les recopie
+    # dans `--user`/`--password`, ce qui rendait le mot de passe lisible dans
+    # un `ps` sur l'hôte, par n'importe quel utilisateur local. L'URL reste
+    # ici, en argument, pour garder la substitution de ${DOMAIN} — argparse
+    # prime sur le fichier de config, qui ne porte donc que le secret (voir
+    # news-updater/config.ini.example).
+    command: ["https://nextcloud.${DOMAIN}", "--config", "/config/config.ini"]
     security_opt:
       - no-new-privileges:true
     cap_drop:

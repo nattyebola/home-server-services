@@ -267,6 +267,14 @@ d'attente ou d'un échappement.
   suffit. Ne pas conclure qu'un changement de config « n'a pas pris » sans
   vérifier ça d'abord ; et préférer monter le **dossier** quand le fichier
   doit pouvoir être remplacé à chaud (cf. `traefik/dynamic/`).
+- **`cap_drop: ALL` retire aussi `CAP_DAC_OVERRIDE`** : root dans le conteneur
+  cesse d'outrepasser les permissions de fichiers, et ne peut donc pas lire un
+  secret monté en `600` appartenant à l'utilisateur hôte. Se présente comme un
+  fichier « introuvable » (`configparser` et consorts ne distinguent pas absent
+  de non lisible), avec le bind-mount pourtant correct dans `docker inspect`.
+  Rencontré sur `nextcloud/news-updater`. Fix : faire tourner le service sous
+  `user: "${PUID}:${PGID}"` — jamais élargir les permissions du secret, et
+  jamais rendre le `cap_drop` moins strict pour ça.
 - **Ne jamais copier un `.example` de `docker-compose.override.yml` tel quel
   sans remplir ses placeholders** (`/path/to/...`) — Docker crée sinon
   silencieusement l'arborescence bidon correspondante **en root** sur l'hôte.

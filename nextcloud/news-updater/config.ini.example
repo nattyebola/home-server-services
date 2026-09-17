@@ -1,0 +1,18 @@
+# Identifiants du service de mise à jour des flux Nextcloud News.
+# Copier en `config.ini` (gitignoré, chmod 600) et remplir.
+#
+# Utiliser un MOT DE PASSE D'APPLICATION Nextcloud, jamais le mot de passe du
+# compte : il est révocable seul (Paramètres > Sécurité, ou
+# `occ user:auth-tokens:list/delete`) et se crée avec
+#   docker exec -u <PUID> nextcloud-app-1 php occ user:auth-tokens:add \
+#     --name="news-updater" <compte>
+#
+# Ces valeurs vivent dans un fichier, et pas dans `--user`/`--password` comme
+# le fait l'entrypoint de l'image : en argument, le secret serait lisible par
+# n'importe quel utilisateur local via `ps` sur l'hôte.
+#
+# L'URL est passée en argument par le compose (substitution de ${DOMAIN}) —
+# ne pas la remettre ici, argparse primerait de toute façon.
+[updater]
+user =
+password =

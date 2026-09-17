@@ -123,6 +123,13 @@ done
 # arr/.env, already above.
 [ -f "$REPO_ROOT/arr/profiles/prowlarr-indexers.json" ] &&
 	env_files+=("$REPO_ROOT/arr/profiles/prowlarr-indexers.json")
+# Idem : gitignoré parce qu'il porte le mot de passe d'application Nextcloud du
+# news-updater, et absent des .env par construction (le secret ne doit pas
+# transiter par une variable d'env, sinon l'entrypoint de l'image le recopie
+# dans argv — voir nextcloud/docker-compose.yml). Régénérable à la main, mais
+# sans lui le conteneur redémarre en boucle après une restauration.
+[ -f "$REPO_ROOT/nextcloud/news-updater/config.ini" ] &&
+	env_files+=("$REPO_ROOT/nextcloud/news-updater/config.ini")
 echo "    gitignored config files included: ${#env_files[@]}"
 
 restic backup \

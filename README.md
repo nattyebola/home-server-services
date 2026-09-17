@@ -132,7 +132,7 @@ nom**.
    remplir :
    ```sh
    cp traefik/.env.example    traefik/.env      # ACME_EMAIL
-   cp nextcloud/.env.example  nextcloud/.env    # POSTGRES_USER/PASSWORD, NEXTCLOUD_ADMIN_USER/PASSWORD
+   cp nextcloud/.env.example  nextcloud/.env    # POSTGRES_USER/PASSWORD, NEXTCLOUD_ADMIN_USER/PASSWORD (le rafraîchisseur de flux a son propre secret, étape 10)
    cp vpn/.env.example        vpn/.env          # OPENVPN_USERNAME/PASSWORD
    cp arr/.env.example        arr/.env          # PROWLARR/SONARR/RADARR/CROSSSEED/JELLYFIN_API_KEY + CROSS_SEED_INDEXER_IDS (renseignés aux étapes 14 et 18)
    ```
@@ -185,7 +185,28 @@ nom**.
     make up STACK=nextcloud
     ```
     Le compte admin est créé automatiquement depuis
-    `NEXTCLOUD_ADMIN_USER`/`PASSWORD` (`nextcloud/.env`).
+    `NEXTCLOUD_ADMIN_USER`/`PASSWORD` (`nextcloud/.env`) — ces deux valeurs ne
+    servent qu'à cette première installation.
+
+    Puis **créer le mot de passe d'application du rafraîchisseur de flux**
+    (`news-updater`), qui a besoin d'un compte admin pour mettre à jour les
+    flux de *tous* les utilisateurs :
+    ```sh
+    cp nextcloud/news-updater/config.ini.example nextcloud/news-updater/config.ini
+    chmod 600 nextcloud/news-updater/config.ini
+    docker exec -u "$PUID" nextcloud-app-1 php occ user:auth-tokens:add \
+        --name="news-updater" <compte-admin>
+    ```
+    Reportez le compte et le mot de passe affiché dans `config.ini`, puis
+    relancez la stack (`make up STACK=nextcloud`). Tant que ce fichier est
+    vide, seul le conteneur `news-updater` redémarre en boucle — le reste de
+    Nextcloud fonctionne.
+
+    Un mot de passe d'application plutôt que celui du compte, et un fichier
+    plutôt qu'une variable d'environnement : l'entrypoint de l'image recopie
+    ses variables dans `--user`/`--password`, ce qui rendrait le mot de passe
+    lisible par n'importe quel utilisateur local via `ps` sur l'hôte. Le token
+    est par ailleurs révocable seul (Paramètres → Sécurité).
 
 11. **Démarrer le VPN / Transmission**
     ```sh
