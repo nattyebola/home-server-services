@@ -115,6 +115,29 @@ ARR_DOWNLOAD_CLIENT = {
     "radarr": {"movieCategory": "radarr"},
 }
 
+# 12e (suite) — Catégorie `bd` du client de téléchargement de Prowlarr, qui
+# envoie les grabs BD/comics/mangas dans completed/bd, la bibliothèque de
+# komga/ (voir .claude/docs/komga.md).
+#
+# C'est un MAPPING sur le client existant, surtout pas un second client :
+# Prowlarr choisit son client de téléchargement en round-robin sur le groupe de
+# priorité le plus bas (DownloadClientProvider.GetDownloadClient), SANS regarder
+# les catégories. Deux clients Transmission à priorité égale enverraient donc une
+# grab sur deux dans completed/bd, films et séries compris. C'est le mapping qui
+# route, pas le client : TransmissionBase fait
+# `GetCategoryForRelease(release) ?? Settings.Category`, donc une release hors
+# mapping garde le comportement actuel (racine de completed/).
+#
+# Les trois ids plutôt que le seul parent 7000 : GetCategoryForRelease teste
+# d'abord l'intersection directe des ids, et ne retombe sur les sous-catégories
+# du parent qu'ensuite. Les relever explicitement évite de dépendre de ce
+# second passage. Vérifié le 2026-09-22 sur les 5 indexeurs : toute release BD
+# pertinente porte 7000, 7020 ou 7030.
+PROWLARR_BD_CATEGORY = {
+    "clientCategory": "bd",
+    "categories": [7000, 7020, 7030],
+}
+
 # 12e (suite) — Remote path mapping, la pièce qui fait tenir le fix hardlink du
 # 2026-07-23. Transmission annonce ses téléchargements sous /data/completed/
 # (son propre montage), Sonarr/Radarr voient les mêmes fichiers sous
@@ -448,6 +471,37 @@ def provision_download_client(name, api_key, done, skipped):
         "fields": [{"name": k, "value": v} for k, v in fields.items()],
     }, api_key)
     done.append(f"{name} : client de téléchargement Transmission ajouté")
+
+
+def provision_prowlarr_bd_category(arr_env, done, skipped):
+    """Ajoute le mapping de catégorie `bd` au client Transmission de Prowlarr.
+
+    Prowlarr a sa propre section Download Clients, indépendante de celle de
+    Sonarr/Radarr : elle ne sert QUE ses recherches manuelles. C'est par là que
+    passent les grabs de BD, aucun arr ne gérant ce contenu.
+
+    Modifie le client existant au lieu d'en créer un — voir PROWLARR_BD_CATEGORY
+    pour pourquoi un second client serait un piège. Idempotent : ne réécrit que
+    si le mapping manque, et n'ajoute qu'une entrée à `categories` sans toucher
+    au reste de la définition.
+    """
+    api_key = arr_env.get("PROWLARR_API_KEY")
+    if not api_key:
+        raise Skipped("PROWLARR_API_KEY absente de arr/.env — `make api-keys` d'abord")
+
+    clients = arr_request("prowlarr", "/downloadclient", api_key=api_key)
+    client = next((c for c in clients if c["implementation"] == "Transmission"), None)
+    if client is None:
+        raise Skipped("aucun client Transmission dans Prowlarr — à créer d'abord")
+
+    categories = client.get("categories") or []
+    if any(c.get("clientCategory") == PROWLARR_BD_CATEGORY["clientCategory"] for c in categories):
+        return
+
+    client["categories"] = categories + [dict(PROWLARR_BD_CATEGORY)]
+    arr_request("prowlarr", f"/downloadclient/{client['id']}", "PUT", client, api_key)
+    done.append("prowlarr : catégorie de téléchargement 'bd' mappée "
+                f"sur {PROWLARR_BD_CATEGORY['categories']} (-> completed/bd)")
 
 
 def provision_remote_path_mapping(name, api_key, done, skipped):
@@ -841,6 +895,8 @@ def command_services(shared, done, skipped, errors):
     # Indexeurs AVANT les applications : une application déclenche un sync vers
     # Sonarr/Radarr dès sa création, autant qu'elle ait quelque chose à pousser.
     run_step("indexeurs Prowlarr", provision_prowlarr_indexers, done, skipped, errors, arr_env)
+    run_step("catégorie BD Prowlarr", provision_prowlarr_bd_category,
+             done, skipped, errors, arr_env)
     run_step("applications Prowlarr", prowlarr_apps, done, skipped, errors)
     run_step("Seerr", provision_seerr, done, skipped, errors, shared, arr_env)
 

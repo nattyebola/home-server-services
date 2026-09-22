@@ -31,6 +31,9 @@ et des pièges qui ont coûté cher, les ignorer revient à les redécouvrir.
   résolution des trackers, ou lancer un `transmission-remote`.
 - **`.claude/docs/backup.md`** — `scripts/backup.sh` / `scripts/restore.sh`,
   ou lancer une sauvegarde / restauration.
+- **`.claude/docs/komga.md`** — `komga/`, la bibliothèque BD/comics/mangas
+  `completed/bd`, la catégorie `bd` du client de téléchargement Prowlarr, ou
+  une vue BD dans clearr.
 
 Règle : **un seul de ces fichiers suffit en général** — les lire tous
 reviendrait à l'ancien CLAUDE.md monolithique. En cas de doute sur
@@ -114,6 +117,19 @@ explicitement :
 - **Seerr (`seerr/`, image `ghcr.io/seerr-team/seerr`)** pour la recherche/
   requête unifiée, pas Jellyseerr/Overseerr — les deux projets ont fusionné
   dans Seerr et sont dépréciés depuis. Ne pas proposer l'ancienne image.
+- **Komga (`komga/`) lit directement les données seedées** : pas de hardlink,
+  pas d'arr, pas d'import — sa bibliothèque EST
+  `${DATA_ROOT}/.transmission/data/completed/bd`, alimentée par la recherche
+  manuelle de Prowlarr (mapping de catégorie `bd`). Arbitré le 2026-09-22
+  après comparaison avec des hardlinks sous `library/bd/` : **le but est de
+  pouvoir lire des BD, pas d'avoir une bibliothèque bien rangée**.
+  Conséquences acceptées explicitement — l'arborescence des séries est celle
+  de l'uploadeur, les torrents mono-fichier fusionnent dans une série
+  fourre-tout « bd », et supprimer un torrent supprime la BD. Le montage est
+  **en lecture seule**, non négociable : ces fichiers sont les données
+  seedées, toute écriture invaliderait le hash du torrent. Komf écarté (trop
+  compliqué pour le bénéfice) ; s'il revient un jour, son mode `COMIC_INFO`
+  est interdit ici. Détail et pièges : `.claude/docs/komga.md`.
 
 ### Repo public et historique git
 
@@ -327,6 +343,7 @@ server/
 │   └── profiles/               # config arr custom versionnée (sonarr-anime.json) — appliquée par apply-arr-overrides.py
 ├── kodi/                      # addon de menu contextuel « Supprimer avec clearr » — installé côté client par `make kodi-install`
 ├── seerr/                     # recherche/requête unifiée ; pas de .env (config via son assistant web + provision.py)
+├── komga/                     # lecture BD/comics/mangas ; bibliothèque = completed/bd en :ro ; pas de .env (compte admin créé au 1er accès web)
 └── dashboard/                 # templates/ (string.Template) + assets (logos, css, js) + html/ généré — servi par traefik/
 ```
 

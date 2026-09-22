@@ -4,14 +4,14 @@
 NETWORK := traefik-public
 # Réseau à part pour clearr et le proxy RPC Transmission — voir la cible `network`.
 RESTRICTED_NETWORK := traefik-restricted
-STACKS := traefik jellyfin nextcloud vpn arr seerr
+STACKS := traefik jellyfin nextcloud vpn arr seerr komga
 
 # Stacks parcourues par `update-all`. traefik y est EN DERNIER : sa mise à jour
 # coupe brièvement le reverse proxy (accepté explicitement le 2026-08-29), donc
 # autant que ça arrive une fois, à la fin, et pas au milieu d'une boucle qu'une
 # stack suivante pourrait faire échouer. Le dashboard est régénéré après, il
 # reflète donc l'état d'après redémarrage.
-UPDATE_STACKS := nextcloud vpn jellyfin arr seerr traefik
+UPDATE_STACKS := nextcloud vpn jellyfin arr seerr komga traefik
 
 .PHONY: help require-env-shared network up down config logs update update-all backup restore cron-install dashboard-refresh clearr arr-overrides search-missing mark-finales recyclarr-sync kodi-install api-keys provision switch-lan-only-middleware test
 
@@ -110,6 +110,17 @@ up: require-env-shared network ## STACK=<nom> — démarre (ou met à jour) les 
 		root=$$(grep '^DATA_ROOT=' .env.shared | cut -d= -f2); \
 		test -n "$$root" || (echo "DATA_ROOT not set in .env.shared" >&2 && exit 1); \
 		mkdir -p "$$root/.seerr/config"; \
+	fi
+	@# Komga : même cas que seerr (image sans USER, tourne en PUID:PGID via
+	@# `user:`, ne chown pas son volume). Le dossier de BIBLIOTHÈQUE est créé ici
+	@# lui aussi, et c'est le point important : il est monté en :ro, donc Docker
+	@# ne peut pas le créer au démarrage — il échouerait, ou pire le créerait en
+	@# root avant que Transmission n'ait à y écrire. C'est aussi la cible de la
+	@# catégorie `bd` du client de téléchargement Prowlarr.
+	@if [ "$(STACK)" = "komga" ]; then \
+		root=$$(grep '^DATA_ROOT=' .env.shared | cut -d= -f2); \
+		test -n "$$root" || (echo "DATA_ROOT not set in .env.shared" >&2 && exit 1); \
+		mkdir -p "$$root/.komga/config" "$$root/.transmission/data/completed/bd"; \
 	fi
 	@# Même raison que ci-dessus : traefik tourne en PUID:PGID et n'écrirait pas
 	@# dans un dossier que Docker aurait créé en root. Porte l'access log

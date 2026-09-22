@@ -28,6 +28,7 @@ flowchart LR
     Traefik -->|"jellyfin.DOMAIN"| Jellyfin
     Traefik -->|"seerr.DOMAIN"| Seerr
     Traefik -.->|"transmission/prowlarr/sonarr/radarr.DOMAIN\nLAN only"| LanServices["transmission-proxy, arr/*"]
+    Traefik -->|"komga.DOMAIN"| Komga
 ```
 
 Traefik est l'unique service qui écoute sur 80/443. Tout le reste n'est
@@ -296,11 +297,75 @@ directement) : sans bibliothèque Jellyfin pointant sur
 contenu déjà téléchargé apparaît comme non disponible et Seerr propose à
 tort de le re-demander.
 
+### Komga (`komga/`)
+
+Lecteur de BD, comics et mangas (CBZ/CBR/PDF/EPUB) : bibliothèque web,
+reprise de lecture, sens de lecture droite-à-gauche par série, et flux OPDS
+pour les liseuses et tablettes. Ni Jellyfin ni Kodi ne savent faire ça
+correctement, d'où un service dédié.
+
+**Le choix structurant : Komga lit directement les données seedées.** Sa
+bibliothèque n'est pas une arborescence à part, c'est
+`${DATA_ROOT}/.transmission/data/completed/bd` — le dossier où atterrissent
+les torrents de BD. Pas de hardlink vers `library/`, pas d'arr, pas
+d'import, pas de renommage.
+
+C'est délibérément l'inverse du modèle vidéo, où Sonarr/Radarr importent en
+créant un hardlink sous `library/`. La raison est qu'il n'existe pas d'arr
+crédible pour la BD francophone : Mylar3, l'équivalent le plus proche,
+raisonne en *issues* numérotés mensuels à l'américaine et ne sait pas
+interpréter les releases franco-belges, qui arrivent en tomes ou en
+intégrales (`Sillage.[T01.T24]`, `[INTEGRALE]`). Pour une dizaine de séries
+à cadence annuelle, l'automatisation n'apporterait rien ; l'alimentation se
+fait donc par la **recherche manuelle de Prowlarr**, qui possède sa propre
+section Download Clients indépendante de Sonarr/Radarr. Un mapping de
+catégorie `bd` y route les grabs des catégories newznab 7000/7020/7030 vers
+`completed/bd`.
+
+Ce modèle a deux conséquences assumées, arbitrées explicitement :
+
+- **L'arborescence des séries est celle de l'uploadeur.** Komga déduit une
+  série de chaque dossier ; on ne réorganise pas des données seedées. Un pack
+  livré à plat donne une série unique, et les torrents mono-fichier se
+  retrouvent groupés dans une série fourre-tout. Accepté : l'objectif est de
+  pouvoir lire, pas d'avoir un rayonnage impeccable.
+- **Supprimer un torrent supprime la BD**, et garder la BD impose de seeder.
+  Il n'y a pas de second exemplaire — ce qui, sur des trackers privés où le
+  ratio compte, est plutôt aligné avec le reste.
+
+**Le montage est en lecture seule**, et c'est une contrainte de sûreté, pas
+de confort : ces fichiers sont les données seedées, toute écriture
+invaliderait le hash du torrent et déclencherait une re-vérification. Le
+`:ro` neutralise du même coup les deux fonctions de Komga qui écrivent (la
+suppression de fichier de livre et l'outil Import). En contrepartie, les
+métadonnées éditées dans l'UI vivent dans la base de Komga, jamais dans les
+fichiers — ce qui est exactement ce qu'on veut ici.
+
+Le chemin est **identique des deux côtés du montage**, pour que ce que Komga
+expose dans son API (`BookDto.url`) coïncide avec l'espace de chemins de
+`clearr` et qu'aucune traduction ne soit à refaire.
+
+**Exposé au WAN**, même chaîne de middlewares que Jellyfin et Seerr
+(`rate-limit`, `security-headers`, `hsts`) — arbitré le 2026-09-22 après
+audit de sa configuration de sécurité. Tout `/api/**`, `/opds/**` et
+`/sse/**` exige une authentification, la liste des exceptions est courte et
+délibérée (réclamation initiale, providers OAuth2, ressources de polices
+epub), les endpoints actuator sont réservés aux administrateurs sauf
+`/health` qui ne rend que `{"status":"UP"}`, et un serveur déjà réclamé
+refuse un second claim.
+
+Le `rate-limit` n'est pas décoratif : Komga **journalise** les tentatives
+d'authentification mais ne verrouille ni ne ralentit un compte après des
+échecs répétés. C'est donc le seul rempart contre une attaque par force
+brute — la même situation que Jellyfin et Seerr, déjà publics.
+
+Pièges et détails d'implémentation : `.claude/docs/komga.md`.
+
 ### Dashboard (`dashboard/`)
 
 Page statique listant les services exposés via Traefik, répartis en trois
-groupes — **Public** (Jellyfin, Nextcloud, Seerr), **Local/LAN**
-(Transmission, Prowlarr, Sonarr, Radarr) et **Stack non lancée** (tout
+groupes — **Public** (Jellyfin, Nextcloud, Seerr, Komga), **Local/LAN**
+(Transmission, Prowlarr, Sonarr, Radarr, clearr) et **Stack non lancée** (tout
 service dont le container n'est pas actuellement démarré) — avec logo
 cliquable qui redirige vers le service. Servie par le container
 `dashboard` de la stack `traefik/` (voir [Traefik](#traefik-traefik)),

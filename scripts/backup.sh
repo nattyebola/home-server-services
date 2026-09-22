@@ -106,6 +106,13 @@ echo "==> restic backup"
 # reasoning), $DATA_ROOT/.jellyfin/cache (transcodes/image cache, purely
 # regenerated) — huge and disposable, would blow up the restic repo for no
 # recovery value.
+# Nuance depuis komga/ (2026-09-22) : la bibliothèque BD vit sous
+# .transmission/data/completed/bd, donc elle non plus n'est pas sauvegardée, et
+# contrairement aux vidéos AUCUN arr ne sait la reconstituer. Ce qui tient lieu
+# d'inventaire, c'est la base de Komga ($DATA_ROOT/.komga/config, sauvegardée
+# ci-dessous) : elle porte le nom de chaque série et de chaque tome, donc de
+# quoi savoir quoi re-télécharger. Ne pas l'en retirer en croyant n'y perdre
+# que des vignettes.
 # The per-stack .env files are collected by looping over $STACKS instead of
 # being listed by hand: jellyfin/.env was created on 2026-08-05 and never added
 # to the old hardcoded list, so the admin credentials `make provision` needs to
@@ -138,6 +145,7 @@ restic backup \
 	"$DATA_ROOT/.jellyfin/config" \
 	"$DATA_ROOT/.arr" \
 	"$DATA_ROOT/.seerr/config" \
+	"$DATA_ROOT/.komga/config" \
 	"$DATA_ROOT/.transmission/config" \
 	"$STAGING_DIR" \
 	--tag weekly --tag "commit-$(git -C "$REPO_ROOT" rev-parse --short HEAD)"

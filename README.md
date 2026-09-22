@@ -27,6 +27,7 @@ et leurs solutions, voir [`ISSUES.md`](ISSUES.md).
 | Transmission (`vpn/`) | client torrent derrière VPN | `transmission.DOMAIN` | LAN uniquement |
 | Arr (`arr/`) : Prowlarr, Sonarr, Radarr, cross-seed, recyclarr | automatisation récupération séries/films | `prowlarr/sonarr/radarr.DOMAIN` | LAN uniquement |
 | Seerr (`seerr/`) | recherche/requête unifiée (grand public) | `seerr.DOMAIN` | public |
+| Komga (`komga/`) | lecture BD / comics / mangas | `komga.DOMAIN` | public |
 
 Détail de chaque service, schémas et rationale des choix : voir
 [`ARCHITECTURE.md`](ARCHITECTURE.md).
@@ -83,7 +84,7 @@ phase produit ce dont la suivante a besoin.
 | Phase | Étapes | Ce qu'on fait | Durée |
 |---|---|---|---|
 | **Préparation** | 1 → 7 | Cloner, remplir les `.env`, créer le réseau, poser le DNS. Rien ne tourne encore. | ~30 min, dont l'attente de propagation DNS |
-| **Démarrage** | 8 → 13 | Lancer les six stacks dans l'ordre de leurs dépendances. Traefik d'abord (il porte les certificats), `vpn` avant `arr` (qui rejoint son réseau), `jellyfin` et `arr` avant `seerr`. | ~15 min |
+| **Démarrage** | 8 → 13 | Lancer les sept stacks dans l'ordre de leurs dépendances. Traefik d'abord (il porte les certificats), `vpn` avant `arr` (qui rejoint son réseau), `jellyfin` et `arr` avant `seerr`. `komga` ne dépend que de Traefik. | ~15 min |
 | **Provisionnement** | 14 → 18 | Collecter les clés API générées au premier démarrage, puis créer par script tout ce qui se faisait à la main dans les UI. | ~15 min |
 | **Finalisation** | 19 → 22 | Dashboard, vérification, sauvegardes et crons, addon Kodi. | ~10 min |
 
@@ -157,7 +158,8 @@ nom**.
    `www.<DOMAIN>` (dashboard), `nextcloud.<DOMAIN>` et `jellyfin.<DOMAIN>`,
    plus `transmission.<DOMAIN>` si vous déployez la stack VPN,
    `prowlarr.<DOMAIN>`/`sonarr.<DOMAIN>`/`radarr.<DOMAIN>` si vous déployez
-   la stack `arr`, et `seerr.<DOMAIN>` si vous déployez `seerr`.
+   la stack `arr`, `seerr.<DOMAIN>` si vous déployez `seerr`, et
+   `komga.<DOMAIN>` si vous déployez `komga`.
 
 8. **Démarrer Traefik en premier**
    ```sh
@@ -232,6 +234,31 @@ nom**.
     créerait en `root:root` et Seerr crasherait en boucle sur `EACCES`, ne
     tournant pas en root et ne chownant pas son volume lui-même (voir
     [`ISSUES.md`](ISSUES.md)).
+
+    **Démarrer Komga** dans la foulée, si vous voulez lire des BD/comics/
+    mangas (aucune dépendance en dehors de Traefik) :
+    ```sh
+    make up STACK=komga
+    ```
+    Komga n'a pas de `.env` : il n'a pas de compte prédéfini et n'en lit
+    aucun depuis l'environnement — la première visite de
+    `https://komga.<DOMAIN>` propose de « réclamer » le serveur en créant le
+    compte administrateur. **Faites-le tout de suite** : le service est
+    exposé publiquement, et tant qu'il n'est pas réclamé n'importe qui peut
+    créer ce compte.
+
+    `make up` crée `${DATA_ROOT}/.komga/config` (même raison que pour Seerr)
+    **et** `${DATA_ROOT}/.transmission/data/completed/bd`, le dossier de la
+    bibliothèque : il est monté en lecture seule, donc Docker ne peut pas le
+    créer lui-même au démarrage.
+
+    Il reste à déclarer la bibliothèque dans l'UI de Komga (Settings →
+    Libraries → Add), pointée sur
+    `/data_root/.transmission/data/completed/bd`. Ce dossier se remplit
+    depuis la **recherche manuelle de Prowlarr** : le mapping de catégorie
+    `bd` posé par `make provision` (étape 17) y route les grabs de
+    BD/comics/mangas. Aucun arr ne gère ce contenu, il n'y a donc ni suivi
+    automatique ni renommage — voir [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 14. **Collecter les clés API** — générées au premier démarrage, donc
     impossibles à connaître avant :
@@ -344,8 +371,8 @@ nom**.
 
 20. **Vérifier** : `https://<DOMAIN>` (dashboard),
     `https://nextcloud.<DOMAIN>`, `https://jellyfin.<DOMAIN>`,
-    `https://seerr.<DOMAIN>`, et `https://transmission.<DOMAIN>` depuis le
-    LAN.
+    `https://seerr.<DOMAIN>`, `https://komga.<DOMAIN>`, et
+    `https://transmission.<DOMAIN>` depuis le LAN.
 
 21. **Sauvegardes et tâches planifiées** :
     ```sh
@@ -399,13 +426,13 @@ et leurs arguments directement depuis le `Makefile`.
 | `make config STACK=<nom>` | affiche la config résolue (debug des `${VAR}`) |
 | `make logs STACK=<nom>` | logs en direct |
 | `make update STACK=<nom>` | pull + rebuild + recrée (+ maintenance `occ` si `nextcloud`) |
-| `make update-all` | `update` sur nextcloud, vpn, jellyfin, arr, seerr, traefik — **seulement les stacks qui ont au moins un conteneur démarré**, les autres sont listées comme sautées (continue même si un stack échoue, résumé + prune images + refresh dashboard à la fin) |
+| `make update-all` | `update` sur nextcloud, vpn, jellyfin, arr, seerr, komga, traefik — **seulement les stacks qui ont au moins un conteneur démarré**, les autres sont listées comme sautées (continue même si un stack échoue, résumé + prune images + refresh dashboard à la fin) |
 | `make backup` | sauvegarde restic (aussi via cron) |
 | `make restore SNAPSHOT=<id\|latest>` | restaure un snapshot dans un dossier à part et **affiche** les étapes à faire à la main — n'écrit jamais sur le live |
 | `make test` | tests des chemins destructifs de `clearr` (stdlib, aucune dépendance à installer, ne touche ni la bibliothèque ni les API arr) |
 | `make cron-install` | (ré)installe `scripts/crontab` comme crontab de l'hôte |
 | `make api-keys` | collecte les clés API générées au 1er démarrage vers `arr/.env` (voir étape 14) |
-| `make provision` | crée la config d'installation restante (bibliothèques Jellyfin, objets arr, Seerr) — additif et relançable, voir étape 17 |
+| `make provision` | crée la config d'installation restante (bibliothèques Jellyfin, objets arr, Seerr, catégorie `bd` de Prowlarr) — additif et relançable, voir étape 17 |
 | `make clearr` | TUI de nettoyage torrents/bibliothèque (service `clearr`), voir ci-dessous |
 | `make dashboard-refresh` | régénère le dashboard immédiatement (aussi via cron 5 min) |
 | `make recyclarr-sync` | applique les guides TRaSH aux profils qualité arr (aussi via cron quotidien) |

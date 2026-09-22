@@ -1,0 +1,84 @@
+services:
+  komga:
+    # Lecteur de BD/comics/mangas (CBZ/CBR/PDF/EPUB). Sert la bibliothèque
+    # `completed/bd` alimentée par la recherche manuelle de Prowlarr — voir
+    # .claude/docs/komga.md pour la chaîne complète et ses pièges.
+    image: gotson/komga:latest
+    restart: unless-stopped
+    init: true
+    # L'image ne porte pas de directive USER : elle tourne en root par défaut
+    # et ne chown rien. Comme seerr, le dossier de config doit donc exister et
+    # appartenir à PUID:PGID AVANT le premier démarrage — c'est `make up` qui
+    # le crée (sinon Docker le crée en root:root et le conteneur boucle sur
+    # EACCES).
+    user: "${PUID}:${PGID}"
+    environment:
+      # Plafond de heap JVM. Sans lui la JVM prend 25 % de la RAM de l'hôte
+      # comme maximum, soit ~7,5 Go ici pour un service qui n'en a pas besoin.
+      # À relever si le scan d'un .cbz très lourd finit en OutOfMemoryError —
+      # les tomes font couramment 400 Mo.
+      JAVA_TOOL_OPTIONS: "-Xmx1g"
+    volumes:
+      - ${DATA_ROOT}/.komga/config:/config
+      # LECTURE SEULE, et ce n'est pas une précaution de confort : les fichiers
+      # de cette bibliothèque SONT les données seedées par Transmission. Il n'y
+      # a pas de hardlink vers library/ (décision explicite, voir
+      # .claude/docs/komga.md) — toute écriture invaliderait le hash du torrent
+      # et ferait repartir la vérification, avec perte de ratio à la clé.
+      # Le :ro transforme donc en erreur bruyante deux fonctions de Komga qui
+      # écrivent : la suppression de fichier de livre et l'outil « Import ».
+      #
+      # Le chemin est IDENTIQUE des deux côtés du montage, à dessein : clearr
+      # calcule ses chemins en /data_root/.transmission/data/completed/...
+      # (container_path_to_host), et Komga expose le sien dans BookDto.url.
+      # Les faire coïncider évite de réintroduire la traduction de chemin que
+      # clearr a justement supprimée. Monter le sous-dossier et pas ${DATA_ROOT}
+      # entier : Komga n'a aucune raison de voir Nextcloud ou les biblios.
+      - ${DATA_ROOT}/.transmission/data/completed/bd:/data_root/.transmission/data/completed/bd:ro
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - traefik-public
+    # /actuator/health est exposé sans authentification (HealthEndpoint en
+    # permitAll dans la SecurityConfiguration de Komga), exactement le rôle du
+    # /ping des Servarr. start_period généreux : démarrage JVM + Spring Boot.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:25600/actuator/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.komga.rule=Host(`komga.${DOMAIN}`)"
+      - "traefik.http.routers.komga.entrypoints=websecure"
+      - "traefik.http.routers.komga.tls.certresolver=letsencrypt"
+      # Exposé au WAN, même chaîne que jellyfin et seerr — décidé le
+      # 2026-09-22 après audit de la SecurityConfiguration de Komga : tout
+      # /api/**, /opds/** et /sse/** est `authenticated()`, la liste des
+      # exceptions est courte et délibérée (claim, providers OAuth2,
+      # ressources de polices epub), les endpoints actuator sont ADMIN sauf
+      # /health qui ne rend que {"status":"UP"}, et le serveur déjà réclamé
+      # refuse un second claim (400).
+      #
+      # `rate-limit@docker` n'est PAS décoratif ici : Komga journalise les
+      # tentatives d'authentification (AuthenticationActivity) mais n'a AUCUN
+      # verrouillage ni ralentissement après N échecs. C'est le seul rempart
+      # anti-force-brute, exactement comme pour jellyfin et seerr.
+      # hsts/security-headers définis une seule fois dans
+      # traefik/docker-compose.yml, voir CLAUDE.md
+      - "traefik.http.routers.komga.middlewares=rate-limit@docker,security-headers@docker,hsts@docker"
+      - "traefik.http.services.komga.loadbalancer.server.port=25600"
+      - "traefik.docker.network=traefik-public"
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+        max-file: "3"
+
+networks:
+  traefik-public:
+    external: true

@@ -36,7 +36,7 @@ TEMPLATES_DIR = DASHBOARD_DIR / "templates"
 ASSETS_SRC = DASHBOARD_DIR / "assets"
 OUT_DIR = DASHBOARD_DIR / "html"
 
-STACKS = ["jellyfin", "nextcloud", "vpn", "arr", "seerr"]
+STACKS = ["jellyfin", "nextcloud", "vpn", "arr", "seerr", "komga"]
 
 # nom affiché + logo (dashboard/assets/logos/*.svg) par "stack/service"
 DISPLAY_NAME = {
@@ -48,6 +48,7 @@ DISPLAY_NAME = {
     "arr/radarr": "Radarr",
     "arr/clearr": "clearr",
     "seerr/seerr": "Seerr",
+    "komga/komga": "Komga",
 }
 LOGO_FILE = {
     "jellyfin/jellyfin": "jellyfin.svg",
@@ -58,6 +59,7 @@ LOGO_FILE = {
     "arr/radarr": "radarr.svg",
     "arr/clearr": "clearr.png",
     "seerr/seerr": "seerr.svg",
+    "komga/komga": "komga.svg",
 }
 # chemin d'une image réelle (200, Content-Type image/*) servie par chaque
 # service LAN-only, utilisée par dashboard.js pour détecter un blocage
