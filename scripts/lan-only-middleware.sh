@@ -52,9 +52,11 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 DYNAMIC_FILE="$REPO_ROOT/traefik/dynamic/lan-only.yml"
 OPEN_WINDOW_SECONDS=3600
 
-# Les deux middlewares LAN-only du repo. Même plage pour les deux : ils sont
+# Les middlewares LAN-only du repo. Même plage pour les deux : ils sont
 # séparés parce qu'ils viennent de deux stacks (arr/ et vpn/), pas parce qu'ils
-# autorisent des choses différentes.
+# autorisent des choses différentes. Un middleware par stack — une stack qui
+# arrive ajoute le sien ici, sinon son routeur référencerait un `@file`
+# inexistant et Traefik répondrait 404.
 MIDDLEWARES=(arr-lan-only transmission-lan-only)
 
 # shellcheck source=/dev/null
@@ -210,15 +212,32 @@ ensure)
 	# plus. Le défaut reste fermé : pas de fichier d'état, ou échéance déjà
 	# passée, donnent LAN uniquement (et l'échéance périmée est nettoyée, pour ne
 	# pas laisser `rearm` et le bandeau vivre sur un état mort).
-	if [ ! -f "$DYNAMIC_FILE" ]; then
+	#
+	# Le fichier est aussi réécrit quand il lui MANQUE un middleware de
+	# MIDDLEWARES, et pas seulement quand il est absent (corrigé le 2026-09-22) :
+	# sur un déploiement déjà installé le fichier existe déjà, donc l'ancien test
+	# `! -f` laissait une stack nouvellement ajoutée référencer un `@file`
+	# inexistant. Symptôme : un 404 Traefik sur le seul service neuf, tous les
+	# autres verts — cher à diagnostiquer pour une cause triviale.
+	missing=""
+	for name in "${MIDDLEWARES[@]}"; do
+		grep -qE "^ {4}$name:[[:space:]]*$" "$DYNAMIC_FILE" 2>/dev/null || missing="$missing $name"
+	done
+	if [ ! -f "$DYNAMIC_FILE" ] || [ -n "$missing" ]; then
+		if [ -f "$DYNAMIC_FILE" ]; then
+			echo "traefik/dynamic/lan-only.yml : middleware(s) manquant(s) —$missing"
+			verb="complété"
+		else
+			verb="créé"
+		fi
 		until_ts=$(deadline)
 		if [ -n "$until_ts" ] && [ "$(date +%s)" -lt "$until_ts" ]; then
 			render wan
-			echo "traefik/dynamic/lan-only.yml recréé (ouvert au WAN, fenêtre en cours)"
+			echo "traefik/dynamic/lan-only.yml $verb (ouvert au WAN, fenêtre en cours)"
 		else
 			rm -f "$STATE_FILE"
 			render lan
-			echo "traefik/dynamic/lan-only.yml créé (LAN uniquement)"
+			echo "traefik/dynamic/lan-only.yml $verb (LAN uniquement)"
 		fi
 	fi
 	;;
