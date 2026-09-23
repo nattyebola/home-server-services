@@ -1144,9 +1144,34 @@ def plan_season_deletion(state, series, seasons):
     covered = {p for _t, _hf, lm in survivors for p, _s in lm}
 
     season_dirs = season_directories(episode_files, wanted, series["path"])
+    target_paths = {f["path"] for f in targets}
     orphans = []
     for directory in season_dirs:
-        orphans += orphan_files_under(directory, covered | {f["path"] for f in targets})
+        orphans += orphan_files_under(directory, covered | target_paths)
+
+    # Dernier fichier de la série : son dossier ne garderait que ses sidecars
+    # (tvshow.nfo & co). Personne ne les voit — les trois vues partent des
+    # torrents ou des objets arr, et le bouton « Orphelins library/ » les tient
+    # pour couverts tant que Sonarr connaît la série — mais Jellyfin, lui,
+    # continue d'afficher une série sans le moindre épisode (2 constatées le
+    # 2026-09-23). On les emporte donc, et le dossier avec : la série reste
+    # suivie dans Sonarr, qui recréera le dossier au prochain import.
+    # `createEmptySeriesFolders` doit rester à false, sinon le rescan de Sonarr
+    # ressuscite le dossier (et le metadata writer son tvshow.nfo) dans l'heure.
+    # `targets` non vide est délibéré : supprimer une saison qui n'a AUCUN
+    # fichier ne doit rien effacer sur le disque.
+    series_emptied = bool(targets) and len(targets) == len(episode_files)
+    series_leftovers = []
+    if series_emptied:
+        seen = {p for p, _s in orphans}
+        # Sidecars SEULEMENT. Une vidéo que Sonarr ne revendique pas est un
+        # orphelin, et la supprimer est un choix humain (bouton « Orphelins
+        # library/ »), jamais un effet de bord d'une suppression de saison : la
+        # laisser fera simplement échouer le rmdir du dossier, ce qui est le bon
+        # comportement.
+        series_leftovers = [(p, s) for p, s in orphan_files_under(series["path"], covered | target_paths)
+                            if p not in seen and os.path.splitext(p)[1].lower() in SIDECAR_EXTENSIONS]
+        orphans += series_leftovers
     # Les sidecars sont mis à part pour l'AFFICHAGE seulement — ils partent
     # exactement comme le reste. Depuis le metadata writer, une saison a un .nfo
     # par épisode (21 pour One Piece S23) : les lister à côté des vidéos ferait
@@ -1181,6 +1206,8 @@ def plan_season_deletion(state, series, seasons):
         "straddling_paths": sorted(p for _t, _hf, lm in straddling for p, _s in lm
                                     if path_season.get(p) in wanted),
         "covered": covered,
+        "series_emptied": series_emptied,
+        "series_leftover_paths": [p for p, _s in series_leftovers],
         "orphans": orphans,
         "sidecars": sidecars,
         "extra_files": extra_files,
@@ -1347,7 +1374,9 @@ def execute_delete_seasons(client, plan, all_torrents, cross_seed_groups, linked
          entrées ET les hardlinks library/, et notifie Jellyfin ;
       3. suppression des torrents entièrement couverts    -> libère les données ;
       4. hardlinks résiduels des torrents à cheval        -> le torrent survit ;
-      5. balayage des fichiers annexes du dossier de saison.
+      5. balayage des fichiers annexes du dossier de saison ;
+      6. sidecars et dossier de la série si elle vient de perdre son dernier
+         fichier — la série elle-même reste suivie dans Sonarr.
 
     Renvoie (all_torrents, freed, deleted, failed, arr_ok)."""
     series = plan["series"]
@@ -1382,17 +1411,29 @@ def execute_delete_seasons(client, plan, all_torrents, cross_seed_groups, linked
     # supprimé un fichier — or ici c'est SONARR qui a supprimé les siens, donc
     # aucune des deux ne tourne dans le cas courant et les dossiers restaient
     # vides sur le disque (constaté le 2026-08-30 sur One-Punch Man S2/S3).
-    # prune_empty_dirs_from remonte tant que c'est vide : le dossier de la série
-    # survit tant qu'il lui reste ne serait-ce qu'un tvshow.nfo, ce qui est le
-    # comportement voulu — la série, elle, est conservée.
     for directory in plan["season_dirs"]:
         prune_empty_dirs_from(directory, LIBRARY_ROOT)
 
+    # Série vidée de son dernier fichier : ses sidecars restants, puis son
+    # dossier — sans quoi prune_empty_dirs_from s'arrête sur le tvshow.nfo et
+    # Jellyfin garde une série sans épisode (voir plan_season_deletion).
+    # La liste vient du PLAN, jamais recalculée ici : elle est exactement ce que
+    # la modale a annoncé, et un recalcul emporterait ce qui a pu apparaître
+    # entre-temps.
+    if plan.get("series_emptied"):
+        leftovers_removed, leftovers_freed = remove_library_paths(
+            [p for p in plan["series_leftover_paths"]
+             if os.path.lexists(p) and p not in still_covered])
+        orphan_removed += leftovers_removed
+        freed += leftovers_freed
+        prune_empty_dirs_from(series["path"], LIBRARY_ROOT)
+
     logger.info("Sonarr: série %r (id=%s) saisons %s — arr %s, %d episodefile retiré(s) par Sonarr, "
                 "%d torrent(s) supprimé(s), %d échec(s), %d hardlink(s) résiduel(s), "
-                "%d fichier(s) annexe(s), série CONSERVÉE",
+                "%d fichier(s) annexe(s), série CONSERVÉE%s",
                 series["title"], series["id"], plan["seasons"], "OK" if arr_ok else "ÉCHOUÉ",
-                len(plan["episode_file_ids"]), deleted, failed, straddling_removed, orphan_removed)
+                len(plan["episode_file_ids"]), deleted, failed, straddling_removed, orphan_removed,
+                " (dossier vidé)" if plan.get("series_emptied") else "")
     return all_torrents, freed, deleted, failed, arr_ok
 
 

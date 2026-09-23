@@ -458,12 +458,20 @@ class SeasonDeletion(unittest.TestCase):
 
     def test_serie_sans_dossier_de_saison_ne_balaie_rien(self):
         """Épisodes à plat dans le dossier de la série : balayer emporterait
-        toutes les autres saisons. On ne balaie donc RIEN."""
-        plat = touch(self.root / "S01E01.mkv", b"cccc")
-        self.files = [{"id": 11, "seasonNumber": 1, "path": plat, "size": 4}]
+        toutes les autres saisons. On ne balaie donc RIEN.
+
+        Deux saisons à plat, une seule choisie — c'est le scénario que la garde
+        existe pour couvrir. La série vidée de son DERNIER fichier est le seul
+        cas où le dossier de la série est balayé, et pour cause : il ne reste
+        plus aucune saison à protéger (voir SerieVideeDeSonDernierFichier)."""
+        plat1 = touch(self.root / "S01E01.mkv", b"cccc")
+        plat2 = touch(self.root / "S02E01.mkv", b"dddd")
+        self.files = [{"id": 11, "seasonNumber": 1, "path": plat1, "size": 4},
+                      {"id": 12, "seasonNumber": 2, "path": plat2, "size": 4}]
         core.find_series_torrents = lambda *a, **k: []
         plan = core.plan_season_deletion(self.state, self.series, [1])
         self.assertEqual(plan["season_dirs"], [])
+        self.assertFalse(plan["series_emptied"], "la saison 2 garde ses fichiers")
         self.assertEqual(plan["orphans"], [],
                          "aucun fichier annexe ne doit être proposé : le dossier "
                          "balayé serait celui de la série entière")
@@ -497,6 +505,81 @@ class SeasonDeletion(unittest.TestCase):
         plan = core.plan_season_deletion(self.state, self.series, [3])
         self.assertEqual(plan["episode_file_ids"], [])
         self.assertEqual(plan["season_dirs"], [])
+
+
+class SerieVideeDeSonDernierFichier(unittest.TestCase):
+    """Supprimer la dernière saison qui portait des fichiers laissait le dossier
+    de la série derrière elle avec son seul tvshow.nfo : invisible des trois
+    vues (un sidecar sous un titre que Sonarr connaît ENCORE est couvert, cf.
+    _arr_covered_paths), mais bien affiché par Jellyfin comme une série sans le
+    moindre épisode — 2 dossiers dans ce cas le 2026-09-23. La série, elle,
+    reste suivie : c'est tout l'intérêt du mode sans purge."""
+
+    def setUp(self):
+        for name in ("arr_api", "find_series_torrents",
+                     "unmonitor_seasons", "delete_episode_files"):
+            self.addCleanup(setattr, core, name, getattr(core, name))
+        core.find_series_torrents = lambda *a, **k: []
+        core.unmonitor_seasons = lambda *a, **k: True
+        # Bouchon fidèle sur UN point qui compte ici : c'est Sonarr qui retire
+        # ses hardlinks library/. Sans ça le .mkv resterait sur le disque et le
+        # test vérifierait un élagage qui n'a aucune raison d'aboutir.
+        core.delete_episode_files = self._fake_delete
+        self.root = Path(_SANDBOX, "library", "anime", "Videe")
+        self.e01 = touch(self.root / "Season 01" / "S01E01.mkv", b"aaaa")
+        self.nfo = touch(self.root / "tvshow.nfo", b"nn")
+        self.series = {"id": 9, "title": "Videe", "path": str(self.root),
+                       "seasons": [{"seasonNumber": 1, "monitored": True},
+                                   {"seasonNumber": 2, "monitored": True}]}
+        self.files = [{"id": 91, "seasonNumber": 1, "path": self.e01, "size": 4}]
+        core.arr_api = lambda *a, **k: self.files
+        self.state = {"all_torrents": [], "library_index": {}, "cross_seed_child_ids": set()}
+
+    def _fake_delete(self, file_ids):
+        for f in self.files:
+            if f["id"] in file_ids and os.path.exists(f["path"]):
+                os.remove(f["path"])
+        return True
+
+    def test_le_dossier_de_la_serie_est_annonce_puis_emporte(self):
+        plan = core.plan_season_deletion(self.state, self.series, [1])
+        self.assertTrue(plan["series_emptied"])
+        self.assertEqual(plan["series_leftover_paths"], [self.nfo])
+        self.assertIn((self.nfo, 2), plan["orphans"],
+                      "ce qui part doit être compté dans la taille annoncée par la modale")
+        core.execute_delete_seasons(None, plan, [], {}, set(), set())
+        self.assertFalse(self.root.exists(), "le dossier de la série doit disparaître")
+
+    def test_saison_restante_garde_le_dossier(self):
+        """Une seule saison choisie sur deux : le dossier porte encore des
+        fichiers, y toucher serait supprimer la saison gardée."""
+        self.files.append({"id": 92, "seasonNumber": 2, "size": 4,
+                           "path": touch(self.root / "Season 02" / "S02E01.mkv", b"bbbb")})
+        plan = core.plan_season_deletion(self.state, self.series, [1])
+        self.assertFalse(plan["series_emptied"])
+        self.assertEqual(plan["series_leftover_paths"], [])
+        core.execute_delete_seasons(None, plan, [], {}, set(), set())
+        self.assertTrue(self.root.exists())
+        self.assertTrue(os.path.exists(self.nfo))
+
+    def test_video_orpheline_a_la_racine_n_est_pas_emportee(self):
+        """Une vidéo que Sonarr ne revendique pas est un ORPHELIN : la supprimer
+        est un choix humain (bouton « Orphelins library/ »), jamais un effet de
+        bord. Elle fait échouer le rmdir, et c'est le bon comportement."""
+        video = touch(self.root / "grab-jamais-importe.mkv", b"vvvv")
+        plan = core.plan_season_deletion(self.state, self.series, [1])
+        self.assertNotIn(video, plan["series_leftover_paths"])
+        core.execute_delete_seasons(None, plan, [], {}, set(), set())
+        self.assertTrue(os.path.exists(video), "la vidéo orpheline doit survivre")
+        self.assertTrue(self.root.exists())
+
+    def test_saison_sans_fichier_n_efface_rien(self):
+        """Saison 2 connue de Sonarr mais jamais téléchargée : rien n'a été
+        supprimé, donc il n'y a rien à élaguer — le tvshow.nfo reste."""
+        plan = core.plan_season_deletion(self.state, self.series, [2])
+        self.assertFalse(plan["series_emptied"])
+        core.execute_delete_seasons(None, plan, [], {}, set(), set())
+        self.assertTrue(os.path.exists(self.nfo))
 
 
 class UnmonitorSeasons(unittest.TestCase):

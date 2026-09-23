@@ -336,6 +336,33 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   seulement** : depuis le metadata writer une saison porte un `.nfo` par
   épisode (21 pour One Piece S23), les lister noierait le seul cas qui mérite
   d'être lu — une vidéo que Sonarr ne revendique pas.
+  **Série vidée de son dernier fichier : son dossier part aussi**
+  (`series_emptied` / `series_leftover_paths` dans le plan, 2026-09-23). Sans
+  ça `prune_empty_dirs_from` butait sur le `tvshow.nfo` du metadata writer et
+  laissait un dossier que **personne ne voit** — les trois vues partent des
+  torrents ou des objets arr, et le bouton « Orphelins `library/` » tient un
+  sidecar pour *couvert* tant que Sonarr connaît la série — mais que
+  **Jellyfin, lui, affiche comme une série sans le moindre épisode** (2
+  dossiers dans ce cas, dont *Daemons of the Shadow Realm*, encore `continuing`
+  avec sa S02 suivie). La série reste suivie dans Sonarr : le mode sans purge
+  ne change pas de promesse, seul le dossier disparaît, et Sonarr le recrée au
+  prochain import. **Dépend de `createEmptySeriesFolders: false`** côté Sonarr
+  (Media Management) : à `true`, son rescan recrée le dossier et le metadata
+  writer son `.nfo` dans l'heure, ce nettoyage ne tiendrait pas.
+  Deux bornes voulues : rien n'est emporté si la saison choisie **n'avait aucun
+  fichier** (on n'efface pas du disque quand on n'a rien supprimé), et **les
+  sidecars seulement** — une vidéo que Sonarr ne revendique pas reste un
+  orphelin, dont la suppression est un choix humain (bouton « Orphelins
+  `library/` »), pas un effet de bord. Elle fait alors échouer le `rmdir`, ce
+  qui est le comportement voulu. La liste est **calculée dans le plan et
+  rejouée telle quelle** à l'exécution, comme les `season_dirs` et pour la même
+  raison : la recalculer après coup emporterait ce qui n'a jamais été annoncé
+  à l'écran.
+  Corollaire sur `season_directories()` : sa garde « épisodes à plat, on ne
+  balaie rien » protège les **autres** saisons — quand la série est entièrement
+  vidée il n'y en a plus, et le dossier est balayé (le test qui verrouillait
+  cette garde a été réécrit sur deux saisons à plat, son scénario à une seule
+  saison décrivant désormais l'autre cas).
   **Rien de ce qui est supprimé ne vient du client** : le POST ne reçoit que
   des numéros de saison (entiers), le plan est recalculé côté serveur, et une
   saison inconnue de Sonarr est **refusée** (`ValueError` → 400 JSON sur
