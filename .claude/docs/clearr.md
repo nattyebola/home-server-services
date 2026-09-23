@@ -414,8 +414,8 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   séparément = 2 séries pour Jellyfin) là où la résolution par id refuse — à
   raison — de trancher.
   `core.resolve_media_path()` ne suppose **aucun préfixe commun** (Kodi voit
-  `/grosDur/...`, clearr `/data_root/...`, un client distant verrait un
-  partage réseau) : il cherche le plus long suffixe de composants qui existe
+  le chemin hôte `${DATA_ROOT}/...`, clearr `/data_root/...`, un client
+  distant verrait un partage réseau) : il cherche le plus long suffixe de composants qui existe
   réellement sous `completed/` ou `library/`, **2 composants minimum** — sans
   ce plancher, un chemin finissant par `film` résoudrait sur toute la
   catégorie. Introuvable ou ambigu = rien de supprimé.

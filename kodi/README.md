@@ -69,8 +69,8 @@ Deux garde-fous :
   supprimer ses fichiers sans retirer son entrée le ferait simplement
   re-télécharger. L'addon renvoie alors vers l'interface web de clearr.
 - **Le préfixe du chemin n'est pas supposé identique** des deux côtés (Kodi voit
-  `/grosDur/…`, clearr voit `/data_root/…`, un autre client verrait un partage
-  réseau) : clearr cherche le plus long suffixe de composants qui existe
+  le chemin hôte `${DATA_ROOT}/…`, clearr voit `/data_root/…`, un autre client
+  verrait un partage réseau) : clearr cherche le plus long suffixe de composants qui existe
   réellement sous une racine connue, deux composants minimum. Un chemin
   introuvable ou ambigu ne supprime rien.
 
