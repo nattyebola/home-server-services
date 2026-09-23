@@ -54,6 +54,13 @@ TRANSMISSION_DATA_ROOT = os.path.join(DATA_ROOT, ".transmission", "data")
 # récupérés à la main, hors de tout suivi Sonarr/Radarr — voir la section
 # "Titres hors Sonarr/Radarr" plus bas.
 COMPLETED_ROOT = os.path.join(TRANSMISSION_DATA_ROOT, "completed")
+# Bibliothèque BD/comics/mangas de komga/ : la catégorie `bd` du client de
+# téléchargement de Prowlarr y dépose les grabs des catégories newznab Books.
+# Komga lit ces fichiers TELS QUELS, il n'y a aucun hardlink vers library/ —
+# voir .claude/docs/komga.md. C'est ce qui donne sa sémantique propre à
+# l'onglet BD : supprimer le torrent supprime la BD, il n'existe pas de
+# second exemplaire.
+BD_ROOT = os.path.join(COMPLETED_ROOT, "bd")
 LOG_PATH = os.path.join(DATA_ROOT, ".clearr.log")
 
 # Fichiers que Sonarr/Radarr écrivent À CÔTÉ d'un média qu'ils gèrent
@@ -945,6 +952,23 @@ def bulk_delete_torrents(client, matched, all_torrents, linked_ids, missing_ids,
     return all_torrents, freed, deleted, failed, failed_entries
 
 
+def is_bd_torrent(torrent):
+    """Le torrent est-il déposé sous completed/bd (bibliothèque komga) ?
+
+    Sur le `downloadDir` et pas sur les fichiers : c'est la catégorie du client
+    de téléchargement qui décide du dossier, donc l'information est portée par
+    le torrent lui-même et reste juste même quand aucun fichier n'existe plus
+    sur disque (cas ABS, où torrent_host_files() ne rendrait rien).
+    """
+    try:
+        host_dir = container_path_to_host(torrent.get("downloadDir") or "")
+    except ValueError:
+        # Torrent déplacé à la main hors de /data — même traitement que dans
+        # torrent_host_files() : on l'ignore plutôt que de lever.
+        return False
+    return host_dir == BD_ROOT or host_dir.startswith(BD_ROOT + os.sep)
+
+
 def is_seeding(torrent):
     return torrent.get("status") in SEEDING_STATUSES
 
@@ -1759,6 +1783,15 @@ FILMS_SORT_FIELDS = [
     ("TAILLE", lambda m: m.get("sizeOnDisk", 0)),
     ("TITRE", lambda m: m["title"].lower()),
 ]
+
+# Colonnes de l'onglet BD : SORT_FIELDS sans BIB. Ce marqueur signale un
+# fichier library/ hardlinké au torrent ; sous completed/bd il n'y en a jamais,
+# donc la colonne serait vide en permanence — et vide y voudrait dire tout
+# autre chose qu'ailleurs, où l'absence de BIB signale un grab jamais importé.
+# Une colonne toujours vide qui ment sur sa propre sémantique vaut moins que
+# pas de colonne. Dérivé de SORT_FIELDS plutôt que recopié : un champ ajouté
+# là-bas arrive ici tout seul.
+BD_SORT_FIELDS = [f for f in SORT_FIELDS if f[0] != "BIB"]
 
 VIEWS = ["torrents", "series", "films"]
 VIEW_LABELS = {"torrents": "Torrents", "series": "Séries", "films": "Films"}

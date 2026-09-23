@@ -12,6 +12,17 @@
        data-get="/tab/torrents" data-target="#tab-content">Torrents</a>
   </li>
   <li class="nav-item" role="presentation">
+    {# BD = les torrents déposés sous completed/bd, la bibliothèque de komga/.
+       Même source et même gabarit que Torrents, ce n'est qu'un filtre — voir
+       webapp.TORRENT_TABS. Sémantique de suppression DIFFÉRENTE des autres
+       onglets : sans hardlink vers library/, supprimer le torrent supprime la
+       BD elle-même. #}
+    <a href="#" role="tab" class="nav-link {{ 'active' if active == 'bd' else '' }}"
+       aria-selected="{{ 'true' if active == 'bd' else 'false' }}"
+       {% if active == 'bd' %}aria-current="page"{% endif %}
+       data-get="/tab/bd" data-target="#tab-content">BD</a>
+  </li>
+  <li class="nav-item" role="presentation">
     <a href="#" role="tab" class="nav-link {{ 'active' if active == 'series' else '' }}"
        aria-selected="{{ 'true' if active == 'series' else 'false' }}"
        {% if active == 'series' %}aria-current="page"{% endif %}

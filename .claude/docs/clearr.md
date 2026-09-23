@@ -69,7 +69,7 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   pour Séries/Animés/Films. Sans ça le même bloc serait écrit deux ou trois fois.
   `core.find_series_by_id`/`find_movie_by_id` plutôt que des `next((...))`
   recopiés dans les routes.
-- **4 onglets web : Torrents / Séries / Animés / Films** (2026-09-09).
+- **5 onglets web : Torrents / BD / Séries / Animés / Films** (BD ajouté le 2026-09-23).
   Séries et Animés sont **deux vues filtrées d'une seule liste Sonarr** :
   même `fetch`, même gabarit `series_tab.html`, mêmes routes de suppression
   `/series/{id}/...` — seuls le prédicat `select` de la spec `ARR_TABS` et les
@@ -93,6 +93,40 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   nu, sur une valeur inventée).
   **La TUI n'a pas bougé** (`core.VIEWS` reste à 3), comme les autres ajouts
   récents.
+- **Onglet BD** (2026-09-23) : les torrents déposés sous `completed/bd`, la
+  bibliothèque de `komga/`. Deuxième vue de la liste Transmission, pas une
+  source nouvelle — `TORRENT_TABS` joue pour Torrents/BD le rôle que `ARR_TABS`
+  joue pour Séries/Animés : même `load_full_state()`, même `torrents_tab.html`,
+  mêmes routes de suppression, seuls le prédicat de sélection
+  (`core.is_bd_torrent`) et la liste de colonnes changent.
+  **Le rattachement se fait sur `downloadDir`, pas sur les fichiers** : c'est la
+  catégorie du client de téléchargement Prowlarr qui décide du dossier, donc
+  l'information est portée par le torrent et reste juste même quand plus aucun
+  fichier n'existe sur disque — un torrent ABS resterait sinon invisible de
+  l'onglet censé le montrer. La comparaison inclut le séparateur
+  (`BD_ROOT + os.sep`) : un `startswith` nu ferait passer `completed/bdrip`
+  pour de la BD, et cet onglet promet « pas d'autre exemplaire » — promesse
+  fausse pour un torrent que Sonarr a importé par hardlink. Verrouillé par un
+  test.
+  **Colonne BIB retirée** (`core.BD_SORT_FIELDS`, dérivé de `SORT_FIELDS` et
+  non recopié) : sous `completed/bd` il n'y a jamais de hardlink `library/`,
+  la colonne serait vide en permanence — et vide y voudrait dire autre chose
+  qu'ailleurs, où l'absence de BIB signale un grab jamais importé.
+  **Boutons « Purger les ABS » et « Orphelins library/ » masqués** : tous deux
+  agissent sur l'ensemble des torrents ou sur tout `library/`, pas sur la
+  sélection de l'onglet — les afficher promettrait une portée qu'ils n'ont pas.
+  `group_count` est en revanche recompté sur les groupes **rendus**, sinon
+  l'onglet annoncerait les groupes cross-seed des autres.
+  **`is_bd` de la modale de confirmation vient du TORRENT, pas de l'onglet**
+  (corrigé avant livraison) : ce que la suppression détruit ne dépend pas de la
+  vue d'où on a cliqué, et c'est justement depuis l'onglet Torrents — qui
+  mélange BD et médias hardlinkés — que l'avertissement manque le plus.
+  L'onglet, lui, continue de voyager par `&tab=` + champ caché, pour rerendre
+  la bonne vue après suppression (même mécanique que `confirm_series.html`).
+  Le faux avertissement « Aucun fichier bibliothèque correspondant » est masqué
+  pour une BD : l'absence de correspondance y est la normale, l'annoncer
+  ferait croire à un problème à chaque suppression.
+  **La TUI n'a pas bougé**, comme les autres ajouts récents.
 - **Erreur réseau rendue en bandeau lisible**
   (`@app.exception_handler(RuntimeError)`) plutôt qu'un 500 brut — la TUI
   avait déjà ce filet dans `run()`, le web non (chaque route peut lever

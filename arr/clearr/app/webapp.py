@@ -24,7 +24,7 @@ templates = Jinja2Templates(directory=os.path.join(APP_DIR, "templates"))
 app = FastAPI(title="clearr")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-DEFAULT_SORT = {"torrents": "AGE", "series": "TITRE", "animes": "TITRE", "films": "TITRE"}
+DEFAULT_SORT = {"torrents": "AGE", "bd": "AGE", "series": "TITRE", "animes": "TITRE", "films": "TITRE"}
 
 
 def _compute_asset_version():
@@ -200,15 +200,38 @@ def query_string(sort, reverse, filter_str):
 
 # --- rendu des 3 onglets ---
 
-def render_torrents_tab(sort, reverse, filter_str, message=None, message_kind="success"):
+# Onglets rendus par render_torrents_tab() : même source (Transmission), même
+# gabarit, mêmes routes de suppression — seuls le sous-ensemble de torrents et
+# les colonnes changent. Même logique que ARR_TABS pour Séries/Animés : deux
+# vues d'une liste, pas deux gabarits.
+TORRENT_TABS = {
+    "torrents": {"select": None, "fields": core.SORT_FIELDS},
+    "bd": {"select": core.is_bd_torrent, "fields": core.BD_SORT_FIELDS},
+}
+
+
+def torrent_tab_name(tab, fallback="torrents"):
+    """Comme arr_tab_name() : le nom vient du client (paramètre d'URL ou champ
+    caché de la modale de confirmation), un TORRENT_TABS[tab] nu lèverait donc
+    un KeyError — soit un 500 nu — sur une valeur inventée."""
+    return tab if tab in TORRENT_TABS else fallback
+
+
+def render_torrents_tab(sort, reverse, filter_str, message=None, message_kind="success", tab="torrents"):
+    tab = torrent_tab_name(tab)
+    spec = TORRENT_TABS[tab]
     state = core.load_full_state()
     all_torrents = state["all_torrents"]
+    if spec["select"]:
+        all_torrents = [t for t in all_torrents if spec["select"](t)]
     cross_seed_groups = state["cross_seed_groups"]
     cross_seed_child_ids = state["cross_seed_child_ids"]
-    linked_ids = state["linked_ids"]
-    missing_ids = state["missing_ids"]
+    selected_ids = {t["id"] for t in all_torrents}
+    linked_ids = state["linked_ids"] & selected_ids
+    missing_ids = state["missing_ids"] & selected_ids
 
-    core.sort_items(all_torrents, core.SORT_FIELDS, field_index(core.SORT_FIELDS, sort), reverse)
+    fields = spec["fields"]
+    core.sort_items(all_torrents, fields, field_index(fields, sort), reverse)
 
     meta_index = core.build_arr_meta_index()
 
@@ -233,13 +256,16 @@ def render_torrents_tab(sort, reverse, filter_str, message=None, message_kind="s
 
     return render(
         "torrents_tab.html",
-        active="torrents",  # consommé par _tabs.html ; sans lui aucun onglet n'est marqué
+        active=tab,  # consommé par _tabs.html ; sans lui aucun onglet n'est marqué
+        tab=tab, is_bd=(tab == "bd"),
         sort=sort, reverse=reverse, filter_str=filter_str,
         qs=query_string(sort, reverse, filter_str),
-        columns=build_columns("torrents", core.SORT_FIELDS, sort, reverse, filter_str),
+        columns=build_columns(tab, fields, sort, reverse, filter_str),
         groups=groups,
         total=len(all_torrents), linked_count=len(linked_ids), missing_count=len(missing_ids),
-        group_count=len(cross_seed_groups),
+        # Compté sur les groupes RENDUS et non sur cross_seed_groups entier :
+        # celui-ci est global, il annoncerait les groupes des autres onglets.
+        group_count=sum(1 for g in groups if g["children"]),
         message=message, message_kind=message_kind,
     )
 
@@ -347,6 +373,11 @@ def index():
 @app.get("/tab/torrents", response_class=HTMLResponse)
 def tab_torrents(sort: str = DEFAULT_SORT["torrents"], reverse: str = "0", filter: str = ""):
     return HTMLResponse(render_torrents_tab(sort, reverse == "1", filter))
+
+
+@app.get("/tab/bd", response_class=HTMLResponse)
+def tab_bd(sort: str = DEFAULT_SORT["bd"], reverse: str = "0", filter: str = ""):
+    return HTMLResponse(render_torrents_tab(sort, reverse == "1", filter, tab="bd"))
 
 
 @app.get("/tab/series", response_class=HTMLResponse)
@@ -715,7 +746,7 @@ def film_details(mid: int):
     return HTMLResponse(render("details.html", **_film_details_context(movie)))
 
 
-def _torrent_confirm_context(torrent, state, sort, reverse, filter_str, post_url):
+def _torrent_confirm_context(torrent, state, sort, reverse, filter_str, post_url, tab="torrents"):
     host_files = core.torrent_host_files(torrent)
     lib_matches = core.find_library_matches(host_files, state["library_index"])
     arr_plan = core.plan_arr_actions(lib_matches)
@@ -735,28 +766,43 @@ def _torrent_confirm_context(torrent, state, sort, reverse, filter_str, post_url
         # physiques (repéré le 2026-08-01, cf. core.apply_deletion).
         total_size=core.human_size(sum(s for _, s in host_files)),
         sort=sort, reverse=reverse, filter_str=filter_str,
+        # L'onglet d'origine voyage jusqu'à la modale (même raison que pour
+        # confirm_series.html) : les deux onglets postent sur la même route de
+        # suppression, sans lui une suppression depuis BD rerendrait l'onglet
+        # Torrents.
+        tab=tab,
+        # is_bd vient du TORRENT, pas de l'onglet : ce que la suppression
+        # détruit ne dépend pas de la vue d'où on a cliqué. Sur `tab == "bd"`,
+        # supprimer la même BD depuis l'onglet Torrents n'aurait averti de
+        # rien — or c'est là que l'avertissement manque le plus, la vue
+        # Torrents mélangeant BD et médias hardlinkés.
+        is_bd=core.is_bd_torrent(torrent),
         post_url=post_url, target="#tab-content",
     )
 
 
 @app.get("/torrents/{tid}/confirm", response_class=HTMLResponse)
-def torrent_confirm(tid: int, sort: str = DEFAULT_SORT["torrents"], reverse: str = "0", filter: str = ""):
+def torrent_confirm(tid: int, sort: str = DEFAULT_SORT["torrents"], reverse: str = "0", filter: str = "",
+                     tab: str = "torrents"):
     state = core.load_full_state()
     torrent = next((t for t in state["all_torrents"] if t["id"] == tid), None)
     if not torrent:
         return HTMLResponse("<p>Torrent introuvable (déjà supprimé ?). Fermez et rafraîchissez.</p>")
-    ctx = _torrent_confirm_context(torrent, state, sort, reverse == "1", filter, f"/torrents/{tid}/delete")
+    ctx = _torrent_confirm_context(torrent, state, sort, reverse == "1", filter, f"/torrents/{tid}/delete",
+                                    tab=torrent_tab_name(tab))
     return HTMLResponse(render("confirm_torrent.html", **ctx))
 
 
 @app.post("/torrents/{tid}/delete", response_class=HTMLResponse)
 def torrent_delete(tid: int, sort: str = Form(DEFAULT_SORT["torrents"]), reverse: str = Form("0"),
-                    filter: str = Form("")):
+                    filter: str = Form(""), tab: str = Form("torrents")):
+    tab = torrent_tab_name(tab)
     state = core.load_full_state()
     torrent = next((t for t in state["all_torrents"] if t["id"] == tid), None)
     if not torrent:
         return HTMLResponse(render_torrents_tab(sort, reverse == "1", filter,
-                                                  message="Torrent déjà supprimé.", message_kind="warning"))
+                                                  message="Torrent déjà supprimé.", message_kind="warning",
+                                                  tab=tab))
     host_files = core.torrent_host_files(torrent)
     lib_matches = core.find_library_matches(host_files, state["library_index"])
     arr_plan = core.plan_arr_actions(lib_matches)
@@ -769,7 +815,8 @@ def torrent_delete(tid: int, sort: str = Form(DEFAULT_SORT["torrents"]), reverse
     except Exception as e:
         core.logger.error("échec de la suppression de %r : %s", torrent["name"], e)
         message, kind = f"ÉCHEC (voir {core.LOG_PATH}) : {e}", "danger"
-    return HTMLResponse(render_torrents_tab(sort, reverse == "1", filter, message=message, message_kind=kind))
+    return HTMLResponse(render_torrents_tab(sort, reverse == "1", filter, message=message, message_kind=kind,
+                                              tab=tab))
 
 
 # --- suppression d'un titre entier, partagée entre les routes web (vues

@@ -293,6 +293,55 @@ class PlanSonarrUnmonitor(unittest.TestCase):
         self.assertEqual(plan, [], "aucun croisement entre Foo et Foo 2")
 
 
+class IsBdTorrent(unittest.TestCase):
+    """Sélection de l'onglet BD (webapp.TORRENT_TABS).
+
+    Le défaut visé est la frontière de préfixe : un `startswith(BD_ROOT)` nu
+    ferait passer `completed/bdsomething` pour de la BD. Ça compte plus qu'un
+    simple bug d'affichage — la modale de suppression de cet onglet annonce
+    « il n'existe pas d'autre exemplaire », promesse fausse pour un torrent
+    que Sonarr a importé par hardlink. Même famille que le plancher à deux
+    composants de resolve_media_path().
+    """
+
+    def torrent(self, download_dir):
+        return {"downloadDir": download_dir}
+
+    def test_dossier_bd_exact(self):
+        self.assertTrue(core.is_bd_torrent(self.torrent("/data/completed/bd")))
+
+    def test_sous_dossier_de_bd(self):
+        self.assertTrue(core.is_bd_torrent(self.torrent("/data/completed/bd/Sillage")))
+
+    def test_prefixe_qui_ne_doit_pas_matcher(self):
+        # Le cas que ce test existe pour attraper.
+        self.assertFalse(core.is_bd_torrent(self.torrent("/data/completed/bdrip")))
+        self.assertFalse(core.is_bd_torrent(self.torrent("/data/completed/bd-old")))
+
+    def test_autres_categories(self):
+        for d in ("/data/completed/sonarr", "/data/completed/radarr",
+                  "/data/completed", "/data/incomplete/bd"):
+            self.assertFalse(core.is_bd_torrent(self.torrent(d)), d)
+
+    def test_hors_data_ne_leve_pas(self):
+        # container_path_to_host() lève sur un chemin hors /data ; la sélection
+        # d'un onglet ne doit jamais faire tomber le rendu pour autant.
+        self.assertFalse(core.is_bd_torrent(self.torrent("/ailleurs/bd")))
+        self.assertFalse(core.is_bd_torrent({}))
+
+
+class BdSortFields(unittest.TestCase):
+    """BD_SORT_FIELDS est dérivé de SORT_FIELDS, pas recopié : un champ ajouté
+    à SORT_FIELDS doit arriver dans l'onglet BD tout seul, et seule la colonne
+    BIB doit manquer (elle est vide par construction sous completed/bd)."""
+
+    def test_seul_bib_est_retire(self):
+        noms = [n for n, _ in core.SORT_FIELDS]
+        noms_bd = [n for n, _ in core.BD_SORT_FIELDS]
+        self.assertEqual(noms_bd, [n for n in noms if n != "BIB"])
+        self.assertNotIn("BIB", noms_bd)
+
+
 class BuildCrossSeedGroups(unittest.TestCase):
     """Le parent choisi détermine ce que la cascade supprime : une inversion
     supprimerait le téléchargement d'origine en croyant nettoyer un cross-seed."""

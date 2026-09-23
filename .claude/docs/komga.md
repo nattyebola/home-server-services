@@ -71,18 +71,22 @@ réintroduire la traduction de chemin que clearr a justement supprimée (cf.
 Et c'est le **sous-dossier** qui est monté, pas `${DATA_ROOT}` entier : Komga
 n'a aucune raison de voir Nextcloud ou `library/`.
 
-## Pour une future vue BD dans clearr
+## L'onglet BD de clearr
 
-Décidé le 2026-09-22 : la vue **liste simplement les torrents dont le
-`downloadDir` est sous `completed/bd`**, sans interroger Komga. Un filtre de
-préfixe, rien de plus. Ce choix supprime d'un coup la traduction de chemin, le
-besoin d'un compte admin Komga et le trou anti-traversal sur les jaquettes.
+**Livré le 2026-09-23** — détail d'implémentation dans
+`.claude/docs/clearr.md`. La vue **liste les torrents dont le `downloadDir`
+est sous `completed/bd`**, sans jamais interroger Komga : un filtre, rien de
+plus. Ce choix supprime d'un coup la traduction de chemin, le besoin d'un
+compte admin Komga et le trou anti-traversal sur les jaquettes.
 
-Deux choses à savoir quand même :
+Ce qu'il faut retenir côté komga :
 
-- **`_linked` sera toujours `False`** sur ces torrents (aucun hardlink
-  `library/` n'existe). Le marqueur BIB doit être **masqué** dans cet onglet :
-  ailleurs son absence signifie « jamais importé », ici elle ne signifie rien.
+- **`_linked` est toujours `False`** sur ces torrents (aucun hardlink
+  `library/` n'existe), d'où la colonne BIB retirée de cet onglet : ailleurs
+  son absence signifie « jamais importé », ici elle ne signifierait rien.
+- **La modale de suppression dit explicitement qu'il n'y a pas d'autre
+  exemplaire**, et elle le dit d'après le torrent et non d'après l'onglet —
+  donc aussi depuis la vue Torrents.
 - **Si un jour la vue veut rattacher un torrent à une entrée Komga**, c'est
   `BookDto.url` (chemin exact) et `SeriesDto.url` (préfixe de dossier), même
   structure que `build_arr_meta_index()`. Mais alors **le compte Komga doit
