@@ -426,6 +426,7 @@ et leurs arguments directement depuis le `Makefile`.
 | `make config STACK=<nom>` | affiche la config résolue (debug des `${VAR}`) |
 | `make logs STACK=<nom>` | logs en direct |
 | `make update STACK=<nom>` | pull + rebuild + recrée (+ maintenance `occ` si `nextcloud`) |
+| `make rebuild STACK=<nom> SERVICE=<nom>` | recrée **un seul** service, en reconstruisant son image s'il a un `build:` — **sans pull**, donc sans emporter les autres images de la stack en `:latest`. C'est le chemin pour reprendre `arr/clearr`, `nextcloud/app` ou `nextcloud/web` après un changement de code |
 | `make update-all` | `update` sur nextcloud, vpn, jellyfin, arr, seerr, komga, traefik — **seulement les stacks qui ont au moins un conteneur démarré**, les autres sont listées comme sautées (continue même si un stack échoue, résumé + prune images + refresh dashboard à la fin) |
 | `make backup` | sauvegarde restic (aussi via cron) |
 | `make restore SNAPSHOT=<id\|latest>` | restaure un snapshot dans un dossier à part et **affiche** les étapes à faire à la main — n'écrit jamais sur le live |

@@ -13,7 +13,7 @@ STACKS := traefik jellyfin nextcloud vpn arr seerr komga
 # reflète donc l'état d'après redémarrage.
 UPDATE_STACKS := nextcloud vpn jellyfin arr seerr komga traefik
 
-.PHONY: help require-env-shared network up down config logs update update-all backup restore cron-install dashboard-refresh clearr arr-overrides search-missing mark-finales recyclarr-sync kodi-install api-keys provision switch-lan-only-middleware test
+.PHONY: help require-env-shared network up down config logs update rebuild update-all backup restore cron-install dashboard-refresh clearr arr-overrides search-missing mark-finales recyclarr-sync kodi-install api-keys provision switch-lan-only-middleware test
 
 # `make` sans argument affiche l'aide plutôt que de lancer la première cible
 # (c'était `network`, qui ne dit rien de ce que le reste sait faire).
@@ -31,7 +31,7 @@ help: ## — liste les cibles disponibles et leurs arguments
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[1m%-28s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "  STACK  : $(STACKS)"
-	@echo "  autres : SNAPSHOT=<id|latest> (restore), KODI_HOME=<chemin> (kodi-install)"
+	@echo "  autres : SERVICE=<nom> (rebuild), SNAPSHOT=<id|latest> (restore), KODI_HOME=<chemin> (kodi-install)"
 
 # Kodi profile of the user running make (a media client, not a stack) — see the
 # kodi-install target and kodi/README.md. Overridable for a Kodi running under
@@ -182,6 +182,42 @@ update: require-env-shared network ## STACK=<nom> — pull/rebuild puis recrée 
 		$(compose) exec app ./occ maintenance:mimetype:update-js && \
 		$(compose) exec app ./occ maintenance:mimetype:update-db; \
 	fi
+
+# Reconstruire UN service sans toucher au reste de sa stack. Le besoin vient
+# des services `build:` du dépôt (arr/clearr, nextcloud/app, nextcloud/web) :
+# leur code est cuit dans l'image, donc `make up` ne le rafraîchit pas, et
+# `make update` — le seul chemin qui rebuildait — pulle aussi toutes les autres
+# images de la stack. Reconstruire clearr après un changement d'une ligne
+# emportait donc au passage Prowlarr, Sonarr, Radarr et recyclarr en :latest,
+# soit du changement non demandé au milieu d'une modif ciblée (2026-09-23).
+#
+# Pas de `pull` ici, c'est tout l'intérêt : on ne veut QUE reconstruire depuis
+# les sources locales. Et pas de `--remove-orphans` (contrairement à `update`)
+# — sur un `up` d'un seul service, il porterait sur toute la stack.
+#
+# Suppose la stack déjà démarrée par `make up` au moins une fois : ce sont ses
+# recettes qui créent les dossiers et fichiers que certains services attendent.
+rebuild: require-env-shared network ## STACK=<nom> SERVICE=<nom> — recrée UN service (+ rebuild s'il a un build:), sans pull
+	@test -n "$(STACK)" || (echo "usage: make rebuild STACK=<$(STACKS)> SERVICE=<nom>" >&2 && exit 1)
+	@test -n "$(SERVICE)" || { \
+		echo "usage: make rebuild STACK=$(STACK) SERVICE=<nom>" >&2; \
+		echo "  services de $(STACK) : $$($(compose) --profile '*' config --services 2>/dev/null | sort | tr '\n' ' ')" >&2; \
+		exit 1; }
+	@# Sans ce test, un nom mal tapé donne un « no such service » sec qui ne dit
+	@# pas quels noms existent — et ils ne se devinent pas (`db-next`, `web`...).
+	@$(compose) --profile '*' config --services 2>/dev/null | grep -qx "$(SERVICE)" || { \
+		echo "$(SERVICE) n'est pas un service de la stack $(STACK)." >&2; \
+		echo "  disponibles : $$($(compose) --profile '*' config --services 2>/dev/null | sort | tr '\n' ' ')" >&2; \
+		exit 1; }
+	@# `--profile '*'` partout : sans lui un service profilé (arr/recyclarr) est
+	@# invisible de `config --services`, donc refusé par le test ci-dessus alors
+	@# qu'il existe. Ça ne peut rien démarrer d'autre au passage, le service
+	@# étant toujours nommé explicitement — c'est `up` SANS cible qui ignore les
+	@# services profilés, pas `up <service>`.
+	@# `build` sur un service sans `build:` est un no-op silencieux, la cible
+	@# vaut donc aussi pour « juste recréer ce service-là ».
+	$(compose) --profile '*' build $(SERVICE)
+	$(compose) --profile '*' up -d $(SERVICE)
 
 # runs `update` for every stack that had update logic in the old ~/docker
 # script (nextcloud, vpn, jellyfin — traefik was never part of it, but can

@@ -24,7 +24,12 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   1er service du repo avec des dépendances Python tierces
   (`arr/clearr/requirements.txt`) et 2e avec un build custom après
   `nextcloud/app`/`web` (`build: ./clearr`, `python:3-slim`, tag flottant) —
-  `make update STACK=arr` doit donc aussi rebuilder.
+  le code étant cuit dans l'image, `make up STACK=arr` ne le rafraîchit pas.
+  **`make rebuild STACK=arr SERVICE=clearr`** (ajouté le 2026-09-23) est le
+  chemin normal : il reconstruit et recrée ce seul service, sans pull.
+  `make update STACK=arr` rebuilde aussi, mais pulle au passage toutes les
+  autres images de la stack en `:latest` — à réserver aux mises à jour
+  voulues, pas à un aller-retour de développement.
   Chaque requête recalcule tout (`core.load_full_state()`), **jamais de
   cache ni d'état en mémoire entre deux requêtes** — contrairement à la TUI
   qui ne recharge qu'au démarrage. Mesuré acceptable à l'échelle de cette
