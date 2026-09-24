@@ -83,7 +83,14 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   ".recover" > dump.sql`, réimporter dans un fichier neuf,
   `PRAGMA integrity_check`/`foreign_key_check`, `REINDEX; VACUUM;` — a
   fonctionné sans perte de données malgré la corruption. Si reset complet
-  malgré tout : repasser `IsStartupWizardCompleted` à `false`. Le dossier
-  `data/SQLiteBackups/` était vide au moment de l'incident — vérifier de temps
-  en temps qu'il se remplit réellement.
+  malgré tout : repasser `IsStartupWizardCompleted` à `false`.
+- **`data/SQLiteBackups/` de Jellyfin est vide par conception**, ce n'est pas
+  une sauvegarde périodique : Jellyfin y copie `jellyfin.db` juste avant une
+  migration de schéma et l'efface dès qu'elle réussit (`will attempt to backup
+  the file now` … `Attempt to cleanup JellyfinDb backup` dans les logs, vérifié
+  le 2026-09-24). Une copie n'y reste qu'après une migration ratée. Ne pas le
+  surveiller ni s'inquiéter de le voir vide. La sauvegarde native de Jellyfin
+  (`/Backup`) n'est volontairement pas utilisée : l'utilisateur ne veut pas de
+  sauvegardes en plus du backup restic, la seule copie de `jellyfin.db` est
+  donc celle, à chaud, du snapshot hebdo.
 
