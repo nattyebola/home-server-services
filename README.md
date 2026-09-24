@@ -59,7 +59,7 @@ Détail de chaque service, schémas et rationale des choix : voir
   dashboard (`scripts/*.py`).
 - [`restic`](https://restic.net/) pour les sauvegardes.
 - `logrotate` — le cron de l'étape 21 s'en sert pour tourner les journaux du
-  dépôt et l'access log Traefik. Lancé en tant qu'utilisateur avec son propre
+  dépôt, l'access log Traefik et le log de Transmission. Lancé en tant qu'utilisateur avec son propre
   fichier d'état, donc **sans root** et sans rien déposer dans
   `/etc/logrotate.d`.
 - (optionnel, recommandé) `fail2ban` sur l'hôte. Il ne fait pas partie de la

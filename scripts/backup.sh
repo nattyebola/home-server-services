@@ -139,7 +139,40 @@ done
 	env_files+=("$REPO_ROOT/nextcloud/news-updater/config.ini")
 echo "    gitignored config files included: ${#env_files[@]}"
 
+# Cache et logs à l'intérieur des arborescences sauvegardées ci-dessous — revus
+# un par un le 2026-09-24. Critère : rien qui manquerait à une restauration.
+# Le gain réel est surtout sur ce qui CHANGE chaque semaine (logs, aperçus) :
+# restic déduplique, un fichier figé ne coûte qu'une fois dans le dépôt.
+# Ajouter une exclusion ne perturbe pas `restic forget --group-by host`
+# (le groupement se fait sur les chemins, pas sur les exclusions).
+# Délibérément GARDÉS malgré l'apparence : le code Nextcloud (l'entrypoint
+# décide installation/mise à jour d'après version.php, et custom_apps/ porte
+# des apps posées à la main), les Backups/ des arr (seule copie cohérente de
+# leur base, restic lisant les .db à chaud), corbeille et versions Nextcloud
+# (données utilisateur).
+excludes=(
+	# Aperçus Nextcloud, régénérés à la demande — ~10 Gio avant une purge.
+	--exclude "$DATA_ROOT/.nextcloud/nexcloud/data/appdata_*/preview"
+	# Log applicatif et journal d'audit Nextcloud (acceptée : l'historique
+	# d'audit disparaît avec le disque).
+	--exclude "$DATA_ROOT/.nextcloud/nexcloud/data/nextcloud.log*"
+	--exclude "$DATA_ROOT/.nextcloud/nexcloud/data/audit.log*"
+	# Logs des arr (Servarr, recyclarr, cross-seed) — restent sur le disque.
+	--exclude "$DATA_ROOT/.arr/*/config/logs"
+	--exclude "$DATA_ROOT/.arr/*/config/logs.db*"
+	# Affiches des arr, retéléchargées au rafraîchissement suivant.
+	--exclude "$DATA_ROOT/.arr/*/config/MediaCover"
+	# Clone git des guides TRaSH, recloné à la synchro suivante.
+	--exclude "$DATA_ROOT/.arr/recyclarr/config/resources"
+	--exclude "$DATA_ROOT/.transmission/config/transmission-home/transmission.log*"
+	# Images téléchargées par Jellyfin (3,2 Gio). Accepté : un rafraîchissement
+	# complet des métadonnées après restauration, et perte des images choisies
+	# à la main. Les collections/playlists vivent dans data/, sauvegardé.
+	--exclude "$DATA_ROOT/.jellyfin/config/metadata"
+)
+
 restic backup \
+	"${excludes[@]}" \
 	"${env_files[@]}" \
 	"$DATA_ROOT/.nextcloud/nexcloud" \
 	"$DATA_ROOT/.jellyfin/config" \

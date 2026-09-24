@@ -42,6 +42,18 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   non sauvegardé. La boucle rend le prochain couvert par construction.
 - Délibérément **pas** sauvegardés : `library` (media, re-téléchargeable via
   arr), `.transmission/data`, `.jellyfin/cache` — énormes et jetables.
+- **Exclusions internes aux arborescences sauvegardées** (tableau `excludes`
+  de `backup.sh`, revu chemin par chemin avec l'utilisateur le 2026-09-24) :
+  aperçus Nextcloud (`appdata_*/preview`, ~10 Gio avant une purge qui a
+  divisé le snapshot du 20/09 par deux), `nextcloud.log*`/`audit.log*`, logs et
+  `MediaCover` des arr, `resources/` de recyclarr, `transmission.log`,
+  `metadata/` de Jellyfin (rafraîchissement complet accepté après
+  restauration). **Gardés exprès**, ne pas les proposer à nouveau : le code
+  Nextcloud (l'entrypoint arbitre install/upgrade sur `version.php`,
+  `custom_apps/` porte la beta de News), les `Backups/` des arr (seule copie
+  cohérente de leur base, restic lit les `.db` à chaud), corbeille et
+  versions Nextcloud. Critère de tri : ce qui change chaque semaine coûte,
+  le reste est dédupliqué et ne coûte qu'une fois.
 - Résilience visée : perte du disque `DATA_ROOT` → restauration depuis
   `sauvegarde/` (sur un disque différent). Perte de celui-ci → seul
   l'infra-as-code est récupérable depuis GitHub, la sauvegarde restic est

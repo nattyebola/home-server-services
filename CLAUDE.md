@@ -360,7 +360,7 @@ valeur. Ne pas y écrire `$${DOMAIN}` ni d'autre échappement make : l'aide est
 produite par un `grep` sur le fichier brut, le texte s'affiche littéralement.
 
 **Rotation des logs** : `scripts/logrotate.conf` couvre les logs de cron du
-repo et l'access log Traefik, lancé par cron **sans root** avec son propre
+repo, l'access log Traefik et `transmission.log`, lancé par cron **sans root** avec son propre
 fichier d'état sous `DATA_ROOT` (le logrotate système n'a pas à connaître ce
 checkout). Il pointe la config **rendue** sous `DATA_ROOT`, pas le fichier du
 repo : logrotate n'expand aucune variable, ses chemins doivent être littéraux,
