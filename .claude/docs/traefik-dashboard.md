@@ -20,6 +20,16 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
     (serveur perso, aucun service ne doit être indexé ni appris par un
     crawler d'entraînement IA), `X-Frame-Options: DENY`,
     `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
+    **Seule exception : le routeur `nextcloud`, qui n'a que `hsts@docker`**
+    (2026-09-24). Ces valeurs écrasaient celles de `nextcloud/web/nginx.conf`,
+    et le contrôle de sécurité de Nextcloud (`SecurityHeaders.php`) compare
+    en égalité stricte : `noindex,nofollow` (le `noarchive` en plus suffit à
+    échouer) et `sameorigin` (`DENY` casse les iframes same-origin de
+    certaines apps). Les en-têtes viennent donc du nginx.conf officiel. Piège
+    nginx associé : un `add_header` dans une `location` annule tous ceux du
+    bloc `server`, d'où leur répétition dans les deux `location` des assets
+    statiques — sinon js/css partent sans aucun en-tête de sécurité. Ne pas
+    remettre `security-headers@docker` sur Nextcloud.
   - `rate-limit` : `average=50`, `burst=100` par IP, sur `jellyfin` et
     `seerr` seulement (Nextcloud a son propre anti-bruteforce, les arr et
     transmission sont LAN-only). Limite tout le routeur, pas seulement le
