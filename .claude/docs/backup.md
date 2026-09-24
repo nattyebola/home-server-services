@@ -45,7 +45,10 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
 - **Exclusions internes aux arborescences sauvegardées** (tableau `excludes`
   de `backup.sh`, revu chemin par chemin avec l'utilisateur le 2026-09-24) :
   aperçus Nextcloud (`appdata_*/preview`, ~10 Gio avant une purge qui a
-  divisé le snapshot du 20/09 par deux), `nextcloud.log*`/`audit.log*`, logs et
+  divisé le snapshot du 20/09 par deux), `nextcloud.log*`/`audit.log*` (l'app
+  `admin_audit` est d'ailleurs désactivée depuis le 2026-09-24 : elle suit le
+  `loglevel` global, à 2, et jetait donc ses événements INFO depuis juin 2024 —
+  ne pas la réactiver sans un `log.condition` dédié), logs et
   `MediaCover` des arr, `resources/` de recyclarr, `transmission.log`,
   `metadata/` de Jellyfin (rafraîchissement complet accepté après
   restauration). **Gardés exprès**, ne pas les proposer à nouveau : le code
