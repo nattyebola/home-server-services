@@ -45,6 +45,9 @@ session (Wayland) — désactiver/réactiver ne recharge pas les modules JS.
 - **Le menu reste ouvert quand on bascule un interrupteur**
   (`StickySwitchMenuItem`) ; Échap ou un clic à côté le ferme.
 - Noms affichés = noms donnés dans l'app Govee.
+- **Ampoule pleine dans la barre** dès qu'au moins un appareil joignable est
+  allumé, vide sinon. L'état n'est relu qu'à l'ouverture du menu : un appareil
+  allumé depuis l'app ou la télécommande ne change l'icône qu'à ce moment-là.
 
 Diagnostic : `journalctl --user -f | grep govee:` — une ligne par clic et par
 requête API (code HTTP, durée). Un clic doit donner exactement une ligne

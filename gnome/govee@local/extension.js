@@ -25,10 +25,10 @@ class GoveeIndicator extends PanelMenu.Button {
     _init(extension) {
         super._init(0.0, 'Govee');
 
-        this.add_child(new St.Icon({
-            gicon: Gio.icon_new_for_string(`${extension.path}/icons/lightbulb-symbolic.svg`),
-            style_class: 'system-status-icon',
-        }));
+        this._iconOff = Gio.icon_new_for_string(`${extension.path}/icons/lightbulb-symbolic.svg`);
+        this._iconOn = Gio.icon_new_for_string(`${extension.path}/icons/lightbulb-on-symbolic.svg`);
+        this._icon = new St.Icon({gicon: this._iconOff, style_class: 'system-status-icon'});
+        this.add_child(this._icon);
 
         this._api = new GoveeCloud();
         this._devices = []; // [{sku, device, name, on, online, item}]
@@ -110,6 +110,13 @@ class GoveeIndicator extends PanelMenu.Button {
             this._section.addMenuItem(d.item);
             this._sync(d);
         }
+        this._updateIcon();
+    }
+
+    // Ampoule pleine dès qu'au moins un appareil joignable est allumé.
+    _updateIcon() {
+        const anyOn = this._devices.some(d => d.online && d.on);
+        this._icon.gicon = anyOn ? this._iconOn : this._iconOff;
     }
 
     _addInfo(text) {
@@ -128,6 +135,7 @@ class GoveeIndicator extends PanelMenu.Button {
             this._syncing = false;
         }
         d.item.setSensitive(d.online);
+        this._updateIcon();
         d.item.label.text = d.online ? d.name : `${d.name} (hors ligne)`;
     }
 
