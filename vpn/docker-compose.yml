@@ -43,6 +43,13 @@ services:
       # connexion entrante, ce qui se lit comme une lenteur, pas comme une panne.
       - TRANSMISSION_PEER_PORT_RANDOM_ON_START=false
       - TRANSMISSION_PORT_FORWARDING_ENABLED=true
+      # Proxy HTTP (Privoxy, port 8118) pour sortir d'un navigateur par l'IP
+      # du tunnel. L'image l'écoute sur l'IP eth0 (vpn-internal), jamais sur
+      # tun0. Aucun port publié ici ni LOCAL_NETWORK : la réponse à un client
+      # du LAN repartirait dans le tunnel (routes /1 d'OpenVPN). C'est le
+      # sidecar `webproxy` qui l'expose — voir son bloc.
+      - WEBPROXY_ENABLED=true
+      - WEBPROXY_PORT=8118
       # Les deux dossiers sur lesquels repose toute la chaîne : `completed` est
       # ce que les arr voient via leur remote path mapping (voir
       # scripts/provision.py) et ce que cross-seed compare tel quel à ses
@@ -160,6 +167,45 @@ services:
       # Sans ce label Traefik résoudrait ce service sur traefik-public
       # (défaut du provider), où il n'est plus — 502 garanti.
       - "traefik.docker.network=traefik-restricted"
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+        max-file: "3"
+
+  webproxy:
+    image: nginxinc/nginx-unprivileged:alpine
+    restart: unless-stopped
+    depends_on:
+      transmission-vpn:
+        condition: service_healthy
+    volumes:
+      - ./webproxy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /etc/localtime:/etc/localtime:ro
+    # Même principe que transmission-proxy : ce relais se connecte à Privoxy
+    # depuis vpn-internal, sous-réseau directement connecté côté
+    # transmission-vpn, donc la réponse repart par eth0 et pas dans le tunnel
+    # — sans toucher au routage du conteneur VPN.
+    networks:
+      - vpn-internal
+    # Privoxy n'a AUCUNE authentification : ouvert, ce port devient un proxy
+    # public qui sort avec le compte AirVPN. Un port publié par Docker
+    # contourne le pare-feu de l'hôte, d'où le bind sur une IP précise plutôt
+    # que 0.0.0.0. Défaut 127.0.0.1 (hôte seul) : une installation qui n'a
+    # pas renseigné WEBPROXY_HOST_IP ne l'expose à personne. Ne jamais
+    # rediriger ce port sur la box.
+    ports:
+      - "${WEBPROXY_HOST_IP:-127.0.0.1}:8118:8118"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8118 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     logging:
       driver: json-file
       options:

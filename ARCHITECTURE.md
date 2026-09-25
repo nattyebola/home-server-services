@@ -172,8 +172,26 @@ Client torrent qui ne doit jamais sortir hors tunnel VPN. Deux services :
   dans `LOCAL_NETWORK` (voir [`ISSUES.md`](ISSUES.md#vpn--transmission)
   pour pourquoi).
 - `transmission-proxy` (nginx) : sidecar sur `vpn-internal` **et**
-  `traefik-public`, seul pont entre le VPN et le reste du monde — proxy_pass
+  `traefik-restricted`, seul pont entre le RPC et Traefik — proxy_pass
   vers le RPC de Transmission. C'est lui qui porte les labels Traefik.
+  `traefik-restricted` et pas `traefik-public` : le RPC n'a aucune
+  authentification, et sur `traefik-public` les services exposés au WAN
+  (jellyfin, seerr, nextcloud-web) pouvaient l'atteindre en direct, sans
+  passer par le middleware LAN-only.
+- `webproxy` (nginx, relais TCP `stream`) : expose sur `<WEBPROXY_HOST_IP>:8118`
+  le Privoxy intégré à `transmission-vpn` (`WEBPROXY_ENABLED`), pour qu'un
+  navigateur du LAN sorte par l'IP du tunnel (contourner un blocage
+  géographique). Pas de port publié sur `transmission-vpn` lui-même : sans
+  `LOCAL_NETWORK`, la réponse à un client du LAN repartirait dans le tunnel.
+  Le relais se connecte, lui, depuis `vpn-internal`, sous-réseau directement
+  connecté, donc aucune modification de routage n'est nécessaire.
+  **Privoxy n'a aucune authentification** : le port est lié à l'IP LAN de
+  l'hôte (défaut `127.0.0.1`), jamais à `0.0.0.0` (un port publié par Docker
+  contourne le pare-feu de l'hôte), et ne doit jamais être redirigé sur la
+  box. Les conteneurs de `vpn-internal` (arr) peuvent aussi l'atteindre.
+  À savoir côté navigateur : l'IP de sortie est celle qui seede, donc éviter
+  d'y connecter des comptes personnels, et désactiver WebRTC (il contourne un
+  proxy HTTP et révèle l'IP réelle).
 
 Accès restreint au LAN (`LAN_CIDR` dans `.env.shared`, middleware Traefik
 `ipallowlist`) : le client torrent doit pointer vers
