@@ -30,6 +30,10 @@
 # récupérables par la sauvegarde restic mais pas reproductibles depuis le
 # repo. Le JSON est déclaratif et fait autorité : tout custom format absent
 # de `scores` est remis à 0 sur le profil concerné.
+#
+# Provisionne AUSSI le délai de grab des anime VOSTFR (voir ANIME_DELAY_*) : un
+# tag, le delay profile qui le vise, et la pose/le retrait du tag selon le
+# profil qualité de chaque série.
 import copy
 import datetime
 import json
@@ -998,6 +1002,93 @@ def apply_anime_config(container, base_url, api_key):
     return changed
 
 
+# --- délai de grab des anime VOSTFR -------------------------------------------
+#
+# Sur Nyaa, les releases sans français (raws japonais, WEB « OV ») sortent avant
+# les VOSTFR. Sans délai, Sonarr grabe la première, puis la remplace par
+# chaque meilleure release qui arrive. Pour un seul fichier gardé, on a
+# jusqu'à trois téléchargements, et les perdants restent coincés en
+# importPending (skill manual-import).
+# Mesuré le 2026-09-25 sur tout l'historique du profil VOSTFR : 38 des 39
+# remplacements par une release ≥ 50 sont arrivés moins de 2 h 20 après le
+# premier grab, un seul à 11,9 h. 3 h couvre donc l'essentiel. Les épisodes
+# qui n'auront jamais de VOSTFR (les deux tiers des premiers grabs < 50, dont
+# les ToonsHub MSubs légitimes) arrivent 3 h plus tard, c'est le prix.
+#
+# Exception à partir de 50 = le score de `VOSTFR (hors suffixe)` : une release
+# VOSTFR part immédiatement, seules les releases sans marqueur français attendent.
+# Le delay profile `fr-priority`, créé à la main (6 h, exception à 100), ne
+# peut pas jouer ce rôle : 100 est quasi inatteignable sur ce profil qualité.
+# On NE monte PAS `minFormatScore` à la place : il rejetterait aussi les
+# ToonsHub MSubs à score 0 (voir .claude/docs/arr-pieges.md).
+#
+# Un delay profile se rattache par tag, pas par profil qualité. Le tag est
+# donc PILOTÉ par le profil : posé sur toute série en `Anime (Fansub) VOSTFR`,
+# retiré de toute autre (une bascule en VF par le skill anime-vf sort ainsi
+# du délai). Le poser à la main ne sert à rien, il serait retiré la nuit
+# suivante.
+ANIME_DELAY_TAG = "anime-vostfr-delai"
+ANIME_DELAY_QUALITY_PROFILE = "Anime (Fansub) VOSTFR"
+ANIME_DELAY_FIELDS = {
+    "enableUsenet": True, "enableTorrent": True, "preferredProtocol": "torrent",
+    "usenetDelay": 180, "torrentDelay": 180,
+    "bypassIfHighestQuality": False,
+    "bypassIfAboveCustomFormatScore": True, "minimumCustomFormatScore": 50,
+}
+
+
+def apply_anime_delay(container, base_url, api_key):
+    changed = []
+    tags = {t["label"]: t["id"] for t in api_get(container, base_url, api_key, "/tag")}
+    tag_id = tags.get(ANIME_DELAY_TAG)
+    if tag_id is None:
+        tag_id = api_write(container, base_url, api_key, "POST", "/tag",
+                           {"label": ANIME_DELAY_TAG})["id"]
+        changed.append(f"Sonarr tag {ANIME_DELAY_TAG!r} créé")
+
+    # Rattaché par son tag : un delay profile n'a pas de nom.
+    delay = next((d for d in api_get(container, base_url, api_key, "/delayprofile")
+                  if d["tags"] == [tag_id]), None)
+    if delay is None:
+        api_write(container, base_url, api_key, "POST", "/delayprofile",
+                  {**ANIME_DELAY_FIELDS, "tags": [tag_id]})
+        changed.append(f"Sonarr delay profile {ANIME_DELAY_TAG!r} créé")
+    elif any(delay.get(k) != v for k, v in ANIME_DELAY_FIELDS.items()):
+        api_put(container, base_url, api_key, f"/delayprofile/{delay['id']}",
+                {**delay, **ANIME_DELAY_FIELDS})
+        changed.append(f"Sonarr delay profile {ANIME_DELAY_TAG!r} réaligné")
+
+    profile_id = next((p["id"] for p in api_get(container, base_url, api_key, "/qualityprofile")
+                       if p["name"] == ANIME_DELAY_QUALITY_PROFILE), None)
+    if profile_id is None:
+        raise RuntimeError(f"profil {ANIME_DELAY_QUALITY_PROFILE!r} introuvable")
+    add, remove = [], []
+    for s in api_get(container, base_url, api_key, "/series"):
+        wanted, tagged = s["qualityProfileId"] == profile_id, tag_id in s["tags"]
+        if wanted and not tagged:
+            add.append(s)
+        elif tagged and not wanted:
+            remove.append(s)
+    # Passe par /series/editor plutôt qu'un PUT /series/<id> : on n'envoie que
+    # le tag, sans renvoyer toute la série (monitoring, chemins...). Il répond
+    # par une liste que api_write refuserait, d'où l'appel direct.
+    for series, apply_tags in ((add, "add"), (remove, "remove")):
+        if not series:
+            continue
+        code, body = _curl(container, api_key,
+                           ["-X", "PUT", "-H", "Content-Type: application/json",
+                            "--data", "@-", f"{base_url}/series/editor"],
+                           stdin=json.dumps({"seriesIds": [s["id"] for s in series],
+                                             "tags": [tag_id],
+                                             "applyTags": apply_tags}).encode())
+        if not code.startswith("2"):
+            raise RuntimeError(f"PUT /series/editor : HTTP {code} — {body[:300] or 'réponse vide'}")
+        verb = "posé sur" if apply_tags == "add" else "retiré de"
+        changed.append(f"Sonarr tag {ANIME_DELAY_TAG!r} {verb} : "
+                       + ", ".join(s["title"] for s in series))
+    return changed
+
+
 def main():
     # Séparateur horodaté en tête de chaque exécution. La sortie est appendée
     # dans arr/apply-overrides.log par cron : sans lui, impossible d'attribuer
@@ -1056,6 +1147,11 @@ def main():
         changed += apply_anime_config(SONARR_CONTAINER, SONARR_URL, sonarr_api_key)
     except Exception as e:
         errors.append(f"Sonarr (anime): {e}")
+    # Après la config anime : le profil qualité qui pilote le tag doit exister.
+    try:
+        changed += apply_anime_delay(SONARR_CONTAINER, SONARR_URL, sonarr_api_key)
+    except Exception as e:
+        errors.append(f"Sonarr (délai anime): {e}")
     try:
         changed += apply_jellyfin_connection("Sonarr", SONARR_CONTAINER, SONARR_URL,
                                              sonarr_api_key, jellyfin_api_key,

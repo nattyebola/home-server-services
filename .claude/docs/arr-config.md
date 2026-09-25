@@ -221,6 +221,19 @@ ou aux connexions arr → Jellyfin.
   Trou connu, non traité : le tag **`fr-priority`** (Sonarr) est la cible d'un
   **delay profile** qui ne vit que dans la base Sonarr — ni le tag ni le profil
   ne sont reproductibles depuis le repo.
+- **Délai de grab de 3 h sur les anime VOSTFR, sauf si le score est ≥ 50**
+  (2026-09-25, `apply_anime_delay()` dans `scripts/apply-arr-overrides.py`).
+  Sur Nyaa, les releases sans français sortent avant les VOSTFR : Sonarr
+  grabait la première puis la remplaçait par chaque meilleure release, et les
+  perdants restaient en `importPending`. Mesuré : 38 des 39 remplacements par
+  une release ≥ 50 arrivent en moins de 2 h 20. L'exception à partir de 50
+  (le score de `VOSTFR (hors suffixe)`) laisse partir une release VOSTFR tout
+  de suite. **Le tag est piloté par le profil qualité** : posé sur toute série
+  en `Anime (Fansub) VOSTFR`, retiré des autres chaque nuit. Le poser ou
+  l'enlever à la main ne tient pas. Alternative écartée : monter `minFormatScore`, qui
+  couperait les ToonsHub MSubs à score 0 (`arr-pieges.md`). Une série qui
+  porte aussi `fr-priority` (*The Ghost in the Shell*) garde les 6 h de ce
+  dernier, dont l'`order` est plus bas.
 - **Seerr parle à Jellyfin en direct (`jellyfin:8096`)**, pas par le domaine
   public (2026-08-24) : il était réglé sur `https://jellyfin.${DOMAIN}:443`,
   donc chaque requête traversait Traefik et son middleware `rate-limit` — que
@@ -316,6 +329,7 @@ ou aux connexions arr → Jellyfin.
   Jellyfin, metadata writer, ratio des indexeurs publics, renommage des
   fichiers à l'import (`renameEpisodes`/`renameMovies`), rejet des
   téléchargements non-média (`failDownloads`), catégorie Anime de Nyaa.si,
+  délai de grab des anime VOSTFR (tag `anime-vostfr-delai`, voir ci-dessous),
   section `host` des trois arr (`trustedNetworks`/`allowedHosts`, voir
   ci-dessous).
   Résout les profils **par nom, jamais par id** (propres à chaque instance —
