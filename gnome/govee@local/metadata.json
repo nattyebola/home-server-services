@@ -1,0 +1,7 @@
+{
+  "uuid": "govee@local",
+  "name": "Govee",
+  "description": "Allume/éteint les appareils Govee du compte (API cloud, clé dans le trousseau GNOME).",
+  "shell-version": ["50"],
+  "version": 1
+}

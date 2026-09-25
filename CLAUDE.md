@@ -342,6 +342,7 @@ server/
 │   ├── clearr/                 # web (FastAPI/Jinja2/Bootstrap) + TUI + CLI delete-by-inode, un seul core.py partagé
 │   └── profiles/               # config arr custom versionnée (sonarr-anime.json) — appliquée par apply-arr-overrides.py
 ├── kodi/                      # addon de menu contextuel « Supprimer avec clearr » — installé côté client par `make kodi-install`
+├── gnome/                     # extension GNOME Shell on/off Govee (API cloud, clé dans le trousseau) — liée côté poste par `make gnome-install`
 ├── seerr/                     # recherche/requête unifiée ; pas de .env (config via son assistant web + provision.py)
 ├── komga/                     # lecture BD/comics/mangas ; bibliothèque = completed/bd en :ro ; pas de .env (compte admin créé au 1er accès web)
 └── dashboard/                 # templates/ (string.Template) + assets (logos, css, js) + html/ généré — servi par traefik/

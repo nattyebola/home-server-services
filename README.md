@@ -439,6 +439,7 @@ et leurs arguments directement depuis le `Makefile`.
 | `make recyclarr-sync` | applique les guides TRaSH aux profils qualité arr (aussi via cron quotidien) |
 | `make arr-overrides` | réapplique les réglages hors périmètre recyclarr + provisionne `arr/profiles/` + maintient les déclencheurs de suppression des connexions Jellyfin (à lancer après `recyclarr-sync`) |
 | `make kodi-install` | installe l'addon Kodi « Supprimer avec clearr » dans le profil Kodi de l'utilisateur courant, voir [`kodi/README.md`](kodi/README.md) |
+| `make gnome-install` | installe l'extension GNOME Shell « Govee » (interrupteurs on/off des appareils Govee dans la barre) pour l'utilisateur courant, voir [`gnome/README.md`](gnome/README.md) |
 | `make switch-lan-only-middleware` | ouvre (ou referme) au WAN les services normalement restreints au LAN, voir ci-dessous |
 
 #### Ouvrir temporairement les services LAN-only (`switch-lan-only-middleware`)

@@ -13,7 +13,7 @@ STACKS := traefik jellyfin nextcloud vpn arr seerr komga
 # reflète donc l'état d'après redémarrage.
 UPDATE_STACKS := nextcloud vpn jellyfin arr seerr komga traefik
 
-.PHONY: help require-env-shared network up down config logs update rebuild update-all backup restore cron-install dashboard-refresh clearr arr-overrides search-missing mark-finales recyclarr-sync kodi-install api-keys provision switch-lan-only-middleware test
+.PHONY: help require-env-shared network up down config logs update rebuild update-all backup restore cron-install dashboard-refresh clearr arr-overrides search-missing mark-finales recyclarr-sync kodi-install gnome-install api-keys provision switch-lan-only-middleware test
 
 # `make` sans argument affiche l'aide plutôt que de lancer la première cible
 # (c'était `network`, qui ne dit rien de ce que le reste sait faire).
@@ -31,12 +31,14 @@ help: ## — liste les cibles disponibles et leurs arguments
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[1m%-28s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "  STACK  : $(STACKS)"
-	@echo "  autres : SERVICE=<nom> (rebuild), SNAPSHOT=<id|latest> (restore), KODI_HOME=<chemin> (kodi-install)"
+	@echo "  autres : SERVICE=<nom> (rebuild), SNAPSHOT=<id|latest> (restore), KODI_HOME=<chemin> (kodi-install), GNOME_EXT_DIR=<chemin> (gnome-install)"
 
 # Kodi profile of the user running make (a media client, not a stack) — see the
 # kodi-install target and kodi/README.md. Overridable for a Kodi running under
 # another user or a non-default profile path: make kodi-install KODI_HOME=...
 KODI_HOME ?= $(HOME)/.kodi
+# same for gnome-install: make gnome-install GNOME_EXT_DIR=...
+GNOME_EXT_DIR ?= $(HOME)/.local/share/gnome-shell/extensions
 
 # Vérifie .env.shared AVANT toute recette qui en dépend. En cible à part et pas
 # en première ligne de recette : les `$(eval ...)` d'une recette sont expansés
@@ -428,3 +430,17 @@ kodi-install: require-env-shared ## [KODI_HOME=<chemin>] — installe l'addon de
 		echo "clearr URL set to https://clearr.$(DOMAIN)"; \
 	fi
 	@echo "installed to $(KODI_HOME)/addons/context.clearr — restart Kodi to load it"
+
+# links the Govee on/off GNOME Shell extension (gnome/govee@local) into this
+# user's extensions dir. Symlinked, unlike kodi-install: GNOME Shell loads a
+# linked extension fine, so the repo stays the only copy. Refuses to replace a
+# real directory there — it may hold local edits that were never committed.
+gnome-install: ## [GNOME_EXT_DIR=<chemin>] — installe l'extension GNOME Shell Govee (on/off dans la barre)
+	@mkdir -p "$(GNOME_EXT_DIR)"
+	@dest="$(GNOME_EXT_DIR)/govee@local"; \
+	if [ -e "$$dest" ] && [ ! -L "$$dest" ]; then \
+		echo "$$dest exists and is not a symlink — move it away first" >&2; exit 1; \
+	fi; \
+	ln -sfn "$(CURDIR)/gnome/govee@local" "$$dest"; \
+	echo "linked $$dest -> $(CURDIR)/gnome/govee@local"; \
+	echo "new install: log out/in (Wayland), then gnome-extensions enable govee@local"
