@@ -117,6 +117,22 @@ Pour chaque motif trouvé, avant de le reporter comme un problème :
   à tort. Pour tout ce qui touche aux 429/désactivations d'indexeurs,
   déléguer au skill **`indexer-quota`** plutôt que de conclure ici.
 
+**Bruit connu, à ne pas remonter** (demandé par l'utilisateur le
+2026-09-28) — vérifier la condition, puis l'omettre du rapport, même en
+ligne « résolu » :
+
+- **`vpn-transmission-vpn` : `AEAD Decrypt error: bad packet ID (may be a
+  replay)`**. Ce sont des paquets UDP qui arrivent dans le désordre côté
+  AirVPN, en rafales pouvant atteindre des dizaines de milliers de lignes.
+  Ils sont inoffensifs **tant que le tunnel tient** : le container est
+  healthy et n'a pas redémarré, et `docker logs --since 48h` ne montre ni
+  `Inactivity timeout`, ni `SIGUSR1`/`SIGTERM`, ni `Restart pause`. Il n'y a
+  pas non plus plusieurs `Initialization Sequence Completed` (la
+  renégociation TLS horaire est normale et n'en produit pas). Exclure ce
+  motif (`grep -v AEAD`) avant de chercher les vraies erreurs. Ne le
+  remonter que si l'une de ces conditions tombe : ce ne sont alors plus les
+  AEAD le constat, c'est la coupure du tunnel.
+
 Les fichiers de log internes (`/config/logs/*.txt` dans les conteneurs
 Servarr) sont plus fiables que `docker logs` quand il faut une fenêtre
 horaire précise : horodatés à la seconde et non tronqués par
