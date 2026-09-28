@@ -13,7 +13,7 @@ STACKS := traefik jellyfin nextcloud vpn arr seerr komga
 # reflète donc l'état d'après redémarrage.
 UPDATE_STACKS := nextcloud vpn jellyfin arr seerr komga traefik
 
-.PHONY: help require-env-shared network up down config logs update rebuild update-all backup restore cron-install dashboard-refresh clearr arr-overrides search-missing mark-finales recyclarr-sync kodi-install gnome-install api-keys provision switch-lan-only-middleware test
+.PHONY: help require-env-shared network up down restart config logs update rebuild update-all backup restore cron-install dashboard-refresh clearr arr-overrides search-missing mark-finales recyclarr-sync kodi-install gnome-install api-keys provision switch-lan-only-middleware test
 
 # `make` sans argument affiche l'aide plutôt que de lancer la première cible
 # (c'était `network`, qui ne dit rien de ce que le reste sait faire).
@@ -152,6 +152,10 @@ up: require-env-shared network ## STACK=<nom> — démarre (ou met à jour) les 
 down: ## STACK=<nom> — arrête et supprime les conteneurs de la stack
 	@test -n "$(STACK)" || (echo "usage: make down STACK=<$(STACKS)>" >&2 && exit 1)
 	$(compose) down
+
+restart: require-env-shared ## STACK=<nom> — redémarre les conteneurs sans les recréer (remonte les bind-mounts)
+	@test -n "$(STACK)" || (echo "usage: make restart STACK=<$(STACKS)>" >&2 && exit 1)
+	$(compose) restart
 
 config: ## STACK=<nom> — affiche le compose résolu (labels, env, montages)
 	@test -n "$(STACK)" || (echo "usage: make config STACK=<$(STACKS)>" >&2 && exit 1)
