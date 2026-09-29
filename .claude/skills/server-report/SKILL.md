@@ -1,6 +1,6 @@
 ---
 name: server-report
-description: Passe en revue l'état complet du serveur (containers, cron, disque, sauvegarde, logs de tous les services) et rapporte en français uniquement ce qui ne va pas, en écartant le bruit déjà résolu. À utiliser quand l'utilisateur demande un rapport d'état, un check de santé du serveur, ou de repasser sur les logs/l'état du projet.
+description: Passe en revue l'état complet du serveur (containers, cron, disque, sauvegarde, imports arr en attente, logs de tous les services) et rapporte en français uniquement ce qui ne va pas, en écartant le bruit déjà résolu. À utiliser quand l'utilisateur demande un rapport d'état, un check de santé du serveur, ou de repasser sur les logs/l'état du projet.
 ---
 
 # server-report — audit d'état + logs du serveur
@@ -139,14 +139,63 @@ horaire précise : horodatés à la seconde et non tronqués par
 `max-size`/`max-file`. Ils tournent, donc dédupliquer les occurrences vues
 dans plusieurs fichiers.
 
-## 5. Git
+## 5. Imports en attente (Sonarr/Radarr)
+
+Un téléchargement à 100 % qui n'est pas importé ne se voit nulle part
+ailleurs : container healthy, aucune erreur dans les logs, aucune carte du
+dashboard. Seule la file de l'arr le montre. On lance donc le diagnostic du
+skill **`manual-import`**, **en lecture seule** : jamais `apply`, `assign`
+ni purge depuis ce rapport.
+
+```bash
+python3 scripts/manual-import.py list --json | python3 -c '
+import json, sys
+from collections import Counter
+TEMP = ("TBA title",)   # rejets qui se lèvent seuls, cf. plus bas
+data = json.load(sys.stdin)
+for arr, items in data.items():
+    groups = Counter()
+    for i in items:
+        why = "; ".join(i.get("reasons") or i.get("queue_reasons") or [])
+        kind = "temporaire" if any(t in why for t in TEMP) else i["kind"]
+        groups[(kind, i.get("target") or i["title"], why)] += 1
+    for (kind, target, why), n in groups.items():
+        print(f"{arr}: [{kind}] {target} ×{n} — {why[:90]}")
+'
+```
+
+Un arr injoignable ou sans clé d'API n'apparaît pas dans le JSON. Le script
+l'écrit sur stderr (`ERREUR sonarr : …`), qui s'affiche à côté de la sortie
+ci-dessus : c'est une action requise.
+
+Restitution, **succincte** : une ligne de tableau par titre bloqué. Les
+releases multiples d'un même épisode tiennent sur une ligne (`×2`). Pas de
+chemins, de hash ni de `queueId` : c'est le travail du skill
+`manual-import`, que l'utilisateur lancera s'il y a quelque chose à faire.
+
+| Famille (`kind`) | Statut dans le rapport |
+|---|---|
+| `importable`, `assign` (à rattacher) | action requise (lancer `/manual-import`) |
+| `refuse` (vrai rejet : doublon, pas une amélioration) | action requise (purge à confirmer) |
+| `temporaire` : *« Episode has a TBA title and recently aired »* | à surveiller. Préciser la date de levée : au plus tard 48 h après la diffusion, ou plus tôt si TVDB publie le titre (`episodeTitleRequired = always`). Ne passer en action requise que si cette date est dépassée. |
+| `erreur` (l'appel `manualimport` a échoué) | action requise, rapporter le message tel quel |
+
+Rien en attente → le mentionner dans la ligne de couverture (« aucun import
+en attente »), pas de ligne de tableau.
+
+Le script range le motif TBA en `refuse`, au même rang qu'un vrai rejet :
+c'est le filtre `TEMP` ci-dessus qui le requalifie. Si un autre motif
+temporaire apparaît, l'ajouter à `TEMP` plutôt que de le remonter comme un
+refus.
+
+## 6. Git
 
 ```bash
 git status --porcelain=v1
 git status -sb   # confirme l'alignement avec origin/<branche>
 ```
 
-## 6. Format du rapport — anomalies seulement
+## 7. Format du rapport — anomalies seulement
 
 Structure :
 
