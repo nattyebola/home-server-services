@@ -8,15 +8,11 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
 - `make backup` (aussi via cron dimanche 3h) : dump `pg_dump` Nextcloud +
   manifeste des digests d'images en cours d'exécution + `restic backup` +
   `restic check --read-data-subset=5%` + `restic forget --group-by host
-  --keep-weekly 8 --prune` + tag git `backup-YYYY-MM-DD` si l'infra a changé
-  depuis le dernier tag de ce type, poussé sur `origin`.
-  **Le tag est sauté si `user.name`/`user.email` ne sont pas configurés** pour
-  le repo : sur un déploiement tiers `git tag -a` échouerait faute d'identité
-  et ferait planter le script *après* un backup pourtant réussi, et on ne veut
-  pas de tags de sauvegardes qui ne sont pas les nôtres. Le test porte sur
-  `git config --get`, pas sur `git var GIT_COMMITTER_IDENT` : ce dernier
-  fabrique une identité depuis le compte Unix et le hostname, donc il
-  réussirait là où `git tag -a` échoue.
+  --keep-weekly 8 --prune`. **Plus de tag git `backup-YYYY-MM-DD`** (retiré et
+  tous supprimés le 2026-09-29, à la demande) : on restaure avec la version
+  COURANTE du dépôt, revenir à l'infra de la sauvegarde réintroduisait des bugs
+  corrigés depuis. Le commit reste noté pour information (`infra-commit.txt`
+  dans le snapshot, tag restic `commit-<sha>`).
   Le dump est **supprimé du staging après le backup** : il porte les hachages
   de mots de passe et les jetons d'application de Nextcloud, il n'a pas à
   rester en clair sur le disque une fois dans le dépôt chiffré.
@@ -63,6 +59,24 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   perdue avec (accepté pour l'instant, pas d'offsite).
 
 ## Sauvegarde et restauration
+
+- **Restauration complète exercée le 2026-09-29 sur une VM vierge** (QEMU/KVM
+  sans sudo : l'ACL de `/dev/kvm` suffit ; image cloud Ubuntu + seed
+  cloud-init par `xorriso`, réseau utilisateur QEMU). Résultat identique à la
+  prod sur 20 comptages. Garde-fous qui ont servi : ne JAMAIS démarrer `vpn`
+  (session AirVPN en double) — créer seulement son réseau
+  (`docker network create --subnet 172.30.0.0/24 vpn_vpn-internal`) pour
+  qu'arr démarre ; télécharger/construire les images PUIS couper toute sortie
+  de la VM (iptables OUTPUT + DOCKER-USER + FORWARD, v4 et v6), sinon arr et
+  cross-seed interrogent les vrais indexeurs et Traefik Let's Encrypt. Le
+  dépôt restic se copie dans la VM : `restic restore` pose un verrou, donc un
+  partage 9p en lecture seule ne suffit pas. Sous isolation, Seerr passe
+  unhealthy (son `/api/v1/status` interroge GitHub) : healthcheck passé depuis
+  sur `/api/v1/status/appdata`, purement local.
+  Bugs trouvés et corrigés (voir `docs/sauvegarde.md`) : `.env.shared` exigé
+  alors qu'il est dans la sauvegarde, chemins d'origine ≠ chemins de la
+  machine, `rsync` sans parents, import Postgres trop tôt, base `nextcloud`
+  vide créée par `POSTGRES_DB`.
 
 - **`scripts/backup.sh` dumpait silencieusement la mauvaise base Postgres
   depuis le début** (repéré en testant `make restore` pour de vrai — jusque-là

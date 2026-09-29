@@ -101,46 +101,29 @@ network: ## — crée les réseaux Traefik s'ils manquent (prérequis de tout `u
 # compose files stay free of any one deployment's folder layout.
 compose = docker compose --env-file .env.shared $(if $(wildcard $(STACK)/.env),--env-file $(STACK)/.env,) -f $(STACK)/docker-compose.yml $(if $(wildcard $(STACK)/docker-compose.override.yml),-f $(STACK)/docker-compose.override.yml,)
 
+# Crée les dossiers de données d'une stack avant que Docker ne le fasse en root
+# (voir le commentaire de `up` et scripts/ensure-bind-dirs.py). `--profile '*'` :
+# sans lui, `config` ignore les services sous `profiles: [manual]` — recyclarr,
+# dont le dossier naissait alors en root et qui plantait sur /config/state.
+ensure_data_dirs = root=$$(grep '^DATA_ROOT=' .env.shared | cut -d= -f2-); \
+	test -n "$$root" || (echo "DATA_ROOT not set in .env.shared" >&2 && exit 1); \
+	if [ "$(STACK)" = "arr" ]; then touch "$$root/.clearr.log"; fi; \
+	$(compose) --profile '*' config --format json | python3 scripts/ensure-bind-dirs.py "$$root" "$(CURDIR)"
+
 up: require-env-shared network ## STACK=<nom> — démarre (ou met à jour) les conteneurs de la stack
 	@test -n "$(STACK)" || (echo "usage: make up STACK=<$(STACKS)>" >&2 && exit 1)
-	@# seerr tourne nativement en UID 1000 sans étape root-puis-drop et ne chown
-	@# pas son volume : si ${DATA_ROOT}/.seerr/config n'existe pas, c'est Docker
-	@# qui le crée, en root:root, et le container crashe en boucle sur EACCES.
-	@# Le créer ici (donc en tant que l'utilisateur qui lance make) suffit à
-	@# éviter le cas, et remplace le mkdir+chown manuel de l'installation.
-	@if [ "$(STACK)" = "seerr" ]; then \
-		root=$$(grep '^DATA_ROOT=' .env.shared | cut -d= -f2-); \
-		test -n "$$root" || (echo "DATA_ROOT not set in .env.shared" >&2 && exit 1); \
-		mkdir -p "$$root/.seerr/config"; \
-	fi
-	@# Komga : même cas que seerr (image sans USER, tourne en PUID:PGID via
-	@# `user:`, ne chown pas son volume). Le dossier de BIBLIOTHÈQUE est créé ici
-	@# lui aussi, et c'est le point important : il est monté en :ro, donc Docker
-	@# ne peut pas le créer au démarrage — il échouerait, ou pire le créerait en
-	@# root avant que Transmission n'ait à y écrire. C'est aussi la cible de la
-	@# catégorie `bd` du client de téléchargement Prowlarr.
-	@if [ "$(STACK)" = "komga" ]; then \
-		root=$$(grep '^DATA_ROOT=' .env.shared | cut -d= -f2-); \
-		test -n "$$root" || (echo "DATA_ROOT not set in .env.shared" >&2 && exit 1); \
-		mkdir -p "$$root/.komga/config" "$$root/.transmission/data/completed/bd"; \
-	fi
-	@# Même raison que ci-dessus : traefik tourne en PUID:PGID et n'écrirait pas
-	@# dans un dossier que Docker aurait créé en root. Porte l'access log
-	@# (accessLog dans traefik.yml), sans lequel aucune requête WAN ne laisse de
-	@# trace — y compris les 403 des middlewares LAN-only.
-	@if [ "$(STACK)" = "traefik" ]; then \
-		root=$$(grep '^DATA_ROOT=' .env.shared | cut -d= -f2-); \
-		test -n "$$root" || (echo "DATA_ROOT not set in .env.shared" >&2 && exit 1); \
-		mkdir -p "$$root/.traefik/log"; \
-	fi
-	@# clearr monte son journal en bind-mount de FICHIER (voir arr/docker-compose.yml) :
-	@# s'il n'existe pas, Docker crée un DOSSIER à la place et le service crashe au
-	@# démarrage sur IsADirectoryError.
-	@if [ "$(STACK)" = "arr" ]; then \
-		root=$$(grep '^DATA_ROOT=' .env.shared | cut -d= -f2-); \
-		test -n "$$root" || (echo "DATA_ROOT not set in .env.shared" >&2 && exit 1); \
-		touch "$$root/.clearr.log"; \
-	fi
+	@# Dossiers de données créés ICI, par l'utilisateur qui lance make, et pas
+	@# par Docker : une source de bind-mount absente, Docker la crée en root:root,
+	@# et les services qui tournent en PUID:PGID (quasiment tous) plantent sur
+	@# EACCES. Générique (scripts/ensure-bind-dirs.py lit `compose config`) depuis
+	@# qu'une installation neuve suivie pas à pas, le 2026-09-29, a montré que
+	@# c'était vrai de CHAQUE stack — jellyfin, nextcloud, vpn, arr en plus des
+	@# seerr/komga/traefik déjà couverts à la main. Cas particulier de komga :
+	@# completed/bd est monté en :ro, Docker ne pourrait même pas le créer.
+	@# Les montages de FICHIER sont créés avant (le script ne ferait que des
+	@# dossiers) : .clearr.log (arr/docker-compose.yml), dont l'absence faisait
+	@# créer un DOSSIER par Docker et crasher clearr sur IsADirectoryError.
+	@$(ensure_data_dirs)
 	@# Les routeurs arr/transmission référencent `<nom>@file` : sans
 	@# traefik/dynamic/lan-only.yml, Traefik ne sait pas résoudre leur middleware
 	@# et répond 404. Écrit ici (en mode fermé) plutôt que laissé au premier
@@ -366,6 +349,8 @@ search-missing: ## ARGS=<options> — recherche les manquants déjà sortis (aus
 # cron avec `arr-overrides` juste après, voir scripts/crontab.
 recyclarr-sync: STACK := arr
 recyclarr-sync: network ## — lance `recyclarr sync` en one-shot (aussi enchaîné par cron)
+	@# Pas de `make up` sur ce chemin : même création de dossiers qu'`up`.
+	@$(ensure_data_dirs)
 	@$(compose) run --rm recyclarr sync
 
 # ouvre/referme au WAN les services normalement restreints au LAN
@@ -393,8 +378,10 @@ backup: require-env-shared ## — sauvegarde restic (aussi faite par cron le dim
 	@scripts/backup.sh
 
 # restore a restic snapshot to sauvegarde/restore-<snapshot>/ and print the
-# manual steps to bring it back — see scripts/restore.sh.
-restore: require-env-shared ## SNAPSHOT=<id|latest> — restaure un snapshot dans sauvegarde/ sans toucher au live
+# manual steps to bring it back — see scripts/restore.sh. Pas de
+# require-env-shared : sur une machine neuve, .env.shared est DANS la
+# sauvegarde, c'est restore.sh qui le retrouve.
+restore: ## SNAPSHOT=<id|latest> — restaure un snapshot dans sauvegarde/ sans toucher au live
 	@scripts/restore.sh $(if $(SNAPSHOT),$(SNAPSHOT),latest)
 
 # installs scripts/crontab as this host's crontab (nextcloud cron.php +

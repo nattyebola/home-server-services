@@ -12,7 +12,17 @@ services:
       - /etc/localtime:/etc/localtime:ro
     env_file:
       - .env
+    # Même nom que le POSTGRES_DB du service `app`. Sans lui, l'image crée au
+    # premier démarrage une base au nom de POSTGRES_USER, et l'installation
+    # automatique de Nextcloud échoue sur `database "nextcloud" does not exist`
+    # — trouvé le 2026-09-29 en suivant docs/installation.md sur une VM neuve ;
+    # en prod la base existait depuis toujours. Lu seulement à l'initialisation
+    # d'un répertoire de données vide : sans effet sur une base existante.
+    environment:
+      - POSTGRES_DB=nextcloud
     healthcheck:
+      # pg_isready ne vérifie que l'acceptation des connexions, pas l'existence
+      # de la base : il restait vert pendant l'échec ci-dessus.
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d nextcloud"]
       interval: 10s
       timeout: 5s
@@ -47,6 +57,20 @@ services:
     environment:
       - POSTGRES_HOST=db-next
       - POSTGRES_DB=nextcloud
+      # Réglages de reverse-proxy qu'une installation neuve n'avait pas (en prod
+      # ils avaient été posés à la main par occ) : sans eux Nextcloud répond 400
+      # « untrusted domain » par son domaine public. Vu le 2026-09-29 en suivant
+      # docs/installation.md sur une VM neuve. NEXTCLOUD_TRUSTED_DOMAINS n'est lu
+      # qu'à l'installation ; les trois suivants le sont à chaque démarrage par
+      # config/reverse-proxy.config.php de l'image.
+      - NEXTCLOUD_TRUSTED_DOMAINS=nextcloud.${DOMAIN}
+      - OVERWRITEPROTOCOL=https
+      - OVERWRITECLIURL=https://nextcloud.${DOMAIN}
+      # Le proxy vu par php-fpm est `web` (nginx), sur nextcloud_default, dont le
+      # sous-réseau est attribué par Docker (172.19 ici, 172.21 ailleurs) : toute
+      # la plage privée de Docker plutôt qu'un /16 qui changerait d'une machine à
+      # l'autre. Sans risque, `app` n'étant joignable que depuis ce réseau.
+      - TRUSTED_PROXIES=172.16.0.0/12
     env_file:
       - .env
     depends_on:

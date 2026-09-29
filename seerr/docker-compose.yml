@@ -21,7 +21,14 @@ services:
       # ipallowlist), une requête venant du réseau Docker s'y ferait bloquer.
       - arr-internal
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:5055/api/v1/status"]
+      # /status/appdata et PAS /status : ce dernier interroge l'API GitHub pour
+      # savoir s'il existe une version plus récente, donc une panne de GitHub
+      # (ou une sortie Internet coupée — vu le 2026-09-29 en restaurant sur une
+      # VM isolée) faisait passer Seerr unhealthy, et Traefik cessait de le
+      # servir. appdata est purement local et vérifie en prime ce qui a déjà
+      # cassé ici : volume de config monté et inscriptible (EACCES en root).
+      # Il répond 200 dans tous les cas, d'où le test du contenu.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5055/api/v1/status/appdata | grep -q '\"appDataPermissions\":true'"]
       interval: 30s
       timeout: 5s
       retries: 3

@@ -100,7 +100,9 @@ Ne pas proposer d'y revenir sans demande explicite de l'utilisateur.
   auteur de tous les commits. `user.email` local posé sur l'adresse `noreply`.
   Objets orphelins locaux purgés. **Ne pas relancer ce nettoyage** (il
   changerait tous les SHA). Conséquence durable : les SHA des snapshots
-  restic antérieurs n'existent plus, restaurer depuis le tag `backup-*`.
+  restic antérieurs n'existent plus — sans importance, on restaure avec la
+  version courante du dépôt. **Plus de tags `backup-*`** (supprimés le
+  2026-09-29, `backup.sh` n'en crée plus) : ne pas les réintroduire.
 
 ## Pièges à ne pas répéter
 

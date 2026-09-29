@@ -44,7 +44,7 @@ flowchart LR
 | ✅ | [`restic`](https://restic.net/), `logrotate` | logrotate tourne sans root, avec son propre fichier d'état |
 | VPN | module noyau `ip_tables` chargé | absent par défaut sur les Ubuntu récents : `echo ip_tables \| sudo tee /etc/modules-load.d/ip-tables.conf && sudo modprobe ip_tables` |
 | VPN | une config OpenVPN (`.ovpn`) | testé avec AirVPN |
-| option | GPU exposant `/dev/dri/renderD128` | transcodage Jellyfin ; sinon retirer `devices`/`group_add` de `jellyfin/docker-compose.yml` |
+| option | GPU exposant `/dev/dri/renderD128` | transcodage Jellyfin, à déclarer dans `jellyfin/docker-compose.override.yml` (voir son `.example`) ; sans GPU, rien à faire |
 | option | `fail2ban` sur l'hôte | avec une jail sur l'access log Traefik, seule trace des requêtes WAN |
 | option | Kodi 19+ avec `jellyfin-kodi` en mode sync | pour l'addon de l'étape 22 |
 
@@ -82,13 +82,14 @@ make network
 ```sh
 cp traefik/.env.example    traefik/.env      # ACME_EMAIL
 cp nextcloud/.env.example  nextcloud/.env    # POSTGRES_*, NEXTCLOUD_ADMIN_*
-cp vpn/.env.example        vpn/.env          # OPENVPN_USERNAME/PASSWORD
+cp vpn/.env.example        vpn/.env          # OPENVPN_USERNAME/PASSWORD, WEBPROXY_HOST_IP (IP LAN, ou vide = hôte seul)
 cp arr/.env.example        arr/.env          # clés API : remplies aux étapes 14 et 18
 ```
 
 ### 5. Config OpenVPN *(si stack `vpn`)*
 
-Déposer le `.ovpn` du fournisseur dans `vpn/custom/` (voir
+Déposer le `.ovpn` du fournisseur dans `vpn/custom/` (dossier gitignoré, à
+créer : `mkdir -p vpn/custom`) (voir
 [haugene/docker-transmission-openvpn](https://haugene.github.io/docker-transmission-openvpn/),
 `OPENVPN_PROVIDER=CUSTOM`).
 
@@ -140,7 +141,10 @@ sont créées à l'étape 17.
 make up STACK=nextcloud
 ```
 
-Le compte admin est créé depuis `nextcloud/.env`. Les flux de l'app News se
+Le compte admin est créé depuis `nextcloud/.env`, et les réglages de
+reverse-proxy (`trusted_domains`, `overwriteprotocol`, `trusted_proxies`,
+`overwrite.cli.url`) sont posés par le compose : rien à faire à la main pour
+`https://nextcloud.<DOMAIN>`. Les flux de l'app News se
 rafraîchissent seuls, via le cron de l'hôte (`cron.php`, étape
 `make cron-install`).
 
@@ -171,9 +175,11 @@ make up STACK=komga     # ne dépend que de Traefik
 > Puis *Settings → Libraries → Add* →
 > `/data_root/.transmission/data/completed/bd`.
 
-`make up` crée au préalable les dossiers de config de Seerr et Komga (sinon
-Docker les créerait en root et les services crasheraient), ainsi que
-`completed/bd`.
+`make up` (et `make recyclarr-sync`) crée au préalable **tous** les dossiers
+de données montés par la stack, au nom de l'utilisateur qui lance `make` :
+laissés à Docker, ils naîtraient en root et presque tous les services
+planteraient en boucle sur `Permission denied` (vérifié sur une installation
+neuve le 2026-09-29).
 
 ## ③ Provisionnement
 

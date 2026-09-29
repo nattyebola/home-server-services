@@ -31,6 +31,7 @@ touchent toutes les stacks.
 | Seerr propose de redemander un titre déjà là | pas de bibliothèque Jellyfin sur `library/` | [Médias](medias.md#seerr) |
 | clearr : bandeau rouge après une suppression, ou « Purge refusée » | arr injoignable au moment de la suppression ; données Transmission non montées | [clearr](clearr.md#pièges-connus) |
 | Un port paraît ouvert au WAN quand on teste depuis le serveur | `/etc/hosts` fait résoudre le domaine vers l'IP LAN | [Installation](installation.md#hôte--etchosts) |
+| Un service plante en boucle sur `Permission denied` / `EACCES` au premier démarrage | dossier de données créé en root par Docker (démarré sans `make up`) | [plus bas](#arborescences-fantômes-en-root) |
 | BD illisible dans Komga | `.cbr` en RAR5 ou archive « solid » | [Komga](komga.md#pièges-connus) |
 | Avertissements de sécurité dans l'admin Nextcloud | `security-headers` remis sur son routeur | [Nextcloud](nextcloud.md#pièges-connus) |
 | Une tâche cron « réussit » à la main mais pas sous cron | `%` non échappé | [Exploitation](exploitation.md#tâches-planifiées) |
@@ -71,9 +72,13 @@ les permissions du secret, ni assouplir le `cap_drop`.
 
 Un chemin d'exemple non remplacé dans un override, ou un dossier monté qui
 n'existe pas encore, est créé par Docker **en root**. Les services non-root
-crashent alors en `EACCES`. `make up` crée à l'avance les dossiers connus
-(Seerr, Komga, `traefik/dynamic/`) ; pour le reste, remplir les `.example`
-avant de les utiliser.
+crashent alors en `EACCES`. `make up` et `make recyclarr-sync` créent à
+l'avance **tous** les dossiers montés sous `DATA_ROOT` et sous le dépôt
+(`scripts/ensure-bind-dirs.py`, qui lit `docker compose config`). Hors de ces
+deux racines (chemins propres à la machine, dans un override), rien n'est
+créé : remplir les `.example` avant de les utiliser.
+Un dossier déjà créé en root se répare par `sudo chown -R <PUID>:<PGID> …`,
+conteneur arrêté.
 
 ### DNS du FAI menteur
 

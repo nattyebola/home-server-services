@@ -17,7 +17,6 @@ flowchart LR
     end
     src --> Restic[("sauvegarde/<br>dépôt restic chiffré")]
     Restic -->|"check 5 %<br>forget --keep-weekly 8"| Restic
-    Restic -.->|"si l'infra a changé"| Tag["tag git backup-AAAA-MM-JJ<br>poussé sur origin"]
 ```
 
 ## Ce qui est dedans, et ce qui n'y est pas
@@ -63,17 +62,38 @@ un dossier à part, puis **affiche** les étapes, à faire à la main :
 
 ```mermaid
 flowchart TD
-    R["make restore SNAPSHOT=…"] --> Z["0 · git checkout de l'infra de la sauvegarde<br>+ épingler les digests du manifeste"]
+    R["make restore SNAPSHOT=…"] --> Z["0 · rester sur la version actuelle du dépôt<br>(épingler un digest seulement si un service refuse ses données)"]
     Z --> A["1 · recopier .env, .env.shared,<br>fichiers secrets"]
     A --> B["2 · par stack, conteneurs ARRÊTÉS :<br>rsync des configs arr / jellyfin / seerr / transmission"]
     B --> C["3 · Nextcloud : webroot, puis db-next seul<br>et import du dump"]
     C --> D["4 · make up (traefik d'abord), make test,<br>make dashboard-refresh, retirer l'épinglage"]
 ```
 
+### Sur une machine neuve
+
+Testé de bout en bout le 2026-09-29 sur une VM vierge : les 20 comptages
+vérifiés (séries, épisodes, films, indexeurs, éléments Jellyfin, fichiers,
+agendas et partages Nextcloud, demandes Seerr, BD Komga) sont identiques à la
+prod.
+
+```sh
+git clone <url-du-repo> ~/server && cd ~/server   # même chemin qu'avant si possible
+cp -a <disque de sauvegarde>/restic-repo sauvegarde/
+install -m 600 <mot de passe du gestionnaire> ~/.config/server-restic-password
+make restore SNAPSHOT=latest    # pas besoin de .env.shared : il est dans la sauvegarde
+```
+
+`make restore` retrouve dans le snapshot le `DATA_ROOT` et le chemin du dépôt
+d'origine, et affiche les commandes avec les bons chemins, y compris s'ils ont
+changé (il le signale alors).
+
 > [!TIP]
-> L'historique git a été réécrit le 2026-08-09 : les SHA notés dans les
-> snapshots plus anciens n'existent plus. Repartir du **tag `backup-*`** de la
-> même date.
+> **Pas de retour à l'infra de la sauvegarde** : la version actuelle du dépôt
+> relit les données des précédentes, et revenir en arrière réintroduirait des
+> bugs corrigés depuis. Le commit de la sauvegarde n'est affiché que pour
+> information (il n'existe plus pour les snapshots d'avant le 2026-08-09,
+> l'historique ayant été réécrit). Les tags `backup-*` ont été supprimés le
+> 2026-09-29.
 
 ## Pièges connus
 
@@ -88,5 +108,13 @@ flowchart TD
   réelle retombe à un seul snapshot.
 - **Restaurer à chaud** écraserait des bases SQLite ouvertes (arr, Jellyfin) :
   toujours `make down STACK=…` avant le `rsync`.
+- **Pièges trouvés en restaurant sur une machine vierge** (corrigés dans
+  `restore.sh`) : `make restore` exigeait un `.env.shared` qui n'existe que
+  dans la sauvegarde ; `rsync` ne crée pas les dossiers parents (d'où les
+  `mkdir -p`) ; l'import Postgres partait avant la fin de l'initialisation du
+  cluster (d'où l'attente) ; un cluster neuf naît avec une base `nextcloud`
+  vide, à supprimer avant l'import.
+- **La stack `vpn` d'une machine de test ne doit pas démarrer** : elle
+  ouvrirait une seconde session AirVPN avec les mêmes identifiants.
 - Un fichier secret ajouté à la stack doit l'être aussi à `scripts/backup.sh`,
   qui ne collecte automatiquement que les `.env`.

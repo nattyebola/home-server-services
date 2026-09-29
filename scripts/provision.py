@@ -431,7 +431,7 @@ def command_keys(shared, done, skipped, errors):
 
 # --- services : 9c ----------------------------------------------------------
 
-def provision_jellyfin_libraries(jellyfin_key, done, skipped):
+def provision_jellyfin_libraries(jellyfin_key, data_root, done, skipped):
     """Une clé API suffit ici (vérifié le 2026-08-05 en créant puis supprimant une
     bibliothèque jetable) : Jellyfin la traite comme une session élevée pour
     /Library/VirtualFolders. Pas besoin des identifiants admin, contrairement à
@@ -447,6 +447,14 @@ def provision_jellyfin_libraries(jellyfin_key, done, skipped):
                 skipped.append(f"bibliothèque Jellyfin {library['name']!r} existe mais ne "
                                f"contient pas {library['path']} — à vérifier à la main")
             continue
+        # Jellyfin refuse une bibliothèque sur un chemin inexistant (400,
+        # « The specified path does not exist »). Sur une installation neuve ces
+        # dossiers n'étaient créés que PLUS LOIN dans ce même script, par les
+        # root folders Sonarr/Radarr : vu le 2026-09-29 en rejouant
+        # l'installation sur une VM. Même règle que provision_root_folders :
+        # créer le dossier hôte d'abord (/library == ${DATA_ROOT}/library).
+        os.makedirs(os.path.join(data_root, "library", library["path"][len("/library/"):]),
+                    exist_ok=True)
         request(PROXY_CONTAINER,
                 f"{JELLYFIN_URL}/Library/VirtualFolders"
                 f"?name={urllib.parse.quote(library['name'])}"
@@ -849,10 +857,14 @@ def provision_seerr(shared, arr_env, done, skipped):
         changed = True
 
     if not settings.get("jellyfin", {}).get("libraries"):
-        # sync=true force Seerr à réinterroger Jellyfin plutôt que de rendre son
-        # cache : sur une installation neuve il n'a encore jamais vu les
-        # bibliothèques créées juste avant.
-        libraries = seerr_request("/settings/jellyfin/library?sync=true",
+        # POST …/library/sync force Seerr à réinterroger Jellyfin plutôt que de
+        # rendre son cache : sur une installation neuve il n'a encore jamais vu
+        # les bibliothèques créées juste avant. Seerr 3.x a remplacé l'ancien
+        # `GET …/library?sync=true` (et `?enable=`) de Jellyseerr par cette route
+        # et un PUT par bibliothèque : l'ancienne forme répondait 400 « Unknown
+        # query parameter 'sync' » — vu le 2026-09-29 en rejouant l'installation
+        # sur une VM neuve, invisible en prod où Seerr était déjà configuré.
+        libraries = seerr_request("/settings/jellyfin/library/sync", "POST", {},
                                    api_key=seerr_key) or []
         wanted = {library["name"] for library in JELLYFIN_LIBRARIES}
         enable = [library["id"] for library in libraries if library["name"] in wanted]
@@ -860,8 +872,9 @@ def provision_seerr(shared, arr_env, done, skipped):
             skipped.append("Seerr : aucune des bibliothèques attendues n'est visible côté "
                            "Jellyfin — bibliothèques créées ?")
         else:
-            seerr_request(f"/settings/jellyfin/library?enable={','.join(enable)}",
-                          api_key=seerr_key)
+            for library_id in enable:
+                seerr_request(f"/settings/jellyfin/library/{library_id}", "PUT",
+                              {"enabled": True}, api_key=seerr_key)
             done.append(f"Seerr : {len(enable)} bibliothèque(s) Jellyfin activée(s)")
             changed = True
 
@@ -955,7 +968,7 @@ def command_services(shared, done, skipped, errors):
         jellyfin_key = arr_env.get("JELLYFIN_API_KEY")
         if not jellyfin_key:
             raise Skipped("JELLYFIN_API_KEY absente de arr/.env — `make api-keys` d'abord")
-        provision_jellyfin_libraries(jellyfin_key, done, skipped)
+        provision_jellyfin_libraries(jellyfin_key, shared["DATA_ROOT"], done, skipped)
 
     run_step("bibliothèques Jellyfin", jellyfin_libraries, done, skipped, errors)
 
