@@ -111,6 +111,11 @@ services:
     depends_on:
       app:
         condition: service_healthy
+        # nginx résout `app` une seule fois, au démarrage, et garde son IP : app
+        # recréé seul (changement de config) = nouvelle IP, web frappe l'ancienne
+        # et Traefik sert des 502. Vu le 2026-09-29 après un `make up` qui n'a
+        # recréé qu'app et db-next. `restart: true` fait relancer web avec app.
+        restart: true
     # status.php is proxied through to app's php-fpm (see app's healthcheck
     # above) — also catches app being unreachable from web, not just nginx
     # itself being stuck.

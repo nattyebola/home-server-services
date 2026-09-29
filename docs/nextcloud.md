@@ -51,6 +51,11 @@ boucle (404/504), et doublait le job interne.
 
 ## Pièges connus
 
+- **502 après un `make up` qui ne recrée que `app`** : nginx (`web`) résout
+  `app` une fois au démarrage et garde son ancienne IP. Corrigé le 2026-09-29
+  (`depends_on: app: restart: true` sur `web`) ; sur une version antérieure,
+  `make restart STACK=nextcloud`.
+
 - **Pas de `security-headers` Traefik sur Nextcloud.** Son contrôle de
   sécurité exige `X-Robots-Tag: noindex,nofollow` et `X-Frame-Options:
   sameorigin` à l'identique, et le middleware partagé les écrasait. Les

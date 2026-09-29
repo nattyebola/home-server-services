@@ -33,6 +33,7 @@ touchent toutes les stacks.
 | Un port paraît ouvert au WAN quand on teste depuis le serveur | `/etc/hosts` fait résoudre le domaine vers l'IP LAN | [Installation](installation.md#hôte--etchosts) |
 | Un service plante en boucle sur `Permission denied` / `EACCES` au premier démarrage | dossier de données créé en root par Docker (démarré sans `make up`) | [plus bas](#arborescences-fantômes-en-root) |
 | BD illisible dans Komga | `.cbr` en RAR5 ou archive « solid » | [Komga](komga.md#pièges-connus) |
+| Nextcloud ou Transmission en **502** juste après un `make up` | un relais nginx garde l'ancienne IP du conteneur recréé derrière lui (corrigé le 2026-09-29 : `restart: true` sur `nextcloud/web`, résolution dynamique sur `vpn/proxy` et `vpn/webproxy`) | [Nextcloud](nextcloud.md#pièges-connus) |
 | Avertissements de sécurité dans l'admin Nextcloud | `security-headers` remis sur son routeur | [Nextcloud](nextcloud.md#pièges-connus) |
 | Une tâche cron « réussit » à la main mais pas sous cron | `%` non échappé | [Exploitation](exploitation.md#tâches-planifiées) |
 | Un réglage arr corrigé « déjà à jour » alors qu'il a dérivé | écriture Servarr asynchrone (`202`) | [Téléchargement](telechargement.md#pièges-connus-1) |
