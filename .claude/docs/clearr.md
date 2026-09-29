@@ -446,6 +446,16 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   Removarr...) : aucun ne couvre « suppression Sonarr/Radarr → nettoyage
   automatique du client torrent », trou connu et non résolu de l'écosystème
   *arr (cf. issue ManiMatter/decluttarr#292).
+- **ABS = aucune donnée sur le disque, `incomplete/` compris** (2026-09-29,
+  `core.has_partial_files`). Un téléchargement en cours n'a rien sous son
+  `downloadDir` : Transmission écrit dans `incomplete/`
+  (`incomplete-dir-enabled`) en `.part` (`rename-partial-files`) et ne déplace
+  qu'à la fin. Il sortait donc ABS, et « Purger les ABS » l'aurait supprimé
+  données comprises. `INCOMPLETE_ROOT` suit `TRANSMISSION_INCOMPLETE_DIR` de
+  `vpn/docker-compose.yml` : à changer ensemble. Contrôle fait seulement pour
+  un torrent déjà sans fichier sous son downloadDir, donc aucun stat de plus
+  sur les autres ; pas un critère `percentDone` (un torrent arrêté à 99,9 %
+  dont les données ont disparu doit rester ABS).
 - TUI seulement : marqueur `'M'` pour un torrent dont le fichier a disparu
   (cas Transmission « No data found! », jamais nettoyé tout seul) +
   `Maj+P` pour les purger en masse (refusé, comme « Purger les ABS » du web,

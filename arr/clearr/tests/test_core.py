@@ -889,5 +889,43 @@ class OrphansFingerprint(unittest.TestCase):
         self.assertNotEqual(core.orphans_fingerprint(a), core.orphans_fingerprint([("/l/a.mkv", 11), a[1]]))
         self.assertNotEqual(core.orphans_fingerprint([]), core.orphans_fingerprint(a))
 
+
+class TelechargementEnCoursPasABS(unittest.TestCase):
+    """Un torrent en cours n'a rien sous son downloadDir : Transmission écrit
+    dans incomplete/, en `.part`. Il sortait ABS, et « Purger les ABS »
+    l'aurait supprimé avec ses données. ABS doit rester « données absentes
+    du disque », où qu'elles soient."""
+
+    def setUp(self):
+        self.addCleanup(setattr, core, "TransmissionClient", core.TransmissionClient)
+        self.torrents = [
+            {"id": 1, "name": "EnCours", "downloadDir": "/data/completed/anime", "addedDate": 0,
+             "totalSize": 4, "percentDone": 0.4, "uploadRatio": 0.0, "status": 4,
+             "files": [{"name": "EnCours/ep01.mkv", "length": 4}], "trackerStats": []},
+            {"id": 2, "name": "Disparu", "downloadDir": "/data/completed/anime", "addedDate": 0,
+             "totalSize": 4, "percentDone": 1.0, "uploadRatio": 0.0, "status": 6,
+             "files": [{"name": "Disparu/ep01.mkv", "length": 4}], "trackerStats": []},
+        ]
+        torrents = self.torrents
+
+        class Client:
+            def list_torrents(self):
+                return [dict(t) for t in torrents]
+        core.TransmissionClient = Client
+        self.part = touch(Path(core.INCOMPLETE_ROOT, "EnCours", "ep01.mkv.part"))
+        # Lambda : un test remplace self.part, c'est le fichier courant à retirer.
+        self.addCleanup(lambda: os.remove(self.part))
+
+    def test_en_cours_pas_abs_disparu_abs(self):
+        state = core.load_full_state()
+        self.assertNotIn(1, state["missing_ids"], "téléchargement en cours (fichier .part) marqué ABS")
+        self.assertIn(2, state["missing_ids"], "un torrent vraiment sans données doit rester ABS")
+
+    def test_partiel_sans_suffixe(self):
+        """rename-partial-files peut être désactivé : le nom nu compte aussi."""
+        os.remove(self.part)
+        self.part = touch(Path(core.INCOMPLETE_ROOT, "EnCours", "ep01.mkv"))
+        self.assertNotIn(1, core.load_full_state()["missing_ids"])
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -55,6 +55,10 @@ TRANSMISSION_DATA_ROOT = os.path.join(DATA_ROOT, ".transmission", "data")
 # récupérés à la main, hors de tout suivi Sonarr/Radarr — voir la section
 # "Titres hors Sonarr/Radarr" plus bas.
 COMPLETED_ROOT = os.path.join(TRANSMISSION_DATA_ROOT, "completed")
+# Téléchargements en cours (TRANSMISSION_INCOMPLETE_DIR=/data/incomplete dans
+# vpn/docker-compose.yml, même montage .transmission/data) : voir
+# has_partial_files.
+INCOMPLETE_ROOT = os.path.join(TRANSMISSION_DATA_ROOT, "incomplete")
 # Bibliothèque BD/comics/mangas de komga/ : la catégorie `bd` du client de
 # téléchargement de Prowlarr y dépose les grabs des catégories newznab Books.
 # Komga lit ces fichiers TELS QUELS, il n'y a aucun hardlink vers library/ —
@@ -2070,6 +2074,22 @@ def analyze_torrent_files(host_files, library_index):
     return linked, not any_exists, inodes
 
 
+def has_partial_files(torrent):
+    """True si un fichier du torrent existe encore sous incomplete/, sous son
+    nom ou en `.part`. Un téléchargement EN COURS n'a rien sous son
+    downloadDir : Transmission écrit dans incomplete/ (`incomplete-dir-enabled`)
+    en suffixant `.part` (`rename-partial-files`), et ne déplace vers
+    completed/ qu'à la fin. Sans ce contrôle, tout torrent en cours sortait
+    ABS — et « Purger les ABS » l'aurait supprimé, données comprises.
+    Appelé seulement pour un torrent déjà sans fichier sous son downloadDir :
+    aucun stat de plus sur les autres."""
+    for f in torrent.get("files", []):
+        path = os.path.join(INCOMPLETE_ROOT, f["name"])
+        if os.path.lexists(path) or os.path.lexists(path + ".part"):
+            return True
+    return False
+
+
 def is_cross_seed_entry(torrent):
     """True si ce torrent est une entrée injectée par arr/cross-seed (pas le
     téléchargement d'origine) — son downloadDir vit sous le sous-dossier
@@ -2259,6 +2279,9 @@ def load_full_state():
     linked_ids, missing_ids = set(), set()
     for t in all_torrents:
         linked, missing, inodes = analyze_torrent_files(torrent_host_files(t), library_index)
+        # ABS = données absentes du disque, pas « pas encore arrivées dans
+        # completed/ » : un téléchargement en cours vit sous incomplete/.
+        missing = missing and not has_partial_files(t)
         t["_linked"] = linked
         t["_missing"] = missing
         t["_inodes"] = inodes

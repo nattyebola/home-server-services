@@ -58,6 +58,8 @@ services:
       # reste du dépôt en dépend en dur.
       - TRANSMISSION_DOWNLOAD_DIR=/data/completed
       - TRANSMISSION_INCOMPLETE_DIR=/data/incomplete
+      # (clearr y cherche les téléchargements en cours : INCOMPLETE_ROOT de
+      # arr/clearr/app/core.py, à changer ensemble)
       - TRANSMISSION_INCOMPLETE_DIR_ENABLED=true
       # 002 : les fichiers écrits par Transmission doivent rester inscriptibles
       # par le groupe, sinon Sonarr/Radarr (mêmes PUID/PGID) ne peuvent plus

@@ -53,7 +53,7 @@ flowchart TD
 
 | Onglet | Contenu |
 |---|---|
-| **Torrents** | tous les torrents : âge, taille, ratio, tracker (résolu via Prowlarr). Les cross-seeds sont regroupés sous leur téléchargement d'origine. Marqueurs **BIB** (lié à `library/`) et **ABS** (fichier disparu du disque). |
+| **Torrents** | tous les torrents : âge, taille, ratio, tracker (résolu via Prowlarr). Les cross-seeds sont regroupés sous leur téléchargement d'origine. Marqueurs **BIB** (lié à `library/`) et **ABS** (données disparues du disque — un téléchargement en cours, dont les fichiers sont encore sous `incomplete/`, n'est pas ABS). |
 | **BD** | les torrents sous `completed/bd`, c'est-à-dire la bibliothèque [Komga](komga.md). ⚠️ Supprimer une BD n'en laisse **aucun autre exemplaire**. |
 | **Séries** / **Animés** | la liste Sonarr, séparée par le type de série Sonarr (`anime` ou non) |
 | **Films** | la liste Radarr |
@@ -95,6 +95,7 @@ les affiche.
 | Symptôme | Cause | Quoi faire |
 |---|---|---|
 | Bandeau rouge « action(s) Sonarr/Radarr ont ÉCHOUÉ » après une suppression | l'arr n'a pas répondu : fichiers partis, titre peut-être encore suivi | retirer le titre (ou désactiver la saison) à la main dans Sonarr/Radarr, sinon il revient |
+| Un torrent en cours de téléchargement marqué ABS (avant le 2026-09-29) | clearr ne cherchait ses fichiers que sous `completed/` | corrigé : `incomplete/` (et les `.part`) compte aussi |
 | « Purge refusée » sur les ABS | données Transmission non montées | vérifier le disque et le montage, puis `make restart STACK=arr` |
 | Un pack de films emporte d'autres films | un torrent = un seul lot de fichiers | la confirmation (web et Kodi ≥ 1.1.1) liste les autres titres touchés |
 
