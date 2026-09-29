@@ -70,7 +70,7 @@ ARRS = {
 
 # Nom de l'application déclarée côté Jellyfin pour la clé API créée par `keys`.
 # Une seule clé sert à tout ce qui parle à Jellyfin (Sonarr/Radarr via leur
-# connexion, Seerr, clearr) — voir ARCHITECTURE.md, pas de clé par service.
+# connexion, Seerr, clearr) — voir docs/medias.md, pas de clé par service.
 JELLYFIN_KEY_APP = "server (infra as code)"
 
 # 9c — bibliothèques Jellyfin, une par Root Folder arr (voir ARR_ROOT_FOLDERS).
@@ -99,7 +99,7 @@ JELLYFIN_METADATA_READER_ORDER = ["Nfo"]
 
 # 12f — Root Folders. Le préfixe /data_root est essentiel : Sonarr/Radarr
 # montent tout ${DATA_ROOT} en un seul volume, condition du hardlink à l'import
-# (voir ARCHITECTURE.md).
+# (voir docs/telechargement.md, section Hardlinks).
 ARR_ROOT_FOLDERS = {
     "sonarr": ["/data_root/library/series", "/data_root/library/anime"],
     "radarr": ["/data_root/library/film"],
@@ -173,7 +173,7 @@ ARR_TAGS = ["pour-les-enfants"]
 
 # 12g — Connection "Custom Script" pour cross-seed. Custom Script et pas
 # Webhook : le type Webhook envoie un payload de test factice que cross-seed
-# rejette, ce qui empêche d'enregistrer la connexion (voir ISSUES.md). Le chemin
+# rejette, ce qui empêche d'enregistrer la connexion (voir docs/telechargement.md). Le chemin
 # est celui du montage dans arr/docker-compose.yml.
 CROSS_SEED_SCRIPT = "/config/custom-cross-seed-notify.sh"
 # Sonarr seulement : finaleType n'existe pas côté Radarr.

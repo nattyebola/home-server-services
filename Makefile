@@ -51,7 +51,7 @@ require-env-shared:
 	@test -f .env.shared || { \
 		echo "" >&2; \
 		echo "  .env.shared est absent." >&2; \
-		echo "  C'est l'étape 2 de l'installation (voir README.md) :" >&2; \
+		echo "  C'est l'étape 2 de l'installation (voir docs/installation.md) :" >&2; \
 		echo "" >&2; \
 		echo "      cp .env.shared.example .env.shared" >&2; \
 		echo "      \$$EDITOR .env.shared      # PUID/PGID/DOMAIN/DATA_ROOT/LAN_CIDR…" >&2; \

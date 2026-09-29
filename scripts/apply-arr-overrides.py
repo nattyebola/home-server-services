@@ -192,7 +192,7 @@ NYAA_ANIME_CATEGORY = 1
 # déclencheurs. Rien de tout ça n'est propre au déploiement — `jellyfin:8096`
 # est le nom de service Docker (jellyfin/docker-compose.yml) et le mapping
 # découle des montages du repo (Sonarr/Radarr voient /data_root/library via leur
-# mount unique, Jellyfin voit /library via le sien, voir ARCHITECTURE.md). Seule
+# mount unique, Jellyfin voit /library via le sien, voir docs/medias.md). Seule
 # la clé API est un secret, donc la seule valeur en .env (JELLYFIN_API_KEY).
 #
 # Déclencheurs : onDownload/onUpgrade/onRename couvrent l'arrivée d'un fichier
@@ -684,7 +684,7 @@ def apply_jellyfin_connection(label, container, base_url, api_key, jellyfin_key,
     sans la clé, une connexion existante voit quand même ses champs non secrets
     et ses déclencheurs corrigés, mais une connexion absente ne peut pas être
     créée — MissingIntegration, donc une note et pas une erreur (la connexion
-    est documentée comme optionnelle dans README.md : un déploiement sans
+    est documentée comme optionnelle dans docs/installation.md : un déploiement sans
     Jellyfin ne doit pas voir le cron quotidien sortir en échec)."""
     notifications = api_get(container, base_url, api_key, "/notification")
     target = next((n for n in notifications
@@ -694,7 +694,7 @@ def apply_jellyfin_connection(label, container, base_url, api_key, jellyfin_key,
             raise MissingIntegration(
                 f"{label} : aucune connexion Jellyfin ({JELLYFIN_IMPLEMENTATION}) et "
                 "JELLYFIN_API_KEY absente de arr/.env — connexion non gérée "
-                "(voir arr/.env.example et README.md, étape de configuration de arr)")
+                "(voir arr/.env.example et docs/installation.md, étape 14)")
         schema = api_get(container, base_url, api_key, "/notification/schema")
         skeleton = next((s for s in schema
                          if s["implementation"] == JELLYFIN_IMPLEMENTATION), None)

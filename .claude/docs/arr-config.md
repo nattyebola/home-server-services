@@ -173,7 +173,7 @@ ou aux connexions arr → Jellyfin.
   **dans le script** et non en `.env` : `jellyfin:8096` est un nom de service
   Docker et `mapFrom`/`mapTo` découlent des montages du repo, rien là-dedans
   n'identifie ce déploiement.
-  **`MissingIntegration` → `note:` + exit 0**, pas une erreur : `README.md`
+  **`MissingIntegration` → `note:` + exit 0**, pas une erreur : `docs/installation.md`
   donne cette connexion pour optionnelle, un déploiement sans Jellyfin verrait
   sinon le cron quotidien sortir en échec. D'où un 3e canal de sortie dans
   `main()` (`notes`, à côté de `changed`/`errors`) — à réutiliser pour toute

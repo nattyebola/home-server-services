@@ -132,6 +132,12 @@ ligne « résolu » :
   motif (`grep -v AEAD`) avant de chercher les vraies erreurs. Ne le
   remonter que si l'une de ces conditions tombe : ce ne sont alors plus les
   AEAD le constat, c'est la coupure du tunnel.
+- **`traefik-dashboard-1` : `404` sur `/remote.php/dav/public-calendars/…`**
+  (décidé le 2026-09-09). Un abonnement calendrier client pointe sur le
+  domaine nu / `www.` au lieu de `nextcloud.` ; l'utilisateur a choisi de ne
+  pas le corriger. Ni ligne de tableau, ni mention dans la ligne de
+  couverture. Les autres 404 de ce vhost (scans WAN `wp-login.php`, `.env`,
+  `.git/config`…) restent traités normalement.
 
 Les fichiers de log internes (`/config/logs/*.txt` dans les conteneurs
 Servarr) sont plus fiables que `docker logs` quand il faut une fenêtre

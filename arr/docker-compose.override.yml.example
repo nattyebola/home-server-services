@@ -2,8 +2,8 @@
 # ONLY if you want Sonarr/Radarr's organized library on a folder OUTSIDE
 # DATA_ROOT. By default, no override is needed at all: the base
 # docker-compose.yml already mounts ${DATA_ROOT}/library at /library in
-# both sonarr and radarr, and that's the recommended setup (see README.md —
-# "Arr" section — for why a separate organized library exists in the first
+# both sonarr and radarr, and that's the recommended setup (see docs/telechargement.md —
+# "Hardlinks" section — for why a separate organized library exists in the first
 # place, distinct from the raw downloads folder).
 #
 # WARNING: don't copy this file with the placeholder path below left
