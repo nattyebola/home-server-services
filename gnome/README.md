@@ -48,6 +48,9 @@ session (Wayland) — désactiver/réactiver ne recharge pas les modules JS.
 - **Ampoule pleine dans la barre** dès qu'au moins un appareil joignable est
   allumé, vide sinon. L'état n'est relu qu'à l'ouverture du menu : un appareil
   allumé depuis l'app ou la télécommande ne change l'icône qu'à ce moment-là.
+- **Un clic pendant cette relecture l'emporte** : l'état lu avant la commande
+  est ignoré (compteur `clicks` par appareil), sinon l'interrupteur et
+  l'ampoule revenaient sur l'ancienne position.
 
 Diagnostic : `journalctl --user -f | grep govee:` — une ligne par clic et par
 requête API (code HTTP, durée). Un clic doit donner exactement une ligne

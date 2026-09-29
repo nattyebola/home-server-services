@@ -31,7 +31,7 @@ class GoveeIndicator extends PanelMenu.Button {
         this.add_child(this._icon);
 
         this._api = new GoveeCloud();
-        this._devices = []; // [{sku, device, name, on, online, item}]
+        this._devices = []; // [{sku, device, name, on, online, item, clicks}]
         this._error = null;
         this._loaded = false;
         this._refreshing = false;
@@ -58,18 +58,27 @@ class GoveeIndicator extends PanelMenu.Button {
             const list = await this._api.devices();
             const ids = devs => devs.map(d => `${d.device}|${d.name}`).sort().join();
             if (!this._loaded || this._error || ids(list) !== ids(this._devices)) {
-                this._devices = list.map(d => ({...d, on: false, online: true, item: null}))
+                this._devices = list.map(d => ({...d, on: false, online: true, item: null, clicks: 0}))
                     .sort((a, b) => a.name.localeCompare(b.name));
                 this._error = null;
                 this._loaded = true;
                 this._rebuild();
             }
             await Promise.all(this._devices.map(async d => {
+                // Un clic pendant la requête rend sa réponse périmée : l'état a
+                // été lu AVANT la commande, l'appliquer remettrait l'interrupteur
+                // (et l'ampoule) sur l'ancienne position.
+                const clicks = d.clicks;
                 try {
-                    Object.assign(d, await this._api.state(d));
+                    const state = await this._api.state(d);
+                    if (d.clicks !== clicks)
+                        return;
+                    Object.assign(d, state);
                 } catch (e) {
                     if (isCancelled(e))
                         throw e;
+                    if (d.clicks !== clicks)
+                        return;
                     d.online = false;
                     logError(e, `govee: état de ${d.name}`);
                 }
@@ -141,6 +150,7 @@ class GoveeIndicator extends PanelMenu.Button {
 
     async _toggle(d, on) {
         console.log(`govee: clic ${d.name} (${d.sku}) -> ${on ? 'on' : 'off'}`);
+        d.clicks++;
         try {
             await this._api.turn(d, on);
             d.on = on;

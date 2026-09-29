@@ -243,7 +243,6 @@ HELP_KEYS = [
     ("→ / l", "déplier les cross-seeds du torrent sélectionné (vue Torrents)"),
     ("← / h", "replier (vue Torrents)"),
     ("Entrée", "supprimer (vue Torrents) / supprimer toute la série ou le film (vues Séries/Films)"),
-    ("D", "supprimer sans confirmation, même effet qu'Entrée mais sans l'écran de confirmation (les 3 vues)"),
     ("P", "purger tous les torrents marqués ABS (vue Torrents, avec confirmation)"),
     ("?", "cette aide"),
     ("q / Échap", "quitter"),
@@ -324,7 +323,11 @@ def confirm_delete(stdscr, torrent, library_index, cross_seed_groups):
     if arr_plan:
         lines.append((f"Actions Sonarr/Radarr ({len(arr_plan)}) :", curses.A_BOLD | cp(COLOR_LINKED)))
         for action in arr_plan:
-            lines.append((f"  - {action['description']}", cp(COLOR_LINKED)))
+            # Un arr injoignable (core.unreachable_action) n'est pas une action
+            # prévue : en vert, il passerait pour une étape qui va réussir.
+            danger = action["kind"] == "unreachable"
+            lines.append((f"  - {action['description']}",
+                          curses.A_BOLD | cp(COLOR_DANGER) if danger else cp(COLOR_LINKED)))
         lines.append(("", none_attr))
     # host_files seul, pas + lib_matches : mêmes octets physiques comptés deux
     # fois sinon (fichiers library/ hardlinkés, cf. core.apply_deletion).
@@ -449,23 +452,19 @@ def confirm_delete_movie_no_torrent(stdscr, movie):
 
 
 def delete_single_torrent(stdscr, client, torrent, library_index, cross_seed_groups, all_torrents, linked_ids,
-                           missing_ids, confirm=True):
-    """Un seul torrent, avec ou sans écran de confirmation — factorise ce que
-    la vue Torrents (Entrée = confirmé, D = direct) et la vue Films (Entrée
-    sur un film dont find_movie_torrent() a retrouvé le torrent) ont en
-    commun. Renvoie None si l'utilisateur a refusé la confirmation (confirm=
-    True uniquement, D n'en propose pas), sinon (all_torrents,
-    cross_seed_groups, cross_seed_child_ids, freed, arr_failed) — arr_failed à
-    passer à core.arr_failure_note pour le message."""
-    if confirm:
-        result = confirm_delete(stdscr, torrent, library_index, cross_seed_groups)
-        if not result:
-            return None
-        host_files, lib_matches, arr_plan = result
-    else:
-        host_files = core.torrent_host_files(torrent)
-        lib_matches = core.find_library_matches(host_files, library_index)
-        arr_plan = core.plan_arr_actions(lib_matches)
+                           missing_ids):
+    """Un seul torrent, TOUJOURS après l'écran de confirmation — factorise ce
+    que la vue Torrents et la vue Films (Entrée sur un film dont
+    find_movie_torrent() a retrouvé le torrent) ont en commun. La touche D
+    (suppression sans confirmation, jusqu'à la purge d'une série entière sur
+    une seule touche) a été retirée le 2026-09-29. Renvoie None si
+    l'utilisateur a refusé, sinon (all_torrents, cross_seed_groups,
+    cross_seed_child_ids, freed, arr_failed) — arr_failed à passer à
+    core.arr_failure_note pour le message."""
+    result = confirm_delete(stdscr, torrent, library_index, cross_seed_groups)
+    if not result:
+        return None
+    host_files, lib_matches, arr_plan = result
     all_torrents, freed, arr_failed = core.apply_deletion(client, torrent, host_files, lib_matches, arr_plan,
                                                            all_torrents, linked_ids, missing_ids, cross_seed_groups)
     cross_seed_groups, cross_seed_child_ids = core.build_cross_seed_groups(all_torrents)
@@ -644,7 +643,7 @@ def main(stdscr):
             torrent = tree_rows[sel]["torrent"]
             try:
                 result = delete_single_torrent(stdscr, client, torrent, library_index, cross_seed_groups,
-                                                all_torrents, linked_ids, missing_ids, confirm=True)
+                                                all_torrents, linked_ids, missing_ids)
                 if result:
                     all_torrents, cross_seed_groups, cross_seed_child_ids, freed, arr_failed = result
                     session_freed_bytes += freed
@@ -696,7 +695,7 @@ def main(stdscr):
                     # film via movieFile.path et produit tout seul l'action
                     # "radarr_delete".
                     result = delete_single_torrent(stdscr, client, torrent, library_index, cross_seed_groups,
-                                                    all_torrents, linked_ids, missing_ids, confirm=True)
+                                                    all_torrents, linked_ids, missing_ids)
                     if result:
                         all_torrents, cross_seed_groups, cross_seed_child_ids, freed, arr_failed = result
                         movies_list = [m for m in movies_list if m["id"] != movie["id"]]
@@ -717,76 +716,6 @@ def main(stdscr):
                         message_color = COLOR_DANGER
             except Exception as e:
                 core.logger.error("échec de la suppression du film %r : %s", movie["title"], e)
-                message = f"ÉCHEC (voir {core.LOG_PATH}) : {e}"
-                message_color = COLOR_DANGER
-        elif key == ord("D") and view_mode == "torrents" and tree_rows:
-            # Suppression directe, sans écran de confirmation — contrairement
-            # à Entrée. À utiliser en connaissance de cause.
-            torrent = tree_rows[sel]["torrent"]
-            try:
-                all_torrents, cross_seed_groups, cross_seed_child_ids, freed, arr_failed = delete_single_torrent(
-                    stdscr, client, torrent, library_index, cross_seed_groups, all_torrents, linked_ids,
-                    missing_ids, confirm=False)
-                session_freed_bytes += freed
-                session_deletions += 1
-                message = f"Supprimé (sans confirmation) : {torrent['name']}" + core.arr_failure_note(arr_failed)
-                message_color = COLOR_DANGER if arr_failed else COLOR_LINKED
-            except Exception as e:
-                core.logger.error("échec de la suppression rapide de %r : %s", torrent["name"], e)
-                message = f"ÉCHEC (voir {core.LOG_PATH}) : {e}"
-                message_color = COLOR_DANGER
-        elif key == ord("D") and view_mode == "series" and rows:
-            # Même geste que D en vue Torrents (pas d'écran de confirmation)
-            # appliqué à toute la série — même mécanique qu'Entrée sur cette
-            # vue sinon.
-            series = rows[sel]
-            try:
-                matched = core.find_series_torrents(all_torrents, library_index, cross_seed_child_ids,
-                                                     series["path"])
-                # Concaténés avant la confirmation, donc l'écran annonce déjà le
-                # bon total : ces torrents grabés pour la série mais jamais
-                # importés n'ont aucun fichier library/, donc find_series_torrents
-                # ne peut pas les voir. À calculer AVANT execute_delete_series,
-                # qui emporte l'historique Sonarr d'où vient le rattachement.
-                matched += core.series_grabbed_torrents(
-                    series["id"], all_torrents, cross_seed_child_ids,
-                    {t["id"] for t, _hf, _lm in matched})
-                all_torrents, freed, deleted, failed, arr_ok = core.execute_delete_series(
-                    client, series, matched, all_torrents, cross_seed_groups, linked_ids, missing_ids)
-                cross_seed_groups, cross_seed_child_ids = core.build_cross_seed_groups(all_torrents)
-                series_list = [s for s in series_list if s["id"] != series["id"]]
-                session_freed_bytes += freed
-                session_deletions += deleted
-                message = f"Série supprimée (sans confirmation) : {series['title']} ({deleted} torrent(s)"
-                message += f", {failed} échec(s)" if failed else ""
-                message += ")"
-                message += " — RETRAIT SONARR ÉCHOUÉ, série encore suivie" if not arr_ok else ""
-                message_color = COLOR_DANGER if failed or not arr_ok else COLOR_LINKED
-            except Exception as e:
-                core.logger.error("échec de la suppression rapide de la série %r : %s", series["title"], e)
-                message = f"ÉCHEC (voir {core.LOG_PATH}) : {e}"
-                message_color = COLOR_DANGER
-        elif key == ord("D") and view_mode == "films" and rows:
-            # Même geste que D en vue Torrents, appliqué au film — même
-            # mécanique qu'Entrée sur cette vue sinon.
-            movie = rows[sel]
-            try:
-                movie_path = movie["movieFile"]["path"] if movie.get("hasFile") else None
-                torrent = core.find_movie_torrent(all_torrents, cross_seed_child_ids, movie_path) if movie_path else None
-                arr_failed = 0
-                if torrent:
-                    all_torrents, cross_seed_groups, cross_seed_child_ids, freed, arr_failed = delete_single_torrent(
-                        stdscr, client, torrent, library_index, cross_seed_groups, all_torrents, linked_ids,
-                        missing_ids, confirm=False)
-                    session_freed_bytes += freed
-                elif not core.execute_delete_movie_no_torrent(movie):
-                    raise RuntimeError("Radarr n'a pas pu retirer le film, aucun fichier supprimé")
-                movies_list = [m for m in movies_list if m["id"] != movie["id"]]
-                session_deletions += 1
-                message = f"Film supprimé (sans confirmation) : {movie['title']}" + core.arr_failure_note(arr_failed)
-                message_color = COLOR_DANGER if arr_failed else COLOR_LINKED
-            except Exception as e:
-                core.logger.error("échec de la suppression rapide du film %r : %s", movie["title"], e)
                 message = f"ÉCHEC (voir {core.LOG_PATH}) : {e}"
                 message_color = COLOR_DANGER
         elif key == ord("P") and view_mode == "torrents":

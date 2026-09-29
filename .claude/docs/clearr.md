@@ -338,11 +338,12 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   à l'exécution, d'où un test dédié qui verrouille l'ordre. **Si l'unmonitor
   échoue, `execute_delete_seasons` lève sans rien supprimer** (2026-09-29) —
   avant, il enchaînait le DELETE et ne le signalait qu'après coup, donc une
-  fois la recherche déjà relancée. **Non vérifié** : Sonarr répond `202` au
-  `PUT /api/v3/series/{id}` ; toute la protection suppose que ce PUT est
-  appliqué avant la réponse, contrairement à `qualitydefinition` (voir
-  `CLAUDE.md`, écritures Servarr asynchrones). À tester avant de s'y fier
-  davantage. C'est **Sonarr**
+  fois la recherche déjà relancée. **Vérifié le 2026-09-29** :
+  Sonarr répond `202` au `PUT /api/v3/series/{id}`, mais l'écriture est
+  appliquée AVANT la réponse (6 allers-retours sur une saison terminée, relus
+  sans délai : saison et épisodes déjà à jour, aucune commande de recherche
+  lancée). Le piège `202` asynchrone de `qualitydefinition` ne s'applique pas
+  ici, l'ordre unmonitor → DELETE tient. C'est **Sonarr**
   qui retire les hardlinks `library/` (et notifie Jellyfin via
   `onEpisodeFileDelete`, seul déclencheur actif ici — pas de `onSeriesDelete`
   sans purge) ; les torrents ne sont supprimés qu'ensuite. Corollaire :
@@ -452,6 +453,10 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   footer surchargé. Pas de jaquette (curses ne fait que du texte ; une vraie
   image demanderait un protocole terminal ou `chafa`). Les ajouts récents
   sont **web seulement**.
+- **Plus de touche `D` dans la TUI** (retirée le 2026-09-29, à la demande) :
+  elle supprimait sans confirmation dans les 3 vues, jusqu'à purger une série
+  entière (retrait Sonarr + exclusion) sur une seule touche. Toute suppression
+  passe par l'écran de confirmation — ne pas la réintroduire.
 
 ## Addon Kodi « Supprimer avec clearr » (`kodi/context.clearr`)
 
