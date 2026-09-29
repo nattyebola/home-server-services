@@ -27,7 +27,7 @@ flowchart TD
     Plan --> L["Fichiers library/<br>retrouvés par inode"]
     Plan --> O["Fichiers sans torrent<br>dans le dossier du titre"]
     Plan --> A{"Titre connu<br>d'un arr ?"}
-    A -->|"Film"| R["Retiré de Radarr<br>+ exclusion de liste"]
+    A -->|"Film, ou série<br>purgée"| R["Retiré de Radarr / Sonarr<br>+ exclusion de liste"]
     A -->|"Saison terminée,<br>tout supprimé"| S1["Saison non suivie"]
     A -->|"Saison en cours"| S2["Seuls les épisodes<br>supprimés non suivis"]
     A -->|"Non / arr injoignable"| Skip["Volet sauté —<br>les fichiers partent quand même"]
