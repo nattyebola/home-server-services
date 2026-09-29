@@ -37,11 +37,13 @@ l'extension, et `make kodi-install` ne l'écrase jamais si elle existe déjà.
    pour une série).
 2. `POST https://clearr.${DOMAIN}/api/preview/{film,series}` : clearr résout le
    titre et répond ce qui serait supprimé (nombre de torrents, fichiers sans
-   torrent, taille totale).
+   torrent, taille totale, et les **autres titres** qu'un pack emporterait).
 3. Confirmation obligatoire, annonçant ce résumé (« 3 torrents — 15,6 Go »).
 4. `POST https://clearr.${DOMAIN}/api/delete/{film,series}`, même corps.
 5. Une notification Kodi affiche le message renvoyé par clearr (titre supprimé et
-   espace libéré, ou la raison de l'échec), et l'addon s'arrête là.
+   espace libéré, ou la raison de l'échec), et l'addon s'arrête là. Si les
+   fichiers sont partis mais que Sonarr/Radarr n'a pas répondu (`arr_ok: false`),
+   c'est une notification **d'erreur** : le titre peut être encore suivi.
 
 ## Titres hors Sonarr/Radarr
 
@@ -137,6 +139,10 @@ notification.
   n'est libéré** — les données restent seedées. La boîte de confirmation
   distingue alors la taille retirée de la bibliothèque et l'espace réellement
   libéré.
+- **Un film d'un pack emporte les autres films du pack** (un torrent se
+  supprime en entier) et les retire de Radarr. La confirmation les nomme
+  depuis l'addon `1.1.1` ; un addon plus ancien n'en affiche que le compte.
+  Réinstaller avec `make kodi-install`.
 - **Un titre sans identifiant externe ni chemin** dans la base Kodi ne peut pas
   être résolu : l'addon le dit et n'envoie rien.
 - **Un identifiant qui correspond à plusieurs titres** côté Sonarr/Radarr fait

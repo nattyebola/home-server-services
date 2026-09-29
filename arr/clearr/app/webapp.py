@@ -5,6 +5,7 @@
 # recharge qu'une fois au démarrage) — voir CLAUDE.md "risque perf" : mesuré
 # acceptable (<1s) à l'échelle de cette bibliothèque, à revoir si ça dérive.
 import hashlib
+import html
 import os
 import urllib.parse
 
@@ -57,7 +58,10 @@ async def runtime_error_handler(request: Request, exc: RuntimeError):
     # sur un message illisible plutôt que sur la vraie cause.
     if request.url.path.startswith("/api/"):
         return JSONResponse({"deleted": False, "message": f"Erreur : {exc}"}, status_code=503)
-    return HTMLResponse(f'<div class="alert alert-danger m-3">Erreur : {exc}</div>', status_code=503)
+    # Échappé : ce fragment part tel quel dans un innerHTML (clearr.js), et le
+    # texte d'une exception peut porter une donnée venue de l'extérieur.
+    return HTMLResponse(f'<div class="alert alert-danger m-3">Erreur : {html.escape(str(exc))}</div>',
+                        status_code=503)
 
 
 @app.exception_handler(ValueError)
@@ -69,7 +73,8 @@ async def value_error_handler(request: Request, exc: ValueError):
     afficher et tombait sur le repli « clearr a répondu HTTP 500 »."""
     if request.url.path.startswith("/api/"):
         return JSONResponse({"deleted": False, "found": False, "message": str(exc)}, status_code=400)
-    return HTMLResponse(f'<div class="alert alert-warning m-3">{exc}</div>', status_code=400)
+    return HTMLResponse(f'<div class="alert alert-warning m-3">{html.escape(str(exc))}</div>',
+                        status_code=400)
 
 
 # Un POST de formulaire cross-origin est une « simple request » : aucun
@@ -408,6 +413,7 @@ def purge_confirm(sort: str = DEFAULT_SORT["torrents"], reverse: str = "0", filt
     return HTMLResponse(render(
         "confirm_bulk.html",
         torrents=[t["name"] for t in missing_torrents],
+        refusal=core.abs_purge_refusal(state["all_torrents"], state["missing_ids"]),
         sort=sort, reverse=reverse == "1", filter_str=filter,
     ))
 
@@ -421,6 +427,13 @@ def purge_execute(sort: str = Form(DEFAULT_SORT["torrents"]), reverse: str = For
     linked_ids = state["linked_ids"]
     missing_ids = state["missing_ids"]
     cross_seed_groups = state["cross_seed_groups"]
+    # Revérifié ici et pas seulement dans la modale : le montage peut tomber
+    # entre l'affichage et le clic.
+    refusal = core.abs_purge_refusal(all_torrents, missing_ids)
+    if refusal:
+        core.logger.error("purge ABS refusée : %s", refusal)
+        return HTMLResponse(render_torrents_tab(sort, reverse == "1", filter, message=refusal,
+                                                message_kind="danger"))
     missing_torrents = [t for t in all_torrents if t["id"] in missing_ids]
     deleted, failed, skipped = 0, 0, 0
     for torrent in missing_torrents:
@@ -432,8 +445,11 @@ def purge_execute(sort: str = Form(DEFAULT_SORT["torrents"]), reverse: str = For
             host_files = core.torrent_host_files(torrent)
             lib_matches = core.find_library_matches(host_files, library_index)
             arr_plan = core.plan_arr_actions(lib_matches)
-            all_torrents, _freed = core.apply_deletion(client, torrent, host_files, lib_matches, arr_plan,
-                                                         all_torrents, linked_ids, missing_ids, cross_seed_groups)
+            # lib_matches vide pour un ABS (aucun fichier sur disque), donc plan
+            # arr vide et aucun échec arr possible.
+            all_torrents, _freed, _arr_failed = core.apply_deletion(
+                client, torrent, host_files, lib_matches, arr_plan,
+                all_torrents, linked_ids, missing_ids, cross_seed_groups)
             deleted += 1
         except Exception as e:
             core.logger.error("échec de la purge de %r (id=%s) : %s", torrent["name"], torrent["id"], e)
@@ -461,17 +477,26 @@ def library_orphans_confirm(sort: str = DEFAULT_SORT["torrents"], reverse: str =
         orphans=[{"path": os.path.relpath(p, core.LIBRARY_ROOT), "size": core.human_size(s)}
                  for p, s in orphans],
         total_size=core.human_size(sum(s for _p, s in orphans)),
+        fingerprint=core.orphans_fingerprint(orphans),
         sort=sort, reverse=reverse == "1", filter_str=filter,
     ))
 
 
 @app.post("/library/orphans", response_class=HTMLResponse)
 def library_orphans_delete(sort: str = Form(DEFAULT_SORT["torrents"]), reverse: str = Form("0"),
-                           filter: str = Form("")):
+                           filter: str = Form(""), fingerprint: str = Form("")):
     # Recalculé ici plutôt que repris du POST : la liste des chemins à supprimer
-    # ne doit jamais venir du client.
+    # ne doit jamais venir du client. Mais elle doit être CELLE qui a été
+    # affichée : l'empreinte renvoyée par la modale le vérifie (voir
+    # core.orphans_fingerprint), sinon on ne supprime rien.
     state = core.load_full_state()
     orphans = core.library_orphan_files(state)
+    if fingerprint != core.orphans_fingerprint(orphans):
+        core.logger.warning("orphelins library/ : liste changée depuis l'affichage, suppression refusée")
+        return HTMLResponse(render_torrents_tab(
+            sort, reverse == "1", filter, message_kind="warning",
+            message="La liste des orphelins a changé depuis son affichage : rien n'a été supprimé. "
+                    "Rouvrez « Orphelins library/ » pour voir la liste à jour."))
     removed, freed, failed = core.delete_library_orphans(orphans)
     message = f"library/ : {removed} fichier(s) orphelin(s) supprimé(s), {core.human_size(freed)} libéré(s)"
     if failed:
@@ -807,11 +832,12 @@ def torrent_delete(tid: int, sort: str = Form(DEFAULT_SORT["torrents"]), reverse
     lib_matches = core.find_library_matches(host_files, state["library_index"])
     arr_plan = core.plan_arr_actions(lib_matches)
     try:
-        _remaining, freed = core.apply_deletion(state["client"], torrent, host_files, lib_matches, arr_plan,
-                                                  state["all_torrents"], state["linked_ids"], state["missing_ids"],
-                                                  state["cross_seed_groups"])
-        message = f"Supprimé : {torrent['name']} ({core.human_size(freed)} libéré(s))"
-        kind = "success"
+        _remaining, freed, arr_failed = core.apply_deletion(
+            state["client"], torrent, host_files, lib_matches, arr_plan, state["all_torrents"],
+            state["linked_ids"], state["missing_ids"], state["cross_seed_groups"])
+        message = (f"Supprimé : {torrent['name']} ({core.human_size(freed)} libéré(s))"
+                   + core.arr_failure_note(arr_failed))
+        kind = "danger" if arr_failed else "success"
     except Exception as e:
         core.logger.error("échec de la suppression de %r : %s", torrent["name"], e)
         message, kind = f"ÉCHEC (voir {core.LOG_PATH}) : {e}", "danger"
@@ -822,7 +848,10 @@ def torrent_delete(tid: int, sort: str = Form(DEFAULT_SORT["torrents"]), reverse
 # --- suppression d'un titre entier, partagée entre les routes web (vues
 # Séries/Films) et les routes /api/ (menu contextuel Kodi) : la seule différence
 # entre les deux est la façon de rapporter le résultat, pas ce qui est supprimé.
-# Ces deux helpers lèvent sur échec, chaque appelant décidant du rendu. ---
+# Ces deux helpers lèvent quand RIEN n'a été supprimé, et rendent (message,
+# arr_ok) sinon : arr_ok=False veut dire fichiers partis mais titre peut-être
+# encore suivi, à afficher comme un échec (rouge côté web, notification d'erreur
+# côté Kodi). Chaque appelant décide du rendu. ---
 
 def _delete_series(series, state, seasons=None, purge=False):
     """Deux chemins, choisis par l'appelant :
@@ -860,8 +889,8 @@ def _delete_series(series, state, seasons=None, purge=False):
             # la série se remettait en file de téléchargement.
             return (f"Série supprimée : {series['title']}{extra} — ATTENTION : le retrait côté Sonarr "
                     "a ÉCHOUÉ, la série est encore suivie et sera re-téléchargée. À retirer à la main "
-                    "dans Sonarr.")
-        return f"Série supprimée : {series['title']}{extra}"
+                    "dans Sonarr."), False
+        return f"Série supprimée : {series['title']}{extra}", True
 
     plan = core.plan_season_deletion(state, series, seasons or [])
     _t, freed, deleted, failed, arr_ok = core.execute_delete_seasons(
@@ -880,8 +909,8 @@ def _delete_series(series, state, seasons=None, purge=False):
     message = f"{series['title']} — {label} supprimée(s) ({', '.join(parts)}). Série toujours suivie."
     if not arr_ok:
         return (message + " ATTENTION : une écriture Sonarr a ÉCHOUÉ — la saison peut être encore "
-                "suivie et donc re-téléchargée. À vérifier dans Sonarr.")
-    return message
+                "suivie et donc re-téléchargée. À vérifier dans Sonarr."), False
+    return message, True
 
 
 def _delete_movie(movie, state):
@@ -892,10 +921,13 @@ def _delete_movie(movie, state):
         host_files = core.torrent_host_files(torrent)
         lib_matches = core.find_library_matches(host_files, state["library_index"])
         arr_plan = core.plan_arr_actions(lib_matches)
-        _remaining, freed = core.apply_deletion(state["client"], torrent, host_files, lib_matches, arr_plan,
-                                                  state["all_torrents"], state["linked_ids"],
-                                                  state["missing_ids"], state["cross_seed_groups"])
-        return f"Film supprimé : {movie['title']} ({core.human_size(freed)} libéré(s))"
+        _remaining, freed, arr_failed = core.apply_deletion(
+            state["client"], torrent, host_files, lib_matches, arr_plan, state["all_torrents"],
+            state["linked_ids"], state["missing_ids"], state["cross_seed_groups"])
+        # Les fichiers sont partis même si Radarr a échoué : ce n'est pas une
+        # exception, mais l'appelant doit l'afficher comme un échec.
+        return (f"Film supprimé : {movie['title']} ({core.human_size(freed)} libéré(s))"
+                + core.arr_failure_note(arr_failed)), not arr_failed
     # Jamais téléchargé, ou fichier orphelin hors suivi : c'est Radarr qui
     # supprime son propre fichier (voir core.execute_delete_movie_no_torrent).
     if not core.execute_delete_movie_no_torrent(movie):
@@ -903,7 +935,7 @@ def _delete_movie(movie, state):
         # signifie que RIEN n'a été supprimé, d'où une erreur et non un succès.
         raise RuntimeError(f"Radarr n'a pas pu retirer {movie['title']!r} : aucun fichier n'a été "
                            "supprimé. Vérifiez que Radarr répond, puis réessayez.")
-    return f"Film supprimé : {movie['title']}"
+    return f"Film supprimé : {movie['title']}", True
 
 
 # --- suppression d'une série entière (vue Séries) ---
@@ -977,8 +1009,8 @@ def series_delete(sid: int, purge: str = "0", seasons: list[int] = Form(default=
                                                message="Série déjà supprimée.", message_kind="warning"))
     state = core.load_full_state()
     try:
-        message = _delete_series(series, state, seasons=seasons, purge=purge == "1")
-        kind = "success"
+        message, arr_ok = _delete_series(series, state, seasons=seasons, purge=purge == "1")
+        kind = "success" if arr_ok else "danger"
     except ValueError as e:
         # Sélection vide ou saison inconnue : erreur de l'appelant, pas une
         # panne — inutile de renvoyer vers le fichier de log.
@@ -1019,8 +1051,8 @@ def film_delete(mid: int, sort: str = Form(DEFAULT_SORT["films"]), reverse: str 
                                               message="Film déjà supprimé.", message_kind="warning"))
     state = core.load_full_state()
     try:
-        message = _delete_movie(movie, state)
-        kind = "success"
+        message, arr_ok = _delete_movie(movie, state)
+        kind = "success" if arr_ok else "danger"
     except Exception as e:
         core.logger.error("échec de la suppression du film %r : %s", movie["title"], e)
         message, kind = f"ÉCHEC (voir {core.LOG_PATH}) : {e}", "danger"
@@ -1191,6 +1223,16 @@ def _preview_arr_movie(movie, state, target=None):
     torrent = core.find_movie_torrent(state["all_torrents"], state["cross_seed_child_ids"], movie_path) \
         if movie_path else None
     host_files = core.torrent_host_files(torrent) if torrent else []
+    # Ce que le torrent emporte EN PLUS de ce film : un pack de films supprime
+    # tous ses films, et _delete_movie les retire aussi de Radarr (avec
+    # exclusion). La modale web les listait déjà via arr_plan ; la boîte Kodi
+    # n'annonçait qu'un compte et une taille. Même plan que celui qu'exécutera
+    # _delete_movie, pour que l'aperçu ne promette ni plus ni moins.
+    also = []
+    if torrent:
+        lib_matches = core.find_library_matches(host_files, state["library_index"])
+        also = [a["description"] for a in core.plan_arr_actions(lib_matches)
+                if not (a["kind"] == "radarr_delete" and a["movie_id"] == movie["id"])]
     return {
         "title": movie["title"],
         "torrents": 1 if torrent else 0,
@@ -1201,6 +1243,7 @@ def _preview_arr_movie(movie, state, target=None):
         # le couvre, soit c'est Radarr qui supprime son propre fichier.
         "orphan_files": 0,
         "orphans": [],
+        "also": also,
         "size_bytes": sum(s for _p, s in host_files) or movie.get("sizeOnDisk", 0),
     }
 
@@ -1227,7 +1270,12 @@ def _summary(preview, managed_by_arr):
         # restent seedées. Annoncer la seule taille retirée de la bibliothèque
         # ferait attendre un espace disque qui ne se libérera pas.
         size += f" (dont {core.human_size(freed)} libéré(s))"
-    return ", ".join(parts) + f" — {size}"
+    summary = ", ".join(parts) + f" — {size}"
+    if preview.get("also"):
+        # Dans le résumé et pas seulement dans la liste `also` : un addon
+        # antérieur à 1.1.1 n'affiche que ce résumé.
+        summary += f"\n⚠ Touche aussi {len(preview['also'])} autre(s) élément(s) Sonarr/Radarr"
+    return summary
 
 
 def _api_preview(target, find, preview_arr, kind_label):
@@ -1263,8 +1311,12 @@ def _api_delete(target, find, delete_arr, kind_label):
     state = core.load_full_state()
     title = resolved["title"] if mode == "arr" else os.path.basename(resolved.rstrip("/"))
     try:
-        message = delete_arr(resolved, state, target) if mode == "arr" \
-            else _delete_media_path(resolved, state)
+        message, arr_ok = delete_arr(resolved, state, target) if mode == "arr" \
+            else (_delete_media_path(resolved, state), True)
+    except ValueError as e:
+        # Saison inconnue ou sélection vide : erreur de l'appelant, rien n'a été
+        # supprimé — 400 comme sur /api/preview, pas le 500 du bloc suivant.
+        return JSONResponse({"deleted": False, "title": title, "message": str(e)}, status_code=400)
     except Exception as e:
         core.logger.error("API : échec de la suppression de %r : %s", title, e)
         return JSONResponse(
@@ -1272,7 +1324,10 @@ def _api_delete(target, find, delete_arr, kind_label):
             status_code=500,
         )
     core.logger.info("API : %s", message)
-    return {"deleted": True, "title": title, "message": message}
+    # arr_ok=False : fichiers supprimés, mais le titre peut être encore suivi.
+    # L'addon (>= 1.1.1) l'affiche en notification d'erreur ; un addon plus
+    # ancien ignore le champ mais affiche le message, qui le dit aussi.
+    return {"deleted": True, "arr_ok": arr_ok, "title": title, "message": message}
 
 
 def _api_delete_series(series, state, target):

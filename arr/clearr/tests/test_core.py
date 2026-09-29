@@ -766,5 +766,128 @@ class SeriesGrabbedTorrents(unittest.TestCase):
         self.assertTrue(host_files, "les fichiers doivent être résolus, eux")
 
 
+
+class EchecsArrRemontent(unittest.TestCase):
+    """Audit du 2026-09-29 : sur le chemin torrent (vue Torrents, film avec
+    torrent, web comme Kodi), do_delete jetait le compte d'échecs de
+    execute_arr_plan, et un Radarr muet au moment du plan donnait un plan VIDE.
+    Dans les deux cas « Film supprimé » en vert, film toujours suivi, donc
+    re-téléchargé par search-missing."""
+
+    def setUp(self):
+        for name in ("arr_api", "RADARR_API_KEY", "SONARR_API_KEY"):
+            self.addCleanup(setattr, core, name, getattr(core, name))
+        core.RADARR_API_KEY = core.SONARR_API_KEY = "k"
+
+    def test_radarr_muet_au_plan_est_un_echec(self):
+        core.arr_api = lambda *a, **k: None
+        plan, matched = core.plan_radarr_deletion({"/x/film.mkv"})
+        self.assertEqual([a["kind"] for a in plan], ["unreachable"])
+        self.assertEqual(matched, set())
+        self.assertEqual(core.execute_arr_plan(plan), 1)
+
+    def test_radarr_sans_aucun_film_n_alerte_pas(self):
+        """Liste vide = Radarr a répondu, et ce fichier n'est pas un film suivi."""
+        core.arr_api = lambda *a, **k: []
+        self.assertEqual(core.plan_radarr_deletion({"/x/film.mkv"}), ([], set()))
+
+    def test_sonarr_muet_au_plan_est_un_echec(self):
+        core.arr_api = lambda *a, **k: None
+        self.assertEqual([a["kind"] for a in core.plan_sonarr_unmonitor({"/x/e.mkv"})], ["unreachable"])
+
+    def test_echec_du_retrait_radarr_remonte_de_apply_deletion(self):
+        class Client:
+            def remove_torrent(self, _id):
+                pass
+        core.arr_api = lambda base, key, method, path, params=None, json_body=None: (
+            None if method == "DELETE" else {})
+        plan = [{"kind": "radarr_delete", "movie_id": 5, "title": "F", "description": "d"}]
+        _remaining, _freed, arr_failed = core.apply_deletion(
+            Client(), {"id": 1, "name": "t"}, [], [], plan, [{"id": 1}], set(), set(), {})
+        self.assertEqual(arr_failed, 1)
+        self.assertIn("ÉCHOUÉ", core.arr_failure_note(arr_failed))
+        self.assertEqual(core.arr_failure_note(0), "")
+
+
+class UnmonitorEnEchecNeSupprimeRien(unittest.TestCase):
+    """L'ordre unmonitor -> DELETE episodefile ne protège que si l'on s'ARRÊTE
+    quand la première écriture échoue. Avant, on enchaînait le DELETE sur une
+    saison encore suivie : exactement la recherche automatique à éviter."""
+
+    def setUp(self):
+        self.addCleanup(setattr, core, "arr_api", core.arr_api)
+        self.calls = []
+
+        def arr_api(base, key, method, path, params=None, json_body=None):
+            self.calls.append((method, path))
+            return None  # Sonarr qui ne répond pas un instant
+        core.arr_api = arr_api
+
+    def test_leve_sans_aucun_delete(self):
+        plan = {"series": {"id": 7, "title": "S", "path": "/nowhere"}, "seasons": [1],
+                "episode_file_ids": [11], "matched": [], "straddling_paths": [],
+                "covered": set(), "season_dirs": []}
+        with self.assertRaises(RuntimeError):
+            core.execute_delete_seasons(None, plan, [], {}, set(), set())
+        self.assertEqual([m for m, _p in self.calls], ["GET"], "aucune écriture après l'échec")
+
+
+class SeriesEpisodeFilesForme(unittest.TestCase):
+    """Même piège que _arr_covered_paths : {} (corps vide) n'est pas None."""
+
+    def setUp(self):
+        self.addCleanup(setattr, core, "arr_api", core.arr_api)
+
+    def test_reponses_degenerees_levent(self):
+        for reponse in (None, {}, {"message": "Unauthorized"}):
+            with self.subTest(reponse=reponse):
+                core.arr_api = lambda *a, **k: reponse
+                with self.assertRaises(RuntimeError):
+                    core.series_episode_files(1)
+
+    def test_liste_vide_est_valide(self):
+        core.arr_api = lambda *a, **k: []
+        self.assertEqual(core.series_episode_files(1), [])
+
+
+class AbsPurgeRefusal(unittest.TestCase):
+    """Un montage absent rend TOUS les torrents ABS : la purge viderait
+    Transmission. Elle doit refuser dans ce cas, et seulement dans ce cas."""
+
+    def setUp(self):
+        self.marker = touch(Path(core.COMPLETED_ROOT, "anime", "present.mkv"))
+        self.addCleanup(os.remove, self.marker)
+        self.torrents = [{"id": 1}, {"id": 2}, {"id": 3}]
+
+    def test_cas_nominal(self):
+        self.assertIsNone(core.abs_purge_refusal(self.torrents, {2}))
+
+    def test_tous_abs_refuse(self):
+        self.assertIsNotNone(core.abs_purge_refusal(self.torrents, {1, 2, 3}))
+
+    def test_un_seul_torrent_abs_passe(self):
+        """Avec un seul torrent, « tous ABS » ne dit rien d'un montage."""
+        self.assertIsNone(core.abs_purge_refusal([{"id": 1}], {1}))
+
+    def test_completed_absent_refuse(self):
+        """Données non montées : completed/ déplacé le temps du test."""
+        completed = Path(core.COMPLETED_ROOT)
+        moved = completed.with_name("completed.moved")
+        completed.rename(moved)
+        self.addCleanup(moved.rename, completed)
+        self.assertIsNotNone(core.abs_purge_refusal(self.torrents, {2}))
+
+
+class OrphansFingerprint(unittest.TestCase):
+    """Le POST « Orphelins library/ » ne supprime que si la liste recalculée est
+    celle qui a été affichée."""
+
+    def test_stable_et_sensible(self):
+        a = [("/l/a.mkv", 10), ("/l/b.mkv", 20)]
+        self.assertEqual(core.orphans_fingerprint(a), core.orphans_fingerprint(list(a)))
+        self.assertNotEqual(core.orphans_fingerprint(a), core.orphans_fingerprint(a + [("/l/c.mkv", 1)]))
+        self.assertNotEqual(core.orphans_fingerprint(a), core.orphans_fingerprint([("/l/a.mkv", 11), a[1]]))
+        self.assertNotEqual(core.orphans_fingerprint([]), core.orphans_fingerprint(a))
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

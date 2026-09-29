@@ -31,6 +31,7 @@
 # fois le téléchargement d'origine parti, ses cross-seeds n'ont plus rien à
 # seeder. Supprimer un enfant seul ne touche ni au parent ni aux autres
 # cross-seeds.
+import hashlib
 import json
 import logging
 import os
@@ -401,8 +402,10 @@ def plan_radarr_deletion(paths):
     if not RADARR_API_KEY or not paths:
         return [], set()
     movies = arr_api(RADARR_URL, RADARR_API_KEY, "GET", "/api/v3/movie")
-    if not movies:
-        return [], set()
+    if not isinstance(movies, list):
+        # Un plan vide ici laissait supprimer le fichier d'un film que Radarr
+        # continuait de suivre, annoncé « supprimé » en vert — puis re-téléchargé.
+        return [unreachable_action("Radarr", paths)], set()
     plan, matched = [], set()
     for m in movies:
         mf = m.get("movieFile")
@@ -426,8 +429,8 @@ def plan_sonarr_unmonitor(paths):
     if not SONARR_API_KEY or not paths:
         return []
     series_list = arr_api(SONARR_URL, SONARR_API_KEY, "GET", "/api/v3/series")
-    if not series_list:
-        return []
+    if not isinstance(series_list, list):
+        return [unreachable_action("Sonarr", paths)]
     plan = []
     for series in series_list:
         prefix = series["path"] + "/"
@@ -435,12 +438,18 @@ def plan_sonarr_unmonitor(paths):
         if not matched_paths:
             continue
         episodefiles = arr_api(SONARR_URL, SONARR_API_KEY, "GET", "/api/v3/episodefile",
-                                params={"seriesId": series["id"]}) or []
+                                params={"seriesId": series["id"]})
+        if not isinstance(episodefiles, list):
+            plan.append(unreachable_action("Sonarr", matched_paths, series["title"]))
+            continue
         matched_ef_ids = {ef["id"] for ef in episodefiles if ef["path"] in matched_paths}
         if not matched_ef_ids:
             continue
         episodes = arr_api(SONARR_URL, SONARR_API_KEY, "GET", "/api/v3/episode",
-                            params={"seriesId": series["id"]}) or []
+                            params={"seriesId": series["id"]})
+        if not isinstance(episodes, list):
+            plan.append(unreachable_action("Sonarr", matched_paths, series["title"]))
+            continue
         by_season = {}
         for ef in episodefiles:
             by_season.setdefault(ef["seasonNumber"], set()).add(ef["id"])
@@ -472,11 +481,28 @@ def plan_sonarr_unmonitor(paths):
     return plan
 
 
+def unreachable_action(arr_name, paths, title=None):
+    """Action « rien n'a pu être planifié » : l'arr n'a pas répondu au moment de
+    rapprocher les fichiers de ses titres. Elle ne fait rien à l'exécution, mais
+    execute_arr_plan la compte comme un ÉCHEC — c'est tout son rôle. Sans elle,
+    un arr muet donnait un plan vide, indiscernable d'un fichier qu'aucun arr ne
+    suit : la suppression s'annonçait complète, le titre restait suivi. Sa
+    description s'affiche aussi dans la modale, AVANT la confirmation."""
+    what = f'"{title}"' if title else f"{len(paths)} fichier(s) library/"
+    return {
+        "description": f"{arr_name} injoignable : {what} non rapproché(s) — si un titre suivi "
+                       "est concerné, il ne sera PAS retiré et sera re-téléchargé",
+        "kind": "unreachable",
+        "arr": arr_name,
+    }
+
+
 def plan_arr_actions(lib_matches):
     """Point d'entrée : chemins déjà trouvés dans library/ (find_library_matches)
-    -> plan d'actions Sonarr/Radarr. Best-effort : une clé API absente ou une
-    instance injoignable réduit juste le plan, ne bloque jamais la suppression
-    des fichiers elle-même."""
+    -> plan d'actions Sonarr/Radarr. Ne bloque jamais la suppression des
+    fichiers elle-même : une clé API absente réduit juste le plan, une instance
+    injoignable y ajoute une action "unreachable" (voir unreachable_action),
+    comptée comme échec à l'exécution."""
     paths = {p for p, _size in lib_matches}
     radarr_plan, matched = plan_radarr_deletion(paths)
     remaining = paths - matched
@@ -509,7 +535,10 @@ def execute_arr_plan(plan):
     arr_failed = 0
     for action in plan:
         try:
-            if action["kind"] == "radarr_delete":
+            if action["kind"] == "unreachable":
+                logger.error("action arr non planifiée : %s", action["description"])
+                arr_failed += 1
+            elif action["kind"] == "radarr_delete":
                 if arr_write(RADARR_URL, RADARR_API_KEY, "DELETE",
                              f"/api/v3/movie/{action['movie_id']}",
                              params={"deleteFiles": "false", "addImportExclusion": "true"},
@@ -545,6 +574,15 @@ def execute_arr_plan(plan):
             logger.warning("échec d'exécution de l'action arr %r : %s", action.get("description"), e)
             arr_failed += 1
     return arr_failed
+
+
+def arr_failure_note(arr_failed):
+    """Suffixe du message affiché après une suppression dont une action arr a
+    échoué — partagé par le web et la TUI pour qu'ils disent la même chose."""
+    if not arr_failed:
+        return ""
+    return (f" — ATTENTION : {arr_failed} action(s) Sonarr/Radarr ont ÉCHOUÉ, le titre peut être "
+            f"encore suivi et donc re-téléchargé. À vérifier (voir {LOG_PATH}).")
 
 
 # --- Vues Séries/Films : suppression d'un titre entier d'un coup (torrents +
@@ -937,8 +975,10 @@ def bulk_delete_torrents(client, matched, all_torrents, linked_ids, missing_ids,
         if torrent["id"] not in current_ids:
             continue
         try:
-            all_torrents, f = apply_deletion(client, torrent, host_files, lib_matches, [], all_torrents,
-                                              linked_ids, missing_ids, cross_seed_groups)
+            # arr_plan=[] : aucun échec arr possible ici, l'action globale suit.
+            all_torrents, f, _arr_failed = apply_deletion(client, torrent, host_files, lib_matches, [],
+                                                          all_torrents, linked_ids, missing_ids,
+                                                          cross_seed_groups)
         except Exception as e:
             logger.error("échec de la suppression groupée de %r (id=%s) : %s", torrent["name"], torrent["id"], e)
             failed += 1
@@ -1048,7 +1088,10 @@ def series_episode_files(series_id):
     seule source qui rattache un fichier à une saison, tout le plan en dépend."""
     files = arr_api(SONARR_URL, SONARR_API_KEY, "GET", "/api/v3/episodefile",
                     params={"seriesId": series_id})
-    if files is None:
+    # La forme, pas seulement None — même piège que dans _arr_covered_paths :
+    # arr_api rend {} sur un corps vide, et {} laissait la suppression ne rien
+    # supprimer tout en s'annonçant réussie (après avoir coupé le suivi).
+    if not isinstance(files, list):
         raise RuntimeError(
             "Sonarr n'a pas répondu : impossible de savoir quel fichier appartient à quelle "
             "saison, donc impossible de supprimer une saison sans risquer d'en emporter une "
@@ -1378,10 +1421,19 @@ def execute_delete_seasons(client, plan, all_torrents, cross_seed_groups, linked
       6. sidecars et dossier de la série si elle vient de perdre son dernier
          fichier — la série elle-même reste suivie dans Sonarr.
 
+    Lève RuntimeError, sans avoir rien supprimé, si l'étape 1 échoue : enchaîner
+    l'étape 2 sur une saison encore suivie déclencherait justement la recherche
+    automatique que cet ordre existe pour empêcher. Avant, on continuait et on
+    ne le signalait qu'une fois le re-téléchargement déjà lancé.
+
     Renvoie (all_torrents, freed, deleted, failed, arr_ok)."""
     series = plan["series"]
-    arr_ok = unmonitor_seasons(series, plan["seasons"])
-    arr_ok = delete_episode_files(plan["episode_file_ids"]) and arr_ok
+    if not unmonitor_seasons(series, plan["seasons"]):
+        raise RuntimeError(
+            f"Sonarr n'a pas pu arrêter le suivi des saisons {plan['seasons']} de {series['title']!r} : "
+            "rien n'a été supprimé (le faire quand même relancerait sa recherche automatique). "
+            "Vérifiez que Sonarr répond, puis réessayez.")
+    arr_ok = delete_episode_files(plan["episode_file_ids"])
 
     all_torrents, freed, deleted, failed, failed_entries = bulk_delete_torrents(
         client, plan["matched"], all_torrents, linked_ids, missing_ids, cross_seed_groups)
@@ -1545,6 +1597,40 @@ def delete_library_orphans(orphans):
             logger.warning("échec de suppression de l'orphelin %s : %s", path, e)
             failed += 1
     return removed, freed, failed
+
+
+def orphans_fingerprint(orphans):
+    """Empreinte de la liste d'orphelins AFFICHÉE dans la modale, renvoyée par
+    le formulaire. Le POST recalcule la liste (aucun chemin ne vient du client)
+    mais refuse de supprimer si elle ne correspond plus à cette empreinte : sans
+    ça, un fichier apparu entre l'affichage et le clic partait sans avoir
+    jamais été annoncé — la règle que suit déjà execute_delete_seasons."""
+    digest = hashlib.sha256()
+    for path, size in orphans:
+        digest.update(f"{path}\0{size}\n".encode("utf-8", "surrogateescape"))
+    return digest.hexdigest()
+
+
+def abs_purge_refusal(all_torrents, missing_ids):
+    """Raison de refuser la purge des ABS, ou None.
+
+    ABS veut dire « les fichiers de CE torrent ont disparu ». Si les données
+    Transmission ne sont plus montées (disque absent, montage raté au
+    démarrage), TOUS les torrents le deviennent d'un coup, et la purge viderait
+    Transmission. Deux signaux : le dossier completed/ absent ou vide, ou plus
+    d'un torrent et aucun qui ait encore un fichier sur le disque."""
+    try:
+        completed_empty = not os.listdir(COMPLETED_ROOT)
+    except OSError:
+        completed_empty = True
+    if completed_empty:
+        return (f"{COMPLETED_ROOT} est absent ou vide : les données Transmission ne semblent pas "
+                "montées. Purge refusée — rien n'a été supprimé.")
+    ids = {t["id"] for t in all_torrents}
+    if len(ids) > 1 and ids <= set(missing_ids):
+        return (f"Les {len(ids)} torrents sont tous marqués ABS : c'est un problème de montage "
+                "plutôt que des fichiers disparus. Purge refusée — rien n'a été supprimé.")
+    return None
 
 
 def cleanup_orphan_files(target_path, root=LIBRARY_ROOT, covered=()):
@@ -2106,7 +2192,9 @@ def do_delete(client, torrent, host_files, lib_matches, arr_plan, dependents=())
             prune_empty_dirs(path)
         except OSError as e:
             logger.warning("échec de suppression du fichier library %s : %s", path, e)
-    execute_arr_plan(arr_plan)
+    # Le compte d'échecs remonte : il était jeté ici, si bien qu'un film dont le
+    # retrait Radarr avait échoué s'affichait « supprimé » en vert, toujours suivi.
+    arr_failed = execute_arr_plan(arr_plan)
     # Un torrent cross-seedé (dependents, voir build_cross_seed_groups) partage
     # l'inode de ce torrent : une fois ce dernier supprimé, ses cross-seeds
     # n'ont plus rien à seeder (données orphelines) — on les supprime avec
@@ -2127,12 +2215,13 @@ def do_delete(client, torrent, host_files, lib_matches, arr_plan, dependents=())
         except Exception as e:
             logger.warning("échec de suppression du cross-seed enfant %r (id=%s) : %s",
                             child["name"], child["id"], e)
+    return arr_failed
 
 
 def apply_deletion(client, torrent, host_files, lib_matches, arr_plan, all_torrents, linked_ids, missing_ids,
                     cross_seed_groups):
     """Effectue la suppression et renvoie (nouvelle liste all_torrents, octets
-    libérés) — factorise ce que les différents points d'entrée (confirmé,
+    libérés, nombre d'actions arr en échec — voir arr_failure_note) — factorise ce que les différents points d'entrée (confirmé,
     direct, purge groupée) ont en commun une fois host_files/lib_matches/
     arr_plan connus. Si torrent est le parent d'un groupe cross-seed, ses
     enfants sont supprimés avec lui (voir do_delete) ; freed ne compte que
@@ -2144,13 +2233,13 @@ def apply_deletion(client, torrent, host_files, lib_matches, arr_plan, all_torre
     host_files — additionner les deux comptait deux fois les mêmes octets
     physiques. host_files seul donne déjà la taille réelle du torrent."""
     dependents = cross_seed_groups.get(torrent["id"], [])
-    do_delete(client, torrent, host_files, lib_matches, arr_plan, dependents)
+    arr_failed = do_delete(client, torrent, host_files, lib_matches, arr_plan, dependents)
     removed_ids = {torrent["id"]} | {c["id"] for c in dependents}
     remaining = [t for t in all_torrents if t["id"] not in removed_ids]
     linked_ids.difference_update(removed_ids)
     missing_ids.difference_update(removed_ids)
     freed = sum(s for _, s in host_files)
-    return remaining, freed
+    return remaining, freed, arr_failed
 
 
 def load_full_state():

@@ -30,6 +30,8 @@
   <input type="hidden" name="sort" value="{{ sort }}">
   <input type="hidden" name="reverse" value="{{ '1' if reverse else '0' }}">
   <input type="hidden" name="filter" value="{{ filter_str }}">
+  {# Empreinte de la liste affichée : le POST refuse si elle a changé (core.orphans_fingerprint). #}
+  <input type="hidden" name="fingerprint" value="{{ fingerprint }}">
   {% if orphans %}
   <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
   <button type="button" class="btn btn-danger btn-sm" data-post="/library/orphans" data-target="#tab-content">Supprimer les {{ orphans|length }} fichier(s)</button>

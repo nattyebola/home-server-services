@@ -132,6 +132,8 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   pour une BD : l'absence de correspondance y est la normale, l'annoncer
   ferait croire à un problème à chaque suppression.
   **La TUI n'a pas bougé**, comme les autres ajouts récents.
+- **Texte d'exception échappé** (`html.escape`) dans les deux handlers
+  d'erreur HTML : le fragment part dans un `innerHTML` (`clearr.js`).
 - **Erreur réseau rendue en bandeau lisible**
   (`@app.exception_handler(RuntimeError)`) plutôt qu'un 500 brut — la TUI
   avait déjà ce filet dans `run()`, le web non (chaque route peut lever
@@ -249,7 +251,10 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   pour orphelin — proposer de supprimer la moitié de `library/` sur un
   timeout serait le pire échec possible de cette fonction.
   Le POST **recalcule** la liste au lieu de reprendre les chemins de la
-  modale : aucun chemin à supprimer ne vient du client.
+  modale : aucun chemin à supprimer ne vient du client. **Mais il refuse si
+  elle diffère de celle affichée** (2026-09-29) : la modale renvoie
+  `core.orphans_fingerprint()` (sha256 des `(chemin, taille)`), sinon un
+  fichier apparu entre l'affichage et le clic partait sans avoir été annoncé.
 - **Fiche détail : agrégé pour une série, complet pour un film.** Série →
   `core.fetch_episode_files()` puis valeurs *distinctes* de qualité /
   groupe / langue / codec / résolution (empiler le `mediaInfo` de 12
@@ -285,7 +290,18 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   ici on supprime tout. Matching par chemin, pas par nom — fiable même si le
   titre affiché diffère (VO/VF, ponctuation).
   Best-effort : un arr injoignable ou un fichier jamais importé ne bloque
-  jamais la suppression des fichiers eux-mêmes.
+  jamais la suppression des fichiers eux-mêmes. **Mais l'échec remonte
+  toujours** (audit du 2026-09-29) : un arr muet au moment du plan donne une
+  action `kind: "unreachable"` (`core.unreachable_action`, visible dans la
+  modale, comptée comme échec par `execute_arr_plan`) au lieu d'un plan vide
+  indiscernable de « aucun arr ne suit ce fichier » ; `apply_deletion` rend
+  `(restants, libéré, arr_failed)` ; `_delete_series`/`_delete_movie` rendent
+  `(message, arr_ok)`. `arr_ok=False` = bandeau rouge web/TUI
+  (`core.arr_failure_note`), `arr_ok: false` dans la réponse `/api/delete`.
+  Avant, `do_delete` jetait le compte d'échecs : un film dont le retrait
+  Radarr avait échoué s'affichait « supprimé » en vert, puis revenait par
+  `search-missing`. Une liste arr **vide** (`[]`) reste un plan vide, pas un
+  échec : l'arr a répondu.
 - **Suppression d'une série SAISON PAR SAISON** (2026-08-30, web + addon
   Kodi). Deux modes, deux boutons distincts dans la modale — jamais une case
   à cocher, l'intention doit se lire dans le bouton cliqué :
@@ -311,13 +327,22 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   saisons entières n'existant que comme fichiers `library/`. `core.
   series_episode_files()` **lève** au lieu de dégrader, comme
   `_arr_covered_paths()` : sans elle on ne supprimerait presque rien tout en
-  s'annonçant réussi.
+  s'annonçant réussi. Elle teste la **forme** (`isinstance(list)`), pas
+  `is None` : `arr_api` rend `{}` sur un corps vide (même trou que celui déjà
+  refermé dans `_arr_covered_paths`, rouvert ici jusqu'au 2026-09-29).
   **Ordre imposé dans `execute_delete_seasons()`** : `unmonitor` **avant**
   `DELETE /api/v3/episodefile/bulk`. Supprimer un episodefile d'une saison
   encore suivie déclenche la recherche automatique interne de Sonarr (piège
   déjà documenté dans `.claude/docs/arr-pieges.md`) — les deux répondent
   200, rien ne le signalerait
-  à l'exécution, d'où un test dédié qui verrouille l'ordre. C'est **Sonarr**
+  à l'exécution, d'où un test dédié qui verrouille l'ordre. **Si l'unmonitor
+  échoue, `execute_delete_seasons` lève sans rien supprimer** (2026-09-29) —
+  avant, il enchaînait le DELETE et ne le signalait qu'après coup, donc une
+  fois la recherche déjà relancée. **Non vérifié** : Sonarr répond `202` au
+  `PUT /api/v3/series/{id}` ; toute la protection suppose que ce PUT est
+  appliqué avant la réponse, contrairement à `qualitydefinition` (voir
+  `CLAUDE.md`, écritures Servarr asynchrones). À tester avant de s'y fier
+  davantage. C'est **Sonarr**
   qui retire les hardlinks `library/` (et notifie Jellyfin via
   `onEpisodeFileDelete`, seul déclencheur actif ici — pas de `onSeriesDelete`
   sans purge) ; les torrents ne sont supprimés qu'ensuite. Corollaire :
@@ -367,7 +392,8 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   des numéros de saison (entiers), le plan est recalculé côté serveur, et une
   saison inconnue de Sonarr est **refusée** (`ValueError` → 400 JSON sur
   `/api/`, via un handler dédié : sans lui l'addon Kodi recevait un 500
-  `text/plain` sans champ `message`).
+  `text/plain` sans champ `message`). `/api/delete` a son propre `except
+  ValueError` → 400, placé avant son `except Exception` (qui rendait 500).
   Les saisons **sans aucun fichier** ne sont pas proposées dans l'UI (One
   Piece en aligne 22) mais restent acceptées par l'API.
   `purge` est un **paramètre d'URL** et non un champ : les deux boutons
@@ -419,7 +445,10 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   *arr (cf. issue ManiMatter/decluttarr#292).
 - TUI seulement : marqueur `'M'` pour un torrent dont le fichier a disparu
   (cas Transmission « No data found! », jamais nettoyé tout seul) +
-  `Maj+P` pour les purger en masse, et un écran d'aide (`?`) plutôt qu'un
+  `Maj+P` pour les purger en masse (refusé, comme « Purger les ABS » du web,
+  par `core.abs_purge_refusal` quand `completed/` est absent/vide ou que TOUS
+  les torrents sont ABS — un montage raté rend tout ABS et la purge viderait
+  Transmission), et un écran d'aide (`?`) plutôt qu'un
   footer surchargé. Pas de jaquette (curses ne fait que du texte ; une vraie
   image demanderait un protocole terminal ou `chafa`). Les ajouts récents
   sont **web seulement**.
@@ -512,6 +541,12 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   **n'écrase jamais un `settings.xml` existant**, Kodi réécrivant lui-même ce
   fichier. Addon **copié** et non symlinké (Kodi refuse un addon dont le
   dossier est un lien sortant de son `addons/`).
+- **Film d'un pack** (addon `1.1.1`, 2026-09-29) : `_preview_arr_movie` rend
+  `also`, les descriptions du plan arr qui ne concernent pas ce film (autres
+  films du torrent, arr injoignable) — même `plan_arr_actions` que
+  l'exécution. Compté aussi dans `summary`, seul champ qu'affiche un addon
+  plus ancien ; `also_lines()` les nomme dans la boîte (plafond 5). La
+  réponse `/api/delete` porte `arr_ok` ; `False` → notification d'erreur.
 - **Pas de jeton d'authentification sur ces routes**, décidé explicitement :
   le service est LAN-only et son UI web expose déjà les mêmes suppressions en
   POST sans jeton — à revoir pour les deux ensemble, jamais pour l'API seule.

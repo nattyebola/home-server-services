@@ -30,15 +30,21 @@ flowchart TD
     A -->|"Film, ou série<br>purgée"| R["Retiré de Radarr / Sonarr<br>+ exclusion de liste"]
     A -->|"Saison terminée,<br>tout supprimé"| S1["Saison non suivie"]
     A -->|"Saison en cours"| S2["Seuls les épisodes<br>supprimés non suivis"]
-    A -->|"Non / arr injoignable"| Skip["Volet sauté —<br>les fichiers partent quand même"]
+    A -->|"Non"| Skip["Volet sauté"]
+    A -->|"arr injoignable"| Fail["Fichiers supprimés,<br>échec affiché en rouge"]
 ```
 
 - **Le lien torrent ↔ bibliothèque passe par l'inode** : il repose sur les
   hardlinks posés à l'import ([Téléchargement](telechargement.md#hardlinks--un-fichier-deux-chemins)).
 - **Pas de re-téléchargement** : le volet arr retire ou désactive le suivi
   de ce qui a été supprimé.
-- **Best-effort** : un arr injoignable ou un fichier jamais importé n'empêche
-  jamais de supprimer les fichiers.
+- **Un arr injoignable n'empêche pas de supprimer les fichiers**, mais ce
+  n'est jamais annoncé comme un succès : bandeau rouge (web, TUI) ou
+  notification d'erreur (Kodi), et l'action manquante apparaît déjà dans la
+  fenêtre de confirmation. Il faut alors vérifier le titre dans Sonarr/Radarr.
+- **Exception : la suppression saison par saison s'arrête** si Sonarr refuse
+  d'arrêter le suivi des saisons. Rien n'est supprimé : effacer une saison
+  encore suivie relancerait sa recherche automatique.
 - **Journal** de chaque suppression dans `${DATA_ROOT}/.clearr.log` (tourné
   chaque semaine). Détail des appels : `CLEARR_LOG_LEVEL=DEBUG` dans
   `arr/docker-compose.yml`.
@@ -67,8 +73,11 @@ les affiche.
 **Actions groupées** (onglet Torrents) :
 
 - **Purger les ABS** retire tous les torrents dont le fichier a disparu.
+  Refusée si `completed/` est absent ou vide, ou si **tous** les torrents
+  sont ABS : c'est alors un montage raté, pas des fichiers disparus.
 - **Orphelins library/** liste les fichiers de `library/` qu'aucun torrent ne
-  couvre et qu'aucun arr ne connaît.
+  couvre et qu'aucun arr ne connaît. Si la liste a changé entre l'affichage et
+  le clic, rien n'est supprimé : il faut rouvrir la fenêtre.
 
 ## Sécurité
 
@@ -77,7 +86,17 @@ les affiche.
 - **Aucun socket Docker** : il parle à Transmission et aux arr par HTTP.
 - **Aucun chemin à supprimer ne vient du navigateur** : tout est recalculé
   côté serveur au moment de la confirmation.
+- **Requêtes d'un autre site refusées** (en-têtes `Origin` / `Sec-Fetch-Site`) :
+  une page web ouverte depuis le LAN ne peut pas déclencher de suppression.
 - **Aucun appel WAN** côté serveur.
+
+## Pièges connus
+
+| Symptôme | Cause | Quoi faire |
+|---|---|---|
+| Bandeau rouge « action(s) Sonarr/Radarr ont ÉCHOUÉ » après une suppression | l'arr n'a pas répondu : fichiers partis, titre peut-être encore suivi | retirer le titre (ou désactiver la saison) à la main dans Sonarr/Radarr, sinon il revient |
+| « Purge refusée » sur les ABS | données Transmission non montées | vérifier le disque et le montage, puis `make restart STACK=arr` |
+| Un pack de films emporte d'autres films | un torrent = un seul lot de fichiers | la confirmation (web et Kodi ≥ 1.1.1) liste les autres titres touchés |
 
 ## Tests
 

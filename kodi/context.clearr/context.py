@@ -159,6 +159,21 @@ def orphan_lines(preview):
     return "\n".join(lines)
 
 
+def also_lines(preview):
+    """Autres titres Sonarr/Radarr touchés par la même suppression — un pack de
+    films emporte tous ses films, et les retire de Radarr. Le résumé n'en donne
+    que le compte ; les nommer ici évite de découvrir après coup qu'un film
+    qu'on voulait garder est parti. Même plafond que orphan_lines, même raison."""
+    also = preview.get("also") or []
+    if not also:
+        return ""
+    shown = also[:MAX_ORPHANS_LISTED]
+    lines = ["", "[B]Emporte aussi :[/B]"] + ["  " + line for line in shown]
+    if len(also) > len(shown):
+        lines.append("  … et {} de plus".format(len(also) - len(shown)))
+    return "\n".join(lines)
+
+
 def notify(message, failed=False):
     xbmcgui.Dialog().notification(
         NAME, message,
@@ -225,8 +240,8 @@ def confirm(label, preview, dbtype, allow_purge):
                  else "Torrents, fichiers et entrée Radarr seront supprimés.")
     else:
         scope = "Titre absent de Sonarr/Radarr : torrents et fichiers seront supprimés."
-    message = "Supprimer {} ?\n\n[B]{}[/B]\n{}{}\n\n{}".format(
-        what, label, preview.get("summary", ""), orphan_lines(preview), scope)
+    message = "Supprimer {} ?\n\n[B]{}[/B]\n{}{}{}\n\n{}".format(
+        what, label, preview.get("summary", ""), orphan_lines(preview), also_lines(preview), scope)
 
     if not allow_purge:
         return 0 if xbmcgui.Dialog().yesno(NAME, message, nolabel="Annuler",
@@ -330,7 +345,9 @@ def main():
     progress.create(NAME, "Suppression de {}…".format(label))
     try:
         result = post_json("{}/api/delete/{}".format(base_url, endpoint), payload)
-        message, failed = result.get("message", "Supprimé."), False
+        # arr_ok=False : fichiers supprimés, mais le titre peut être encore
+        # suivi par Sonarr/Radarr (donc re-téléchargé) — c'est un échec à lire.
+        message, failed = result.get("message", "Supprimé."), result.get("arr_ok") is False
     except urllib.error.HTTPError as exc:
         message, failed = error_message(exc), True
     except Exception as exc:

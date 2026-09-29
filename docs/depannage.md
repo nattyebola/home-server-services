@@ -27,6 +27,7 @@ touchent toutes les stacks.
 | Jellyfin mal rafraîchi après un import, `401` dans les logs arr | forme d'authentification refusée par Jellyfin 12 | [Médias](medias.md#pièges-connus-jellyfin) |
 | Seerr en crash `EACCES` en boucle | dossier de config créé en root | [Médias](medias.md#pièges-connus) |
 | Seerr propose de redemander un titre déjà là | pas de bibliothèque Jellyfin sur `library/` | [Médias](medias.md#seerr) |
+| clearr : bandeau rouge après une suppression, ou « Purge refusée » | arr injoignable au moment de la suppression ; données Transmission non montées | [clearr](clearr.md#pièges-connus) |
 | BD illisible dans Komga | `.cbr` en RAR5 ou archive « solid » | [Komga](komga.md#pièges-connus) |
 | Avertissements de sécurité dans l'admin Nextcloud | `security-headers` remis sur son routeur | [Nextcloud](nextcloud.md#pièges-connus) |
 | Une tâche cron « réussit » à la main mais pas sous cron | `%` non échappé | [Exploitation](exploitation.md#tâches-planifiées) |

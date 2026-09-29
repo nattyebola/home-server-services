@@ -455,7 +455,8 @@ def delete_single_torrent(stdscr, client, torrent, library_index, cross_seed_gro
     sur un film dont find_movie_torrent() a retrouvé le torrent) ont en
     commun. Renvoie None si l'utilisateur a refusé la confirmation (confirm=
     True uniquement, D n'en propose pas), sinon (all_torrents,
-    cross_seed_groups, cross_seed_child_ids, freed)."""
+    cross_seed_groups, cross_seed_child_ids, freed, arr_failed) — arr_failed à
+    passer à core.arr_failure_note pour le message."""
     if confirm:
         result = confirm_delete(stdscr, torrent, library_index, cross_seed_groups)
         if not result:
@@ -465,10 +466,10 @@ def delete_single_torrent(stdscr, client, torrent, library_index, cross_seed_gro
         host_files = core.torrent_host_files(torrent)
         lib_matches = core.find_library_matches(host_files, library_index)
         arr_plan = core.plan_arr_actions(lib_matches)
-    all_torrents, freed = core.apply_deletion(client, torrent, host_files, lib_matches, arr_plan, all_torrents,
-                                               linked_ids, missing_ids, cross_seed_groups)
+    all_torrents, freed, arr_failed = core.apply_deletion(client, torrent, host_files, lib_matches, arr_plan,
+                                                           all_torrents, linked_ids, missing_ids, cross_seed_groups)
     cross_seed_groups, cross_seed_child_ids = core.build_cross_seed_groups(all_torrents)
-    return all_torrents, cross_seed_groups, cross_seed_child_ids, freed
+    return all_torrents, cross_seed_groups, cross_seed_child_ids, freed, arr_failed
 
 
 def main(stdscr):
@@ -645,11 +646,11 @@ def main(stdscr):
                 result = delete_single_torrent(stdscr, client, torrent, library_index, cross_seed_groups,
                                                 all_torrents, linked_ids, missing_ids, confirm=True)
                 if result:
-                    all_torrents, cross_seed_groups, cross_seed_child_ids, freed = result
+                    all_torrents, cross_seed_groups, cross_seed_child_ids, freed, arr_failed = result
                     session_freed_bytes += freed
                     session_deletions += 1
-                    message = f"Supprimé : {torrent['name']}"
-                    message_color = COLOR_LINKED
+                    message = f"Supprimé : {torrent['name']}" + core.arr_failure_note(arr_failed)
+                    message_color = COLOR_DANGER if arr_failed else COLOR_LINKED
             except Exception as e:
                 core.logger.error("échec de la suppression de %r : %s", torrent["name"], e)
                 message = f"ÉCHEC (voir {core.LOG_PATH}) : {e}"
@@ -697,12 +698,12 @@ def main(stdscr):
                     result = delete_single_torrent(stdscr, client, torrent, library_index, cross_seed_groups,
                                                     all_torrents, linked_ids, missing_ids, confirm=True)
                     if result:
-                        all_torrents, cross_seed_groups, cross_seed_child_ids, freed = result
+                        all_torrents, cross_seed_groups, cross_seed_child_ids, freed, arr_failed = result
                         movies_list = [m for m in movies_list if m["id"] != movie["id"]]
                         session_freed_bytes += freed
                         session_deletions += 1
-                        message = f"Film supprimé : {movie['title']}"
-                        message_color = COLOR_LINKED
+                        message = f"Film supprimé : {movie['title']}" + core.arr_failure_note(arr_failed)
+                        message_color = COLOR_DANGER if arr_failed else COLOR_LINKED
                 elif confirm_delete_movie_no_torrent(stdscr, movie):
                     # Sur ce chemin c'est Radarr qui supprime le fichier : son
                     # échec veut dire que rien n'est parti, la ligne reste.
@@ -723,13 +724,13 @@ def main(stdscr):
             # à Entrée. À utiliser en connaissance de cause.
             torrent = tree_rows[sel]["torrent"]
             try:
-                all_torrents, cross_seed_groups, cross_seed_child_ids, freed = delete_single_torrent(
+                all_torrents, cross_seed_groups, cross_seed_child_ids, freed, arr_failed = delete_single_torrent(
                     stdscr, client, torrent, library_index, cross_seed_groups, all_torrents, linked_ids,
                     missing_ids, confirm=False)
                 session_freed_bytes += freed
                 session_deletions += 1
-                message = f"Supprimé (sans confirmation) : {torrent['name']}"
-                message_color = COLOR_LINKED
+                message = f"Supprimé (sans confirmation) : {torrent['name']}" + core.arr_failure_note(arr_failed)
+                message_color = COLOR_DANGER if arr_failed else COLOR_LINKED
             except Exception as e:
                 core.logger.error("échec de la suppression rapide de %r : %s", torrent["name"], e)
                 message = f"ÉCHEC (voir {core.LOG_PATH}) : {e}"
@@ -772,8 +773,9 @@ def main(stdscr):
             try:
                 movie_path = movie["movieFile"]["path"] if movie.get("hasFile") else None
                 torrent = core.find_movie_torrent(all_torrents, cross_seed_child_ids, movie_path) if movie_path else None
+                arr_failed = 0
                 if torrent:
-                    all_torrents, cross_seed_groups, cross_seed_child_ids, freed = delete_single_torrent(
+                    all_torrents, cross_seed_groups, cross_seed_child_ids, freed, arr_failed = delete_single_torrent(
                         stdscr, client, torrent, library_index, cross_seed_groups, all_torrents, linked_ids,
                         missing_ids, confirm=False)
                     session_freed_bytes += freed
@@ -781,8 +783,8 @@ def main(stdscr):
                     raise RuntimeError("Radarr n'a pas pu retirer le film, aucun fichier supprimé")
                 movies_list = [m for m in movies_list if m["id"] != movie["id"]]
                 session_deletions += 1
-                message = f"Film supprimé (sans confirmation) : {movie['title']}"
-                message_color = COLOR_LINKED
+                message = f"Film supprimé (sans confirmation) : {movie['title']}" + core.arr_failure_note(arr_failed)
+                message_color = COLOR_DANGER if arr_failed else COLOR_LINKED
             except Exception as e:
                 core.logger.error("échec de la suppression rapide du film %r : %s", movie["title"], e)
                 message = f"ÉCHEC (voir {core.LOG_PATH}) : {e}"
@@ -793,9 +795,15 @@ def main(stdscr):
             # suppression est indépendante (échec isolé n'interrompt pas les
             # suivantes).
             missing_torrents = [t for t in all_torrents if t["id"] in missing_ids]
+            refusal = core.abs_purge_refusal(all_torrents, missing_ids)
             if not missing_torrents:
                 message = "Aucun torrent avec fichier manquant (marqué ABS)"
                 message_color = COLOR_WARN
+            elif refusal:
+                # Même garde que le web : un montage absent rend TOUT ABS.
+                core.logger.error("purge ABS refusée : %s", refusal)
+                message = refusal
+                message_color = COLOR_DANGER
             elif confirm_bulk_delete(stdscr, missing_torrents):
                 deleted, failed, skipped = 0, 0, 0
                 for torrent in missing_torrents:
@@ -811,9 +819,9 @@ def main(stdscr):
                         host_files = core.torrent_host_files(torrent)
                         lib_matches = core.find_library_matches(host_files, library_index)
                         arr_plan = core.plan_arr_actions(lib_matches)
-                        all_torrents, freed = core.apply_deletion(client, torrent, host_files, lib_matches, arr_plan,
-                                                                   all_torrents, linked_ids, missing_ids,
-                                                                   cross_seed_groups)
+                        all_torrents, freed, _arr_failed = core.apply_deletion(
+                            client, torrent, host_files, lib_matches, arr_plan,
+                            all_torrents, linked_ids, missing_ids, cross_seed_groups)
                         session_freed_bytes += freed
                         session_deletions += 1
                         deleted += 1
