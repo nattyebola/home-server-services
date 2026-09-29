@@ -189,30 +189,68 @@ def describe_target(arr, candidate):
     return series + " " + ", ".join(f"S{e['seasonNumber']:02d}E{e['episodeNumber']:02d}" for e in episodes)
 
 
+def same_download_id(a, b):
+    """Les downloadId de la file sont en MAJUSCULES (Sonarr/Radarr normalisent
+    l'infoHash), alors que Transmission et clearr affichent le hash en
+    minuscules : comparé à la casse près, un `--download-id` copié de là ne
+    correspondait à rien et le script concluait « rien en attente »."""
+    return (a or "").casefold() == (b or "").casefold()
+
+
+def canonical_download_id(arr, api_key, given):
+    """Le downloadId tel que l'arr l'écrit, retrouvé dans sa file sans égard à
+    la casse. Sert aux appels qui prennent l'id tel quel (manualimport,
+    ManualImport) : on ne parie pas sur une comparaison insensible côté arr.
+    Absent de la file = renvoyé inchangé, l'appel suivant dira ce qu'il en est."""
+    queue = api_get(arr, api_key, "/queue?page=1&pageSize=1000"
+                                  f"&{arr['unknown_param']}")
+    for record in queue.get("records", []):
+        if same_download_id(record.get("downloadId"), given):
+            return record["downloadId"]
+    return given
+
+
 def collect(arr, api_key, only_download_id=None):
-    """-> liste de dicts, un par candidat de fichier, enrichis du contexte file."""
-    rows = []
+    """-> liste de dicts, un par candidat de fichier, enrichis du contexte file.
+
+    Regroupé par downloadId AVANT d'interroger manualimport : Sonarr crée une
+    entrée de file PAR ÉPISODE d'un même téléchargement (même downloadId), et
+    manualimport renvoie, lui, tous les fichiers du téléchargement. Un appel par
+    entrée donnait N×N lignes pour un pack de N épisodes, et `apply` envoyait
+    chaque fichier N fois dans le même ManualImport. On garde les ids de toutes
+    les entrées (`queueIds`) : c'est par eux qu'une purge vise la file."""
+    groups = {}
     for record in stuck_queue_records(arr, api_key):
         download_id = record.get("downloadId")
-        if only_download_id and download_id != only_download_id:
+        if only_download_id and not same_download_id(download_id, only_download_id):
             continue
+        groups.setdefault(download_id, []).append(record)
+
+    rows = []
+    for download_id, records in groups.items():
         # `title_key` est vide sur un « unknown movie/series item » — la file ne
         # sait pas à quoi rattacher le téléchargement. Le titre de la release est
         # alors la seule accroche lisible pour l'utilisateur.
-        title = (record.get(arr["title_key"]) or {}).get("title") or record.get("title", "?")
-        reasons = queue_reasons(record)
+        first = records[0]
+        title = (first.get(arr["title_key"]) or {}).get("title") or first.get("title", "?")
+        # Motifs de toutes les entrées du téléchargement, dédoublonnés en
+        # préservant l'ordre (chaque épisode d'un pack répète en général le même).
+        reasons = list(dict.fromkeys(r for record in records for r in queue_reasons(record)))
+        queue_ids = [record.get("id") for record in records]
         try:
             candidates = api_get(arr, api_key,
                                  f"/manualimport?downloadId={download_id}&filterExistingFiles=false")
         except RuntimeError as e:
-            rows.append({"downloadId": download_id, "title": title, "kind": "erreur",
-                         "path": None, "target": None, "reasons": [str(e)], "queue_reasons": reasons})
+            rows.append({"downloadId": download_id, "queueId": queue_ids[0], "queueIds": queue_ids,
+                         "title": title, "kind": "erreur", "path": None, "target": None,
+                         "reasons": [str(e)], "queue_reasons": reasons})
             continue
         for candidate in candidates:
             kind, rejections = classify(arr, candidate)
             rows.append({
                 "downloadId": download_id,
-                "queueId": record.get("id"),
+                "queueId": queue_ids[0],
+                "queueIds": queue_ids,
                 "title": title,
                 "kind": kind,
                 "path": candidate.get("path"),
@@ -264,7 +302,9 @@ def print_rows(rows, arr_name):
     print(f"{arr_name} : {len(rows)} fichier(s) en attente")
     for row in sorted(rows, key=lambda r: order.get(r["kind"], 9)):
         print(f"  [{labels[row['kind']]}] {row['title']} — {row['target']}")
-        print(f"      downloadId={row['downloadId']} queueId={row.get('queueId')}")
+        print(f"      downloadId={row['downloadId']} queueId={row.get('queueId')}"
+              + (f" (une entrée de file par épisode : {','.join(map(str, row['queueIds']))})"
+                 if len(row.get("queueIds") or []) > 1 else ""))
         if row["path"]:
             print(f"      {os.path.basename(row['path'])}")
         if row.get("quality"):
@@ -306,7 +346,11 @@ def cmd_apply(args, env):
     errors, imported = [], 0
     for name, arr in ARRS.items():
         api_key = env.get(arr["key"])
+        # Erreur, comme dans `list` et `assign` : un `continue` muet faisait
+        # conclure « rien à importer » (exit 0) alors que l'arr n'avait même pas
+        # été interrogé.
         if not api_key:
+            errors.append(f"{name} : {arr['key']} absent de arr/.env (voir `make api-keys`)")
             continue
         try:
             rows = [r for r in collect(arr, api_key, args.download_id) if r["kind"] == "importable"]
@@ -346,8 +390,9 @@ def cmd_assign(args, env):
     if not api_key:
         print(f"ERREUR {arr['key']} absent de arr/.env", file=sys.stderr)
         return 1
+    download_id = canonical_download_id(arr, api_key, args.download_id)
     candidates = api_get(arr, api_key,
-                         f"/manualimport?downloadId={args.download_id}&filterExistingFiles=false")
+                         f"/manualimport?downloadId={download_id}&filterExistingFiles=false")
     if args.path:
         candidates = [c for c in candidates if os.path.basename(c["path"]) == os.path.basename(args.path)]
     if len(candidates) != 1:
@@ -368,7 +413,20 @@ def cmd_assign(args, env):
         print("ERREUR série non résolue sur ce candidat — import manuel via l'UI",
               file=sys.stderr)
         return 1
-    entry = build_file(arr, candidate, args.download_id, target_ids=target, languages=languages)
+    # Les ids d'épisodes sont globaux à Sonarr, pas relatifs à la série : une
+    # faute de frappe (ou un id relevé sur une autre série) passait sans bruit et
+    # l'import écrasait le fichier d'un épisode d'une AUTRE série, sous le
+    # seriesId du candidat. Refus avant toute écriture, dry-run compris.
+    if arr["target_key"] == "episodes":
+        series_id = candidate["series"]["id"]
+        known = {e["id"] for e in api_get(arr, api_key, f"/episode?seriesId={series_id}")}
+        foreign = [i for i in target if i not in known]
+        if foreign:
+            print(f"ERREUR épisode(s) {','.join(map(str, foreign))} hors de la série "
+                  f"{candidate['series'].get('title', series_id)} — voir "
+                  f"`GET /api/v3/episode?seriesId={series_id}`", file=sys.stderr)
+            return 1
+    entry = build_file(arr, candidate, download_id, target_ids=target, languages=languages)
     print(f"{os.path.basename(candidate['path'])} -> {arr['target_key']}={target}"
           + (f" langue={args.language}" if args.language else ""))
     if args.dry_run:

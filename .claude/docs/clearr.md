@@ -272,8 +272,10 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   qui ne s'applique pas.
   Une section sans lignes n'est pas rendue — un film sans fichier n'affiche
   simplement ni Fichier(s) ni Média, sans cas particulier dans le code.
-- **Mode CLI `delete-by-inode <dev> <ino> [--dry-run]`**, réutilisé par le
-  skill `anime-vf` : retrouve et supprime un torrent par `(dev, ino)` déjà
+- **Mode CLI `delete-by-inode <dev> <ino> [--dry-run]`**, écrit pour le skill
+  `anime-vf` (retiré le 2026-09-29), gardé comme outil manuel —
+  `docker exec arr-clearr-1 python -m app delete-by-inode …`, pas `docker
+  compose run` (l'ENTRYPOINT est déjà `python -m app`) : retrouve et supprime un torrent par `(dev, ino)` déjà
   connu — capturé par l'appelant *avant* qu'un import ne remplace le fichier
   `library/`, un stat a posteriori échouerait. Ne déclenche délibérément
   **pas** `plan_sonarr_unmonitor`/`plan_radarr_deletion` : l'épisode reste

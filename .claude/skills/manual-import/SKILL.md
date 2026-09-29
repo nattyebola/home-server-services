@@ -11,8 +11,9 @@ Un téléchargement à 100 % n'est pas un titre importé. Sonarr et Radarr
 rangent dans leur file, en `importBlocked` ou `importPending`, tout ce
 qu'ils ont refusé d'importer automatiquement — et **rien ne les en sort
 tout seul** : ni le temps, ni un redémarrage, ni la recherche périodique.
-L'item continue de compter comme manquant dans `wanted/missing`, et aucune
-carte du dashboard ne le signale.
+L'item continue de compter comme manquant dans `wanted/missing`. Le
+dashboard les compte (cartes « Bloqués » et « En attente », par
+téléchargement), mais ne dit pas quoi en faire : c'est le rôle de ce skill.
 
 C'est le piège de diagnostic principal sur cette infra. Le 2026-08-29, sur
 20 titres comptés manquants, **5 étaient en réalité téléchargés à 100 % et
@@ -125,12 +126,27 @@ python3 scripts/manual-import.py assign radarr \
 
 ## Purger une entrée qui ne s'importera jamais
 
-Pour la famille 3, après accord de l'utilisateur :
+Pour la famille 3, après accord de l'utilisateur. Les arr exigent une clé
+API même en local (`authenticationRequired: enabled`) : elle est lue dans
+`arr/.env` et passée **sur stdin** (`-H @-`), jamais dans la ligne de
+commande, où `ps` la montrerait. `-f` fait échouer la commande sur un 4xx
+au lieu de sortir en 0.
 
 ```bash
-docker exec arr-sonarr-1 curl -s -X DELETE -H "X-Api-Key: $SONARR_KEY" \
-  "http://localhost:8989/api/v3/queue/<queueId>?removeFromClient=true&blocklist=true&skipRedownload=true"
+# Sonarr
+grep '^SONARR_API_KEY=' arr/.env | cut -d= -f2- | sed 's/^/X-Api-Key: /' \
+  | docker exec -i arr-sonarr-1 curl -sf -X DELETE -H @- \
+    "http://localhost:8989/api/v3/queue/<queueId>?removeFromClient=true&blocklist=true&skipRedownload=true"
+
+# Radarr
+grep '^RADARR_API_KEY=' arr/.env | cut -d= -f2- | sed 's/^/X-Api-Key: /' \
+  | docker exec -i arr-radarr-1 curl -sf -X DELETE -H @- \
+    "http://localhost:7878/api/v3/queue/<queueId>?removeFromClient=true&blocklist=true&skipRedownload=true"
 ```
+
+Un pack Sonarr occupe **une entrée de file par épisode**, toutes avec le
+même `downloadId` : en purger une retire le torrent, les autres entrées
+disparaissent avec lui. Ne pas enchaîner les DELETE sur chacune.
 
 `blocklist=true` n'est pas optionnel ici : sans elle, le flux RSS peut
 reproposer exactement la même release et on rejoue le même import bloqué —

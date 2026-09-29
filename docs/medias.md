@@ -133,6 +133,18 @@ Fonctionnement, limites et délais mesurés : [`kodi/README.md`](../kodi/README.
   `isValid: true` même quand le vrai rafraîchissement est en 401.
 - **`system.xml` se modifie par l'API**, pas à la main : Jellyfin réécrit ce
   fichier.
+- **`KnownProxies = traefik`** (2026-09-29, posé par l'API
+  `/System/Configuration/network`, objet complet). Sans lui Jellyfin voyait
+  tout le trafic venir de Traefik (`172.18.0.4`), classé réseau local : pas
+  d'IP réelle dans ses journaux, et « accès distant » ne distinguait plus rien.
+  Deux limites :
+  - les réglages réseau ne s'appliquent **qu'au redémarrage** de Jellyfin ;
+  - le nom `traefik` n'est résolu qu'à ce démarrage : si Traefik change d'IP
+    (recréé après un autre conteneur), redémarrer Jellyfin
+    (`make restart STACK=jellyfin`). Symptôme : `denied (IP: 172.18.0.x)` sur
+    toutes les connexions dans les logs.
+  Pas le `/16` entier de `traefik-public` : jellyfin, seerr et nextcloud-web y
+  vivent, exposés au WAN, et pourraient alors falsifier `X-Forwarded-For`.
 - **`jellyfin.db` corrompue** : ne pas supprimer le fichier (Jellyfin se croit
   en mise à niveau et plante en boucle). Tenter
   `sqlite3 <copie>.db ".recover"`, réimport dans une base neuve,

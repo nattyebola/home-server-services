@@ -79,9 +79,29 @@ RADARR_PROFILE_NAME = "[SQP] SQP-1 WEB (2160p)"
 # corriger, ce qui prouve qu'aucune écriture n'est encore en vol. Bornée, pour
 # qu'une dérive qui se rétablirait en boucle ne fasse pas tourner le cron sans
 # fin — au pire SETTLE_ATTEMPTS x SETTLE_DELAY_SECONDS d'attente.
-SETTLE_CLEAN_PASSES = 2
-SETTLE_ATTEMPTS = 6
-SETTLE_DELAY_SECONDS = 5
+#
+# La fenêtre propre exigée doit couvrir la LATENCE MAX observée, pas une
+# latence typique. L'ancien réglage (2 passes à 5 s d'écart) concluait après
+# ~5 s de calme : une écriture recyclarr atterrissant à t=20 s — dans la
+# fourchette mesurée de 0,5 à 53 s — passait après la conclusion, et la dérive
+# s'installait pour 24 h exactement comme avant settle(). On exige donc
+# SETTLE_STABLE_SECONDS de calme continu (53 s mesurés + marge), relu toutes
+# les SETTLE_DELAY_SECONDS : la première passe propre ouvre la fenêtre, la
+# dernière la ferme SETTLE_STABLE_SECONDS plus tard. Le décompte part du début
+# du script, soit juste après la sortie de recyclarr (`&&` dans
+# scripts/crontab) — le point de départ de la latence mesurée.
+# Coût : chaque étape sous settle() dure au moins une minute, même sans
+# dérive. Accepté, le cron tourne à minuit.
+# Plafond = deux fenêtres complètes + 2 passes (~2 min 30 par étape au pire) :
+# une écriture qui atterrit juste avant la fin de la première fenêtre (53 s)
+# la remet à zéro, et il faut alors une seconde fenêtre entière pour conclure.
+# Un plafond plus serré déclarait « non stabilisé » ce cas pourtant documenté.
+# NE PAS remplacer par un `sleep` dans scripts/crontab : la latence n'est pas
+# bornée côté Servarr, seule la relecture prouve la stabilité.
+SETTLE_STABLE_SECONDS = 60
+SETTLE_DELAY_SECONDS = 10
+SETTLE_CLEAN_PASSES = SETTLE_STABLE_SECONDS // SETTLE_DELAY_SECONDS + 1
+SETTLE_ATTEMPTS = 2 * SETTLE_CLEAN_PASSES + 2
 
 # --- limite de ratio sur les indexeurs publics -------------------------------
 #
@@ -374,17 +394,53 @@ def api_put(container, base_url, api_key, path, obj):
     api_write(container, base_url, api_key, "PUT", path, obj)
 
 
-class SettleFailed(RuntimeError):
-    """Échec d'une étape sous settle(), porteur des corrections DÉJÀ appliquées.
+class StepFailed(RuntimeError):
+    """Échec d'une étape, porteur des corrections qu'elle a DÉJÀ écrites.
 
-    Sans ça, une exception à la 3e passe faisait perdre ce que les deux
-    premières avaient réellement écrit côté Sonarr/Radarr : le rapport final
-    n'affichait aucune ligne « corrigé » alors que des paliers avaient changé.
+    Une exception ordinaire ne transporte que le message : tout `changed +=
+    f(...)` dont `f` lève perd les lignes que `f` avait accumulées avant de
+    lever. Constaté sur deux formes — une boucle d'indexeurs dont le 1er PUT
+    passe et le 2e échoue (le 1er n'était jamais rapporté, les suivants jamais
+    traités), et l'étape Radarr qui enchaîne tailles puis langue (tailles
+    écrites, langue en erreur, tailles absentes du rapport). L'exploitant lisait
+    alors « rien corrigé » sur un état qui avait bel et bien changé.
     """
 
     def __init__(self, message, changed):
         super().__init__(message)
         self.changed = changed
+
+
+class SettleFailed(StepFailed):
+    """Échec d'une étape sous settle() — mêmes garanties que StepFailed, pour
+    les corrections cumulées sur toutes les passes."""
+
+
+def step_result(changed, errors):
+    """Fin commune des étapes qui traitent plusieurs éléments indépendants
+    (indexeurs, paliers, profils…) : un élément en échec est noté et la boucle
+    continue, puis l'étape lève à la fin si besoin — avec ce qu'elle a écrit.
+    Un tracker en 520 au moment du PUT d'un indexeur ne doit pas laisser les
+    indexeurs suivants en dérive."""
+    if errors:
+        raise StepFailed(" ; ".join(errors), changed)
+    return changed
+
+
+def run_all(*steps):
+    """Enchaîne des étapes indépendantes en cumulant leurs corrections, même
+    quand l'une d'elles échoue : sert à regrouper sous un même settle() des
+    réglages qui dérivent ensemble (Radarr : tailles de palier + langue)."""
+    changed, errors = [], []
+    for step in steps:
+        try:
+            changed += step()
+        except StepFailed as e:
+            changed += e.changed
+            errors.append(str(e))
+        except Exception as e:
+            errors.append(str(e))
+    return step_result(changed, errors)
 
 
 def _dedupe(lines):
@@ -421,7 +477,9 @@ def settle(step):
             # Les passes précédentes ont déjà ÉCRIT côté arr : les perdre avec
             # l'exception ferait rapporter « rien corrigé » alors que des valeurs
             # ont bel et bien changé, et l'exploitant croirait l'état intact.
-            raise SettleFailed(str(e), _dedupe(changed)) from e
+            # Idem pour ce que CETTE passe a écrit avant de lever (StepFailed).
+            partial = e.changed if isinstance(e, StepFailed) else []
+            raise SettleFailed(str(e), _dedupe(changed + partial)) from e
         if applied:
             changed += applied
             clean = 0
@@ -443,7 +501,7 @@ def settle(step):
 
 
 def apply_quality_sizes(label, container, base_url, api_key, overrides):
-    changed = []
+    changed, errors = [], []
     for definition in api_get(container, base_url, api_key, "/qualitydefinition"):
         name = definition["quality"]["name"]
         if name not in overrides:
@@ -453,9 +511,13 @@ def apply_quality_sizes(label, container, base_url, api_key, overrides):
         if current == wanted:
             continue
         definition.update(wanted)
-        api_put(container, base_url, api_key, f"/qualitydefinition/{definition['id']}", definition)
+        try:
+            api_put(container, base_url, api_key, f"/qualitydefinition/{definition['id']}", definition)
+        except Exception as e:
+            errors.append(f"palier {name} : {e}")
+            continue
         changed.append(f"{label} {name}: {current} -> {wanted}")
-    return changed
+    return step_result(changed, errors)
 
 
 def apply_radarr_language(container, base_url, api_key, profile_name):
@@ -685,7 +747,15 @@ def jellyfin_signature(notification):
     fields = {f["name"]: f.get("value") for f in notification["fields"] if f["name"] != "apiKey"}
     triggers = {k: v for k, v in notification.items()
                 if k.startswith("on") and isinstance(v, bool)}
-    return (notification["name"], fields, triggers)
+    # tags et includeHealthWarnings : jellyfin_body les force, donc ils doivent
+    # entrer dans la comparaison — sinon une dérive de ces deux champs (un tag
+    # posé dans l'UI restreint la connexion aux seuls titres tagués) n'était
+    # jamais corrigée, la signature restant identique. Normalisés (liste triée,
+    # booléen) pour ne pas voir une différence de forme là où la valeur relue
+    # est celle qu'on a écrite : absent et False valent la même chose.
+    return (notification["name"], fields, triggers,
+            sorted(notification.get("tags") or []),
+            bool(notification.get("includeHealthWarnings")))
 
 
 def apply_jellyfin_connection(label, container, base_url, api_key, jellyfin_key, triggers):
@@ -777,7 +847,7 @@ def apply_prowlarr_seed_ratio(prowlarr_api_key, public_ids):
 
     `forceSave=true` pour la même raison que côté arr : Prowlarr teste l'indexeur
     au moment du PUT et ces trackers répondent régulièrement 520/530."""
-    changed = []
+    changed, errors = [], []
     for indexer in api_get(PROWLARR_CONTAINER, PROWLARR_URL, prowlarr_api_key, "/indexer"):
         if indexer["id"] not in public_ids:
             continue
@@ -786,11 +856,15 @@ def apply_prowlarr_seed_ratio(prowlarr_api_key, public_ids):
         if current == PUBLIC_INDEXER_SEED_RATIO:
             continue
         set_field(indexer, PROWLARR_SEED_RATIO_FIELD, PUBLIC_INDEXER_SEED_RATIO)
-        api_put(PROWLARR_CONTAINER, PROWLARR_URL, prowlarr_api_key,
-                f"/indexer/{indexer['id']}?forceSave=true", indexer)
+        try:
+            api_put(PROWLARR_CONTAINER, PROWLARR_URL, prowlarr_api_key,
+                    f"/indexer/{indexer['id']}?forceSave=true", indexer)
+        except Exception as e:
+            errors.append(f"indexeur {indexer['name']!r} : {e}")
+            continue
         changed.append(f"Prowlarr indexeur public {indexer['name']!r}: "
                        f"seedRatio {current} -> {PUBLIC_INDEXER_SEED_RATIO}")
-    return changed
+    return step_result(changed, errors)
 
 
 def indexer_prowlarr_id(indexer):
@@ -817,7 +891,7 @@ def apply_public_indexer_seed_ratio(label, container, base_url, api_key, public_
     du tracker suffirait à faire échouer un réalignement qui ne touche pourtant
     qu'un champ local. Le champ apiKey revient masqué en "********" du GET et est
     préservé tel quel à l'écriture, même mécanique que la connexion Jellyfin."""
-    changed = []
+    changed, errors = [], []
     for indexer in api_get(container, base_url, api_key, "/indexer"):
         if indexer_prowlarr_id(indexer) not in public_ids:
             continue
@@ -826,11 +900,15 @@ def apply_public_indexer_seed_ratio(label, container, base_url, api_key, public_
         if current == PUBLIC_INDEXER_SEED_RATIO:
             continue
         set_field(indexer, "seedCriteria.seedRatio", PUBLIC_INDEXER_SEED_RATIO)
-        api_put(container, base_url, api_key,
-                f"/indexer/{indexer['id']}?forceSave=true", indexer)
+        try:
+            api_put(container, base_url, api_key,
+                    f"/indexer/{indexer['id']}?forceSave=true", indexer)
+        except Exception as e:
+            errors.append(f"indexeur {indexer['name']!r} : {e}")
+            continue
         changed.append(f"{label} indexeur public {indexer['name']!r}: "
                        f"seedRatio {current} -> {PUBLIC_INDEXER_SEED_RATIO}")
-    return changed
+    return step_result(changed, errors)
 
 
 def apply_indexer_fail_downloads(label, container, base_url, api_key):
@@ -846,7 +924,7 @@ def apply_indexer_fail_downloads(label, container, base_url, api_key):
     `forceSave=true` pour la même raison que les passes seedRatio : l'arr teste
     la connexion à l'indexeur au moment du PUT et ces trackers répondent
     régulièrement 520/530."""
-    changed = []
+    changed, errors = [], []
     for indexer in api_get(container, base_url, api_key, "/indexer"):
         current = next((f.get("value") for f in indexer["fields"]
                         if f["name"] == INDEXER_FAIL_DOWNLOADS_FIELD), None)
@@ -855,11 +933,15 @@ def apply_indexer_fail_downloads(label, container, base_url, api_key):
         if sorted(current) == INDEXER_FAIL_DOWNLOADS:
             continue
         set_field(indexer, INDEXER_FAIL_DOWNLOADS_FIELD, INDEXER_FAIL_DOWNLOADS)
-        api_put(container, base_url, api_key,
-                f"/indexer/{indexer['id']}?forceSave=true", indexer)
+        try:
+            api_put(container, base_url, api_key,
+                    f"/indexer/{indexer['id']}?forceSave=true", indexer)
+        except Exception as e:
+            errors.append(f"indexeur {indexer['name']!r} : {e}")
+            continue
         changed.append(f"{label} indexeur {indexer['name']!r}: "
                        f"failDownloads {current} -> {INDEXER_FAIL_DOWNLOADS}")
-    return changed
+    return step_result(changed, errors)
 
 
 def apply_prowlarr_nyaa_category(prowlarr_api_key):
@@ -867,7 +949,7 @@ def apply_prowlarr_nyaa_category(prowlarr_api_key):
     par `definitionFile`, donc silencieux (et sans erreur) sur un déploiement
     qui n'a pas cet indexeur — c'est un réglage propre à cette définition
     Cardigann, pas une règle générale sur les indexeurs."""
-    changed = []
+    changed, errors = [], []
     for indexer in api_get(PROWLARR_CONTAINER, PROWLARR_URL, prowlarr_api_key, "/indexer"):
         definition = next((f.get("value") for f in indexer["fields"]
                            if f["name"] == "definitionFile"), None)
@@ -878,11 +960,15 @@ def apply_prowlarr_nyaa_category(prowlarr_api_key):
         if current == NYAA_ANIME_CATEGORY:
             continue
         set_field(indexer, NYAA_CATEGORY_FIELD, NYAA_ANIME_CATEGORY)
-        api_put(PROWLARR_CONTAINER, PROWLARR_URL, prowlarr_api_key,
-                f"/indexer/{indexer['id']}?forceSave=true", indexer)
+        try:
+            api_put(PROWLARR_CONTAINER, PROWLARR_URL, prowlarr_api_key,
+                    f"/indexer/{indexer['id']}?forceSave=true", indexer)
+        except Exception as e:
+            errors.append(f"indexeur {indexer['name']!r} : {e}")
+            continue
         changed.append(f"Prowlarr indexeur {indexer['name']!r}: "
                        f"{NYAA_CATEGORY_FIELD} {current} -> {NYAA_ANIME_CATEGORY} (Anime)")
-    return changed
+    return step_result(changed, errors)
 
 
 def spec_body(spec):
@@ -908,24 +994,28 @@ def spec_signature(spec):
 
 
 def apply_custom_formats(container, base_url, api_key, wanted_formats):
-    changed = []
+    changed, errors = [], []
     existing = {cf["name"]: cf for cf in api_get(container, base_url, api_key, "/customformat")}
     for wanted in wanted_formats:
         name = wanted["name"]
         body = {"name": name, "includeCustomFormatWhenRenaming": True,
                 "specifications": [spec_body(s) for s in wanted["specifications"]]}
         current = existing.get(name)
-        if current is None:
-            api_write(container, base_url, api_key, "POST", "/customformat", body)
-            changed.append(f"Sonarr custom format {name!r} créé")
+        try:
+            if current is None:
+                api_write(container, base_url, api_key, "POST", "/customformat", body)
+                changed.append(f"Sonarr custom format {name!r} créé")
+                continue
+            if [spec_signature(s) for s in current["specifications"]] == \
+               [spec_signature(s) for s in wanted["specifications"]]:
+                continue
+            body["id"] = current["id"]
+            api_put(container, base_url, api_key, f"/customformat/{current['id']}", body)
+        except Exception as e:
+            errors.append(f"custom format {name!r} : {e}")
             continue
-        if [spec_signature(s) for s in current["specifications"]] == \
-           [spec_signature(s) for s in wanted["specifications"]]:
-            continue
-        body["id"] = current["id"]
-        api_put(container, base_url, api_key, f"/customformat/{current['id']}", body)
         changed.append(f"Sonarr custom format {name!r} mis à jour")
-    return changed
+    return step_result(changed, errors)
 
 
 def item_name(item):
@@ -973,10 +1063,16 @@ def build_profile_body(skeleton, wanted, format_ids):
 
 
 def profile_signature(profile):
+    # L'état `allowed` des qualités À L'INTÉRIEUR d'un groupe est comparé aussi :
+    # build_profile_body l'aligne sur celui du groupe, mais sans lui dans la
+    # signature une qualité décochée dans un groupe autorisé (qui ne matche
+    # alors plus rien, voir build_profile_body) n'était jamais rattrapée.
     return (
         profile["upgradeAllowed"], profile["cutoff"], profile["minFormatScore"],
         profile["cutoffFormatScore"],
-        [(item_name(i), i["allowed"]) for i in profile["items"]],
+        [(item_name(i), i["allowed"],
+          [(item_name(c), c["allowed"]) for c in i.get("items") or []])
+         for i in profile["items"]],
         sorted((f["name"], f["score"]) for f in profile["formatItems"]),
     )
 
@@ -987,31 +1083,39 @@ def apply_quality_profiles(container, base_url, api_key, wanted_profiles):
                   for cf in api_get(container, base_url, api_key, "/customformat")}
     existing = {p["name"]: p for p in api_get(container, base_url, api_key, "/qualityprofile")}
     schema = None
+    errors = []
     for wanted in wanted_profiles:
         current = existing.get(wanted["name"])
-        if current is None:
-            if schema is None:
-                schema = api_get(container, base_url, api_key, "/qualityprofile/schema")
-            api_write(container, base_url, api_key, "POST", "/qualityprofile",
-                      build_profile_body(schema, wanted, format_ids))
-            changed.append(f"Sonarr profil {wanted['name']!r} créé")
+        try:
+            if current is None:
+                if schema is None:
+                    schema = api_get(container, base_url, api_key, "/qualityprofile/schema")
+                api_write(container, base_url, api_key, "POST", "/qualityprofile",
+                          build_profile_body(schema, wanted, format_ids))
+                changed.append(f"Sonarr profil {wanted['name']!r} créé")
+                continue
+            body = build_profile_body(current, wanted, format_ids)
+            if profile_signature(current) == profile_signature(body):
+                continue
+            api_put(container, base_url, api_key, f"/qualityprofile/{current['id']}", body)
+        except Exception as e:
+            errors.append(f"profil {wanted['name']!r} : {e}")
             continue
-        body = build_profile_body(current, wanted, format_ids)
-        if profile_signature(current) == profile_signature(body):
-            continue
-        api_put(container, base_url, api_key, f"/qualityprofile/{current['id']}", body)
         changed.append(f"Sonarr profil {wanted['name']!r} réaligné sur {os.path.basename(ANIME_CONFIG)}")
-    return changed
+    return step_result(changed, errors)
 
 
 def apply_anime_config(container, base_url, api_key):
     with open(ANIME_CONFIG) as f:
         config = json.load(f)
     # Les custom formats d'abord : les profils ci-dessous les référencent par
-    # nom et échouent tant qu'ils n'existent pas.
-    changed = apply_custom_formats(container, base_url, api_key, config["custom_formats"])
-    changed += apply_quality_profiles(container, base_url, api_key, config["quality_profiles"])
-    return changed
+    # nom et échouent tant qu'ils n'existent pas. run_all et pas une séquence
+    # qui s'arrête au premier échec : un CF en erreur n'empêche pas de réaligner
+    # les profils qui n'en dépendent pas (ceux qui en dépendent lèvent une
+    # erreur explicite dans build_profile_body).
+    return run_all(
+        lambda: apply_custom_formats(container, base_url, api_key, config["custom_formats"]),
+        lambda: apply_quality_profiles(container, base_url, api_key, config["quality_profiles"]))
 
 
 # --- délai de grab des anime VOSTFR -------------------------------------------
@@ -1036,8 +1140,8 @@ def apply_anime_config(container, base_url, api_key):
 #
 # Un delay profile se rattache par tag, pas par profil qualité. Le tag est
 # donc PILOTÉ par le profil : posé sur toute série en `Anime (Fansub) VOSTFR`,
-# retiré de toute autre (une bascule en VF par le skill anime-vf sort ainsi
-# du délai). Le poser à la main ne sert à rien, il serait retiré la nuit
+# retiré de toute autre (une série passée en VF dans Sonarr sort ainsi du
+# délai). Le poser à la main ne sert à rien, il serait retiré la nuit
 # suivante.
 ANIME_DELAY_TAG = "anime-vostfr-delai"
 ANIME_DELAY_QUALITY_PROFILE = "Anime (Fansub) VOSTFR"
@@ -1058,24 +1162,35 @@ def apply_anime_delay(container, base_url, api_key):
                            {"label": ANIME_DELAY_TAG})["id"]
         changed.append(f"Sonarr tag {ANIME_DELAY_TAG!r} créé")
 
-    # Rattaché par son tag : un delay profile n'a pas de nom.
-    delay = next((d for d in api_get(container, base_url, api_key, "/delayprofile")
-                  if d["tags"] == [tag_id]), None)
-    if delay is None:
-        api_write(container, base_url, api_key, "POST", "/delayprofile",
-                  {**ANIME_DELAY_FIELDS, "tags": [tag_id]})
-        changed.append(f"Sonarr delay profile {ANIME_DELAY_TAG!r} créé")
-    elif any(delay.get(k) != v for k, v in ANIME_DELAY_FIELDS.items()):
-        api_put(container, base_url, api_key, f"/delayprofile/{delay['id']}",
-                {**delay, **ANIME_DELAY_FIELDS})
-        changed.append(f"Sonarr delay profile {ANIME_DELAY_TAG!r} réaligné")
+    # Au-delà du tag, delay profile et pose du tag sont indépendants : l'un en
+    # échec n'empêche pas l'autre, et un tag créé avant l'échec reste rapporté.
+    errors = []
+    try:
+        # Rattaché par son tag : un delay profile n'a pas de nom.
+        delay = next((d for d in api_get(container, base_url, api_key, "/delayprofile")
+                      if d["tags"] == [tag_id]), None)
+        if delay is None:
+            api_write(container, base_url, api_key, "POST", "/delayprofile",
+                      {**ANIME_DELAY_FIELDS, "tags": [tag_id]})
+            changed.append(f"Sonarr delay profile {ANIME_DELAY_TAG!r} créé")
+        elif any(delay.get(k) != v for k, v in ANIME_DELAY_FIELDS.items()):
+            api_put(container, base_url, api_key, f"/delayprofile/{delay['id']}",
+                    {**delay, **ANIME_DELAY_FIELDS})
+            changed.append(f"Sonarr delay profile {ANIME_DELAY_TAG!r} réaligné")
+    except Exception as e:
+        errors.append(f"delay profile : {e}")
 
-    profile_id = next((p["id"] for p in api_get(container, base_url, api_key, "/qualityprofile")
-                       if p["name"] == ANIME_DELAY_QUALITY_PROFILE), None)
-    if profile_id is None:
-        raise RuntimeError(f"profil {ANIME_DELAY_QUALITY_PROFILE!r} introuvable")
+    try:
+        profile_id = next((p["id"] for p in api_get(container, base_url, api_key, "/qualityprofile")
+                           if p["name"] == ANIME_DELAY_QUALITY_PROFILE), None)
+        if profile_id is None:
+            raise RuntimeError(f"profil {ANIME_DELAY_QUALITY_PROFILE!r} introuvable")
+        all_series = api_get(container, base_url, api_key, "/series")
+    except Exception as e:
+        errors.append(str(e))
+        return step_result(changed, errors)
     add, remove = [], []
-    for s in api_get(container, base_url, api_key, "/series"):
+    for s in all_series:
         wanted, tagged = s["qualityProfileId"] == profile_id, tag_id in s["tags"]
         if wanted and not tagged:
             add.append(s)
@@ -1087,18 +1202,24 @@ def apply_anime_delay(container, base_url, api_key):
     for series, apply_tags in ((add, "add"), (remove, "remove")):
         if not series:
             continue
-        code, body = _curl(container, api_key,
-                           ["-X", "PUT", "-H", "Content-Type: application/json",
-                            "--data", "@-", f"{base_url}/series/editor"],
-                           stdin=json.dumps({"seriesIds": [s["id"] for s in series],
-                                             "tags": [tag_id],
-                                             "applyTags": apply_tags}).encode())
+        try:
+            code, body = _curl(container, api_key,
+                               ["-X", "PUT", "-H", "Content-Type: application/json",
+                                "--data", "@-", f"{base_url}/series/editor"],
+                               stdin=json.dumps({"seriesIds": [s["id"] for s in series],
+                                                 "tags": [tag_id],
+                                                 "applyTags": apply_tags}).encode())
+        except Exception as e:
+            errors.append(f"PUT /series/editor ({apply_tags}) : {e}")
+            continue
         if not code.startswith("2"):
-            raise RuntimeError(f"PUT /series/editor : HTTP {code} — {body[:300] or 'réponse vide'}")
+            errors.append(f"PUT /series/editor ({apply_tags}) : HTTP {code} — "
+                          f"{body[:300] or 'réponse vide'}")
+            continue
         verb = "posé sur" if apply_tags == "add" else "retiré de"
         changed.append(f"Sonarr tag {ANIME_DELAY_TAG!r} {verb} : "
                        + ", ".join(s["title"] for s in series))
-    return changed
+    return step_result(changed, errors)
 
 
 def main():
@@ -1128,6 +1249,23 @@ def main():
     changed = []
     notes = []
     errors = []
+
+    def run(label, step):
+        """Best-effort par domaine : une étape en échec n'emporte pas les
+        suivantes. Les corrections qu'elle a écrites AVANT d'échouer sont
+        rapportées quand même (StepFailed, SettleFailed compris) — sans ça un
+        `changed += f()` qui lève faisait disparaître du rapport des écritures
+        bien réelles."""
+        try:
+            changed.extend(step())
+        except MissingIntegration as e:
+            notes.append(str(e))
+        except StepFailed as e:
+            changed.extend(e.changed)
+            errors.append(f"{label}: {e}")
+        except Exception as e:
+            errors.append(f"{label}: {e}")
+
     # Résolu une seule fois pour les deux arr : c'est la même liste d'indexeurs
     # Prowlarr derrière l'un comme l'autre. public_ids à None = liste inconnue
     # (Prowlarr injoignable ou clé absente), les deux passes sont alors sautées
@@ -1143,112 +1281,68 @@ def main():
 
     # Sous `settle` : c'est l'étape que recyclarr fait dériver, et son écriture
     # est asynchrone (voir SETTLE_CLEAN_PASSES).
-    try:
-        changed += settle(
-            lambda: apply_quality_sizes("Sonarr", SONARR_CONTAINER, SONARR_URL,
-                                        sonarr_api_key, SONARR_SIZE_OVERRIDES))
-    except SettleFailed as e:
-        changed += e.changed          # ces corrections-là ont bien été écrites
-        errors.append(f"Sonarr: {e}")
-    except Exception as e:
-        errors.append(f"Sonarr: {e}")
-    # Bloc à part : une erreur sur la config anime ne doit pas empêcher les
+    run("Sonarr", lambda: settle(
+        lambda: apply_quality_sizes("Sonarr", SONARR_CONTAINER, SONARR_URL,
+                                    sonarr_api_key, SONARR_SIZE_OVERRIDES)))
+    # Étape à part : une erreur sur la config anime ne doit pas empêcher les
     # tailles de palier ci-dessus d'être corrigées, et inversement
     # (best-effort par domaine, même principe que Sonarr vs Radarr).
-    try:
-        changed += apply_anime_config(SONARR_CONTAINER, SONARR_URL, sonarr_api_key)
-    except Exception as e:
-        errors.append(f"Sonarr (anime): {e}")
+    run("Sonarr (anime)", lambda: apply_anime_config(SONARR_CONTAINER, SONARR_URL,
+                                                     sonarr_api_key))
     # Après la config anime : le profil qualité qui pilote le tag doit exister.
-    try:
-        changed += apply_anime_delay(SONARR_CONTAINER, SONARR_URL, sonarr_api_key)
-    except Exception as e:
-        errors.append(f"Sonarr (délai anime): {e}")
-    try:
-        changed += apply_jellyfin_connection("Sonarr", SONARR_CONTAINER, SONARR_URL,
-                                             sonarr_api_key, jellyfin_api_key,
-                                             SONARR_JELLYFIN_TRIGGERS)
-    except MissingIntegration as e:
-        notes.append(str(e))
-    except Exception as e:
-        errors.append(f"Sonarr (Jellyfin): {e}")
-    # Bloc à part pour la même raison que les deux précédents. Ne dépend
+    run("Sonarr (délai anime)", lambda: apply_anime_delay(SONARR_CONTAINER, SONARR_URL,
+                                                          sonarr_api_key))
+    run("Sonarr (Jellyfin)", lambda: apply_jellyfin_connection(
+        "Sonarr", SONARR_CONTAINER, SONARR_URL, sonarr_api_key, jellyfin_api_key,
+        SONARR_JELLYFIN_TRIGGERS))
+    # Étape à part pour la même raison que les deux précédentes. Ne dépend
     # d'aucun service tiers : le writer est local à l'arr, contrairement à la
     # connexion Jellyfin qui a besoin d'une clé.
-    try:
-        changed += apply_xbmc_metadata("Sonarr", SONARR_CONTAINER, SONARR_URL,
-                                       sonarr_api_key, SONARR_XBMC_METADATA_FIELDS)
-    except Exception as e:
-        errors.append(f"Sonarr (metadata): {e}")
+    run("Sonarr (metadata)", lambda: apply_xbmc_metadata(
+        "Sonarr", SONARR_CONTAINER, SONARR_URL, sonarr_api_key, SONARR_XBMC_METADATA_FIELDS))
     # Hors `settle` : recyclarr ne touche pas à /config/mediamanagement, il n'y
     # a donc pas de course à perdre ici — seul un changement manuel dans l'UI
     # peut faire dériver ce réglage.
-    try:
-        changed += apply_config_overrides("Sonarr", SONARR_CONTAINER, SONARR_URL,
-                                          sonarr_api_key, "mediamanagement",
-                                          MEDIA_MANAGEMENT_OVERRIDES)
-    except Exception as e:
-        errors.append(f"Sonarr (mediamanagement): {e}")
-    # Bloc à part du précédent : deux sections de config distinctes, une erreur
-    # sur l'une ne doit pas laisser l'autre en dérive.
-    try:
-        changed += apply_config_overrides("Sonarr", SONARR_CONTAINER, SONARR_URL,
-                                          sonarr_api_key, "naming",
-                                          SONARR_NAMING_OVERRIDES)
-    except Exception as e:
-        errors.append(f"Sonarr (naming): {e}")
+    run("Sonarr (mediamanagement)", lambda: apply_config_overrides(
+        "Sonarr", SONARR_CONTAINER, SONARR_URL, sonarr_api_key, "mediamanagement",
+        MEDIA_MANAGEMENT_OVERRIDES))
+    # Étape à part de la précédente : deux sections de config distinctes, une
+    # erreur sur l'une ne doit pas laisser l'autre en dérive.
+    run("Sonarr (naming)", lambda: apply_config_overrides(
+        "Sonarr", SONARR_CONTAINER, SONARR_URL, sonarr_api_key, "naming",
+        SONARR_NAMING_OVERRIDES))
     # Les deux réglages Radarr que recyclarr fait dériver, donc sous `settle`
     # pour la même raison que les tailles Sonarr — le champ `language` vit sur le
-    # profil qualité, que recyclarr réécrit aussi.
-    try:
-        changed += settle(
-            lambda: apply_quality_sizes("Radarr", RADARR_CONTAINER, RADARR_URL,
-                                        radarr_api_key, RADARR_SIZE_OVERRIDES)
-            + apply_radarr_language(RADARR_CONTAINER, RADARR_URL, radarr_api_key,
-                                    RADARR_PROFILE_NAME))
-    except SettleFailed as e:
-        changed += e.changed
-        errors.append(f"Radarr: {e}")
-    except Exception as e:
-        errors.append(f"Radarr: {e}")
-    # Bloc à part de celui ci-dessus pour la même raison que la config anime :
+    # profil qualité, que recyclarr réécrit aussi. run_all et pas `a() + b()` :
+    # avec l'addition, une langue en erreur faisait perdre du rapport les
+    # tailles que la même passe venait d'écrire.
+    run("Radarr", lambda: settle(lambda: run_all(
+        lambda: apply_quality_sizes("Radarr", RADARR_CONTAINER, RADARR_URL,
+                                    radarr_api_key, RADARR_SIZE_OVERRIDES),
+        lambda: apply_radarr_language(RADARR_CONTAINER, RADARR_URL, radarr_api_key,
+                                      RADARR_PROFILE_NAME))))
+    # Étape à part de celle ci-dessus pour la même raison que la config anime :
     # une connexion Jellyfin absente ou en erreur ne doit pas emporter les
     # tailles de palier et le champ language de Radarr.
-    try:
-        changed += apply_jellyfin_connection("Radarr", RADARR_CONTAINER, RADARR_URL,
-                                             radarr_api_key, jellyfin_api_key,
-                                             RADARR_JELLYFIN_TRIGGERS)
-    except MissingIntegration as e:
-        notes.append(str(e))
-    except Exception as e:
-        errors.append(f"Radarr (Jellyfin): {e}")
-    try:
-        changed += apply_xbmc_metadata("Radarr", RADARR_CONTAINER, RADARR_URL,
-                                       radarr_api_key, RADARR_XBMC_METADATA_FIELDS)
-    except Exception as e:
-        errors.append(f"Radarr (metadata): {e}")
-    try:
-        changed += apply_config_overrides("Radarr", RADARR_CONTAINER, RADARR_URL,
-                                          radarr_api_key, "mediamanagement",
-                                          MEDIA_MANAGEMENT_OVERRIDES)
-    except Exception as e:
-        errors.append(f"Radarr (mediamanagement): {e}")
-    try:
-        changed += apply_config_overrides("Radarr", RADARR_CONTAINER, RADARR_URL,
-                                          radarr_api_key, "naming",
-                                          RADARR_NAMING_OVERRIDES)
-    except Exception as e:
-        errors.append(f"Radarr (naming): {e}")
+    run("Radarr (Jellyfin)", lambda: apply_jellyfin_connection(
+        "Radarr", RADARR_CONTAINER, RADARR_URL, radarr_api_key, jellyfin_api_key,
+        RADARR_JELLYFIN_TRIGGERS))
+    run("Radarr (metadata)", lambda: apply_xbmc_metadata(
+        "Radarr", RADARR_CONTAINER, RADARR_URL, radarr_api_key, RADARR_XBMC_METADATA_FIELDS))
+    run("Radarr (mediamanagement)", lambda: apply_config_overrides(
+        "Radarr", RADARR_CONTAINER, RADARR_URL, radarr_api_key, "mediamanagement",
+        MEDIA_MANAGEMENT_OVERRIDES))
+    run("Radarr (naming)", lambda: apply_config_overrides(
+        "Radarr", RADARR_CONTAINER, RADARR_URL, radarr_api_key, "naming",
+        RADARR_NAMING_OVERRIDES))
     # Ne dépend pas de Prowlarr, contrairement aux deux passes seedRatio qui
     # suivent : le champ n'existe que côté arr et Prowlarr ne l'écrase pas
     # (voir le commentaire de INDEXER_FAIL_DOWNLOADS), donc cette passe tourne
     # même si Prowlarr est injoignable ou sa clé absente.
     for label, container, url, key in (("Sonarr", SONARR_CONTAINER, SONARR_URL, sonarr_api_key),
                                        ("Radarr", RADARR_CONTAINER, RADARR_URL, radarr_api_key)):
-        try:
-            changed += apply_indexer_fail_downloads(label, container, url, key)
-        except Exception as e:
-            errors.append(f"{label} (failDownloads): {e}")
+        run(f"{label} (failDownloads)",
+            lambda: apply_indexer_fail_downloads(label, container, url, key))
     # Les trois arr ensemble, Prowlarr compris : contrairement au reste du
     # script, ce réglage n'a rien de propre au rôle de chaque instance — elles
     # sont derrière le même proxy et servies au même LAN.
@@ -1262,24 +1356,18 @@ def main():
                                            ("Prowlarr", PROWLARR_CONTAINER, PROWLARR_URL, prowlarr_api_key)):
             if not key:
                 continue
-            try:
-                changed += apply_config_overrides(label, container, url, key, "host",
-                                                  host_overrides(proxy_networks, domain,
-                                                                 label.lower()))
-            except Exception as e:
-                errors.append(f"{label} (host): {e}")
+            run(f"{label} (host)", lambda: apply_config_overrides(
+                label, container, url, key, "host",
+                host_overrides(proxy_networks, domain, label.lower())))
     else:
         notes.append("DOMAIN absent de .env.shared : section host laissée telle quelle")
 
-    # Bloc à part des deux passes seedRatio : elles ont besoin de la liste des
+    # Étape à part des deux passes seedRatio : elles ont besoin de la liste des
     # indexeurs publics, celle-ci non — elle se rattache par definitionFile.
     if prowlarr_api_key:
-        try:
-            changed += apply_prowlarr_nyaa_category(prowlarr_api_key)
-        except Exception as e:
-            errors.append(f"Prowlarr (catégorie Nyaa.si): {e}")
+        run("Prowlarr (catégorie Nyaa.si)", lambda: apply_prowlarr_nyaa_category(prowlarr_api_key))
 
-    # Bloc à part, et par arr : le PUT d'un indexeur est le seul de ce script à
+    # Étape à part, et par arr : le PUT d'un indexeur est le seul de ce script à
     # dépendre d'un service tiers joignable (le tracker lui-même, testé par
     # Sonarr/Radarr au moment de l'écriture même avec forceSave).
     #
@@ -1288,16 +1376,12 @@ def main():
     # la passe côté arr qui suit n'a alors plus rien à corriger, ce qui est le
     # signe que le réglage tient de lui-même.
     if public_ids:
-        try:
-            changed += apply_prowlarr_seed_ratio(prowlarr_api_key, public_ids)
-        except Exception as e:
-            errors.append(f"Prowlarr (indexeurs publics): {e}")
+        run("Prowlarr (indexeurs publics)",
+            lambda: apply_prowlarr_seed_ratio(prowlarr_api_key, public_ids))
         for label, container, url, key in (("Sonarr", SONARR_CONTAINER, SONARR_URL, sonarr_api_key),
                                            ("Radarr", RADARR_CONTAINER, RADARR_URL, radarr_api_key)):
-            try:
-                changed += apply_public_indexer_seed_ratio(label, container, url, key, public_ids)
-            except Exception as e:
-                errors.append(f"{label} (indexeurs publics): {e}")
+            run(f"{label} (indexeurs publics)",
+                lambda: apply_public_indexer_seed_ratio(label, container, url, key, public_ids))
 
     for line in changed:
         print(f"corrigé: {line}")

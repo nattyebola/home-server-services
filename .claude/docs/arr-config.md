@@ -276,6 +276,17 @@ ou aux connexions arr → Jellyfin.
   tout le provisioning) ; la Connection Custom Script exige que le fichier
   existe côté conteneur ; Prowlarr vérifie que Sonarr/Radarr sait le joindre
   en retour sur `PROWLARR_INTERNAL_URL`.
+  **Ignoré (`Skipped`) ≠ erreur** (2026-09-29) : `Skipped` = prérequis
+  optionnel ou pas encore en place (clé non renseignée, fichier non copié,
+  conteneur arrêté — le démon Docker refuse l'exec), exit 0. Une erreur de
+  transport curl (connexion refusée, timeout, conteneur démarré) ou un HTTP en
+  erreur est une **erreur**, exit 1 — avant, `request()` la classait en
+  « ignoré » et le script sortait en 0 sans avoir rien provisionné. Dans une
+  boucle (indexeurs Prowlarr, serveurs arr de Seerr), un élément ignoré ou en
+  erreur n'arrête plus les suivants : un secret d'indexeur absent empêchait de
+  créer les autres, un profil Radarr absent empêchait de connecter Sonarr et
+  de marquer Seerr initialisé. `keys` isole aussi chaque clé : une erreur
+  Jellyfin n'efface plus du rapport les clés arr déjà écrites dans `arr/.env`.
   `jellyfin/.env` porte `JELLYFIN_ADMIN_USER`/`PASSWORD`, nécessaires aux deux
   seules opérations que Jellyfin refuse à une clé API : créer la première clé
   (bootstrap) et créer le compte propriétaire de Seerr. **Une clé API suffit
@@ -352,13 +363,28 @@ ou aux connexions arr → Jellyfin.
   `api_put` passe par un `api_write` commun qui **vérifie la réponse** :
   `curl -s` sort 0 même sur un 400, sans ça une écriture refusée par la
   validation Sonarr était comptée comme réussie.
-  **`settle()` : relecture jusqu'à 2 passes consécutives sans rien à
-  corriger** (bornées à 6 tentatives × 5 s), appliqué aux seules étapes que
-  recyclarr fait dériver. Nécessaire à cause des écritures Servarr asynchrones
-  — voir le piège des écritures Servarr asynchrones dans `CLAUDE.md`.
-  Une passe qui corrige remet le compteur à
-  zéro, donc une écriture en deux temps ne conclut pas sur la première
-  accalmie.
+  **`settle()` : relecture jusqu'à 60 s de calme continu** (7 passes propres
+  consécutives à 10 s d'écart, `SETTLE_STABLE_SECONDS`), appliqué aux seules
+  étapes que recyclarr fait dériver. Nécessaire à cause des écritures Servarr
+  asynchrones — voir le piège des écritures Servarr asynchrones dans
+  `CLAUDE.md`. **La fenêtre doit couvrir la latence max mesurée (53 s)**, pas
+  une latence typique : l'ancien réglage (2 passes à 5 s) concluait après
+  ~5 s et manquait une écriture atterrie à t=20 s (2026-09-29). Une passe qui
+  corrige remet le compteur à zéro, donc une écriture en deux temps ne conclut
+  pas sur la première accalmie. Plafond : deux fenêtres + 2 passes (16 passes,
+  ~2 min 30 par étape au pire) ; en dessous, une écriture atterrie à 53 s était
+  déclarée « non stabilisée ». Coût accepté : ≥ 1 min par étape sous
+  `settle()` (Sonarr puis Radarr), même sans dérive.
+  **Ce qui a été écrit est toujours rapporté**, même si l'étape échoue ensuite
+  (`StepFailed` porte les corrections déjà faites, `settle()` les cumule) ; dans
+  une boucle (indexeurs, paliers, CF, profils), un élément en échec est noté et
+  les suivants sont traités. Exit 1 dès qu'il y a une erreur.
+  **Signatures de comparaison = tous les champs que le corps force** : la
+  connexion Jellyfin compare aussi `tags` et `includeHealthWarnings`, les
+  profils anime l'`allowed` de chaque qualité d'un groupe. Sans ça la dérive de
+  ces champs n'était jamais corrigée. Valeurs normalisées (liste triée,
+  booléen) pour ne pas réécrire en boucle — vérifié sur les valeurs relues le
+  2026-09-29.
 - **`authenticationRequired: enabled` sur les trois arr (2026-09-29)**, donc
   login même depuis le LAN — choix de l'utilisateur après l'audit. Avec
   `disabledForLocalAddresses`, toute IP RFC1918 est « locale », y compris
@@ -425,6 +451,15 @@ ou aux connexions arr → Jellyfin.
   l'équivalent : son `wanted/missing` ne renvoie que des épisodes déjà diffusés.
   `--dry-run` liste la sélection sans rien envoyer aux indexeurs — le réflexe
   avant de toucher aux plafonds.
+  **Un `201` sur `POST /command` ne vaut pas recherche faite** (2026-09-29) :
+  `wait_command()` relit `GET /command/{id}` pendant au plus
+  `COMMAND_WATCH_SECONDS` (60 s). En `failed`/`aborted`/`cancelled`/`orphaned`,
+  les items **ne sont pas** marqués cherchés (sinon sortis de la rotation 14 j
+  pour rien) et le script sort en **exit 1** (marqueur cron non écrit, tâche
+  rouge au dashboard). Encore `queued`/`started` au bout du délai = acceptée :
+  une recherche de 12 items dure souvent plus, et attendre la fin bloquerait
+  cron pour un échec tardif rare. La file Sonarr est lue avec
+  `includeUnknownSeriesItems` (le script passait la variante Radarr, ignorée).
 - **Le scheduler interne de recyclarr est désactivé**, le service passe en
   mode manuel pur (`arr/docker-compose.yml` : plus de `restart:`/healthcheck,
   `profiles: [manual]` pour rester absent de `make up STACK=arr`), déclenché
@@ -480,13 +515,12 @@ ou aux connexions arr → Jellyfin.
   français — à ne pas confondre.
   Profils Sonarr existants : les 6 par défaut (aucun utilisé),
   `WEB-2160p (Combined)`, `Anime (Fansub) VF`, `Anime (Fansub) VOSTFR`.
-  Skill `.claude/skills/anime-vf/SKILL.md` : bascule la série sur le profil
-  VF, relance `SeriesSearch`, rapporte ce qui a été grabé — le remplacement
-  du fichier reste automatique côté Sonarr (`upgradeAllowed: true`). Le skill
-  capture le `(dev, ino)` de chaque fichier **avant** la recherche, attend
-  l'import, puis supprime l'ancien torrent via `delete-by-inode`. Ne marche
-  que si une release FRENCH/VFF/VFQ/TRUEFRENCH existe réellement chez les
-  indexeurs au moment de la recherche.
+  Passer une série en VF se fait **à la main dans Sonarr** (skill `anime-vf`
+  retiré le 2026-09-29, à la demande) : profil `Anime (Fansub) VF`, puis
+  recherche de la série. Le remplacement du fichier est automatique
+  (`upgradeAllowed: true`) ; l'ancien torrent reste chez Transmission, à
+  retirer depuis clearr. Ne marche que si une release FRENCH/VFF/VFQ/TRUEFRENCH
+  existe réellement chez les indexeurs au moment de la recherche.
 - **`scripts/vpn-bench.py` (skill `vpn-bench`)** compare latence/débit entre
   le serveur AirVPN configuré (`vpn/custom/default.ovpn`) et d'autres pays.
   Marche parce que le certificat client AirVPN est lié au **compte**, pas au

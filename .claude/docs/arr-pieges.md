@@ -148,6 +148,17 @@ score de profil, cross-seed ou Seerr.
   rattache pas du tout : titre absent du catalogue (« Unknown Movie ») — c'est
   une question pour l'utilisateur, pas un ajout d'office, le téléchargement
   pouvant être volontairement hors arr.
+  **Sonarr crée une entrée de file PAR ÉPISODE d'un même téléchargement**
+  (même `downloadId`), alors que `manualimport?downloadId=…` renvoie tous ses
+  fichiers : interroger manualimport par entrée donnait N×N lignes pour un pack
+  de N épisodes, et un `ManualImport` avec chaque fichier N fois. Le script
+  regroupe par downloadId (`queueIds` garde toutes les entrées) ; le dashboard
+  compte de même. **Les downloadId de la file sont en MAJUSCULES**, Transmission
+  et clearr affichent le hash en minuscules : `--download-id` se compare sans
+  casse, et `assign` retrouve l'id exact dans la file avant d'appeler l'API.
+  **Les ids d'épisodes sont globaux à Sonarr** : `assign` vérifie qu'ils
+  appartiennent à la série du candidat (`GET /episode?seriesId=`) avant toute
+  écriture, sinon un id relevé ailleurs écrasait un épisode d'une autre série.
 - **Sonarr/Radarr n'importent pas les fichiers vidéo posés en vrac à la racine
   d'un dossier scanné** — ils ne reconnaissent que la convention
   un-film/une-série par sous-dossier, sans erreur ni log pour les fichiers

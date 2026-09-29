@@ -79,7 +79,8 @@ flowchart LR
   `<meta name="robots">`, `dashboard/assets/robots.txt` et l'en-tête
   `X-Robots-Tag`.
 - **Section Monitoring** (dépliable) : ratios et débits Transmission par
-  tracker, torrents en erreur ou absents, **imports bloqués / en attente**,
+  tracker, torrents en erreur ou absents, **imports bloqués / en attente**
+  (comptés par téléchargement, un pack compte pour un),
   santé de chaque indexeur Prowlarr, âge de la dernière sauvegarde,
   **tâches planifiées** (vert si la tâche a réussi dans son intervalle).
 
@@ -103,6 +104,10 @@ flowchart LR
   lise ses propres labels.
 - **Changer le domaine de Nextcloud** ne se limite pas au label : il faut
   aussi `trusted_domains`/`overwrite.cli.url` via `occ config:system:set`.
+- **Page surlignée « périmée »** : la régénération échoue. Elle refuse
+  volontairement de publier une page fausse quand `docker ps` ou
+  `docker compose config` échoue (sinon une stack entière disparaîtrait de la
+  page). Lire `dashboard/refresh.log`, relancer `make dashboard-refresh`.
 - **Access log** (`${DATA_ROOT}/.traefik/log/`) : seule trace des requêtes WAN,
   403 des filtres LAN compris. Un `fail2ban` sur l'hôte qui lit ce fichier est
   recommandé (hors stack).

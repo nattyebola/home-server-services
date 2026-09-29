@@ -142,12 +142,12 @@ lent et en plus gros.
 | Réglage | Porté par | Effet |
 |---|---|---|
 | Custom formats + profils des guides TRaSH | `recyclarr` (`arr/recyclarr/`) | profils `WEB-2160p (Combined)` (Sonarr) et `[SQP] SQP-1 WEB (2160p)` (Radarr) |
-| Profils anime `Anime (Fansub) VF` / `VOSTFR` | `arr/profiles/sonarr-anime.json` | choix de la langue **par série** (skill `anime-vf` pour basculer) |
+| Profils anime `Anime (Fansub) VF` / `VOSTFR` | `arr/profiles/sonarr-anime.json` | choix de la langue **par série** (profil à changer à la main dans Sonarr) |
 | Ce que recyclarr écrase ou ne couvre pas | `apply-arr-overrides.py` | tailles de palier, langue, connexions Jellyfin, `.nfo`, renommage, ratio des indexeurs publics… réappliqué chaque nuit |
 | Délai de 3 h sur l'anime VOSTFR | tag `anime-vostfr-delai` | laisse arriver une release VOSTFR plutôt que grabber la première puis la remplacer 5 fois ; une release déjà ≥ 50 part tout de suite |
 | Ratio 1.5 sur les indexeurs publics | `PUBLIC_INDEXER_SEED_RATIO` | un tracker public ne compte pas le ratio ; les privés ne sont pas touchés |
 | Rejet des archives/exécutables | `failDownloads` | une « release » `.exe`/`.zipx` est marquée en échec et remplacée automatiquement |
-| Recherche des manquants | `search-missing.py`, lundi 5 h | Sonarr/Radarr **ne re-cherchent jamais** seuls un manquant raté au RSS ; plafonné à 12 recherches, rotation par ancienneté |
+| Recherche des manquants | `search-missing.py`, lundi 5 h | Sonarr/Radarr **ne re-cherchent jamais** seuls un manquant raté au RSS ; plafonné à 12 recherches, rotation par ancienneté ; tâche en rouge si l'arr fait échouer la commande de recherche |
 | Marqueurs de fin de saison | `mark-finale.sh`, hook + cron 2 h | `†` fin de saison, `‡` fin de série, `½` mi-saison devant le titre d'épisode (visible dans Kodi) |
 
 > [!IMPORTANT]
@@ -165,14 +165,26 @@ folders, tags…) peut être ajusté librement dans les UI.
 
 - **Un titre « manquant » est souvent déjà téléchargé**, bloqué dans la file
   (`importBlocked`/`importPending`) : aucune erreur visible hors de la file.
-  Le dashboard compte ces entrées ; `scripts/manual-import.py` (skill
-  `manual-import`) les débloque.
+  Le dashboard compte ces téléchargements (un pack compte pour un, même si
+  Sonarr crée une entrée de file par épisode) ; `scripts/manual-import.py`
+  (skill `manual-import`) les débloque.
 - **Fichiers posés en vrac** à la racine d'un dossier scanné : ignorés sans
   log. Utiliser *Manual Import*.
 - **Écritures asynchrones** : certaines écritures de config Servarr répondent
   `202 Accepted` et s'appliquent plus tard (observé de 0,5 s à 53 s). Un
   « lire → comparer » juste derrière voit encore l'ancienne valeur.
-  `apply-arr-overrides.py` relit donc jusqu'à stabilisation (`settle()`).
+  `apply-arr-overrides.py` relit donc jusqu'à stabilisation (`settle()`) :
+  il faut **60 s sans rien à corriger**, relu toutes les 10 s. Un
+  `make arr-overrides` dure donc au moins 2 minutes (Sonarr puis Radarr).
+- **Rapport de `make arr-overrides` en cas d'erreur** : les lignes
+  `corrigé:` listent tout ce qui a été écrit, même si l'étape a échoué
+  ensuite ; un indexeur en échec n'empêche pas de traiter les suivants. Exit 1
+  dès qu'une ligne `erreur:` apparaît.
+- **`make provision` / `make api-keys` : `ignoré:` ≠ `erreur:`**. `ignoré:`
+  (exit 0) = prérequis pas encore en place (clé absente, conteneur arrêté,
+  fichier à copier) : relancer une fois corrigé. `erreur:` (exit 1) = service
+  injoignable ou réponse HTTP en erreur. Un élément ignoré n'empêche plus de
+  traiter les autres (indexeurs, serveurs Seerr).
 - **Un custom format géré par recyclarr est réécrit au sync suivant** : ne pas
   le modifier par l'API, créer un CF distinct (c'est l'origine de
   `VOSTFR (hors suffixe)`).

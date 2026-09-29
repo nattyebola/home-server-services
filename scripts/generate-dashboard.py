@@ -27,6 +27,7 @@ import shutil
 import string
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -220,16 +221,27 @@ def docker_compose_config(stack):
     if override.exists():
         args += ["-f", str(override)]
     args += ["config", "--format", "json"]
+    # Échec bruyant, même raisonnement que docker_ps_set() : renvoyer `{}` ici
+    # faisait disparaître TOUTE la stack de la page, y compris de « Stack non
+    # lancée » (on ne sait plus quels services elle déclare), avec exit 0 et
+    # marqueur cron vert — une page crédible et fausse. Planter laisse en place
+    # le dernier index.html valide, que le surlignage « page périmée » de
+    # dashboard.js signale, et fait passer la tâche au rouge. Pas de faux
+    # positif sur une stack non configurée : sans son .env, `config` réussit
+    # quand même (avertissements seulement, aucun `${VAR:?}` dans les compose).
     try:
         res = subprocess.run(args, capture_output=True, text=True, timeout=30)
-    except subprocess.TimeoutExpired:
-        return {}
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f"`docker compose config` ({stack}) ne répond pas "
+                           "— dashboard non régénéré") from e
     if res.returncode != 0:
-        return {}
+        raise RuntimeError(f"`docker compose config` ({stack}) a échoué ({res.returncode}) : "
+                           f"{res.stderr.strip()[:200]} — dashboard non régénéré")
     try:
         return json.loads(res.stdout)
-    except json.JSONDecodeError:
-        return {}
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"`docker compose config` ({stack}) : JSON illisible "
+                           "— dashboard non régénéré") from e
 
 
 def prowlarr_indexer_health():
@@ -265,7 +277,13 @@ def prowlarr_indexer_health():
         failing = json.loads(status_res.stdout)
     except (subprocess.TimeoutExpired, json.JSONDecodeError):
         return None
-    failing_ids = {f.get("indexerId") for f in failing}
+    # Une erreur Servarr (401, 500…) arrive en objet JSON `{"message": …}`, qui
+    # passe json.loads : sans ce test, `f.get` sur les clés d'un dict (des str)
+    # levait AttributeError et plantait toute la régénération, pas seulement
+    # cette carte. Même traitement que les autres échecs : carte omise.
+    if not isinstance(indexers, list) or not isinstance(failing, list):
+        return None
+    failing_ids = {f.get("indexerId") for f in failing if isinstance(f, dict)}
     return sorted(
         ({"name": i.get("name", "?"), "ok": i.get("id") not in failing_ids} for i in indexers),
         key=lambda e: e["name"].lower(),
@@ -273,9 +291,14 @@ def prowlarr_indexer_health():
 
 
 def arr_stuck_imports(running):
-    """Entrées de file Sonarr+Radarr dont le téléchargement est fini mais
-    l'import non : {"importBlocked": n, "importPending": n}, tous arr
-    confondus. None si le compte ne peut pas être établi COMPLÈTEMENT.
+    """Téléchargements Sonarr+Radarr finis mais non importés :
+    {"importBlocked": n, "importPending": n}, tous arr confondus. None si le
+    compte ne peut pas être établi COMPLÈTEMENT.
+
+    Compté par downloadId distinct, pas par entrée de file : Sonarr crée une
+    entrée PAR ÉPISODE d'un même téléchargement, un pack de 12 épisodes
+    affichait donc « 12 bloqués » pour une seule chose à débloquer — et
+    `manual-import.py`, qui regroupe par downloadId, n'en listait qu'une.
 
     Tout ou rien, contrairement au best-effort par carte du reste du fichier :
     avec un arr injoignable on afficherait le compte de l'autre seul, donc un
@@ -289,7 +312,7 @@ def arr_stuck_imports(running):
     garder alignés : ce qui est compté ici doit être exactement ce que
     `manual-import.py list` sait ensuite traiter."""
     env = load_env_file(REPO_ROOT / "arr" / ".env")
-    counts = {"importBlocked": 0, "importPending": 0}
+    downloads = {"importBlocked": set(), "importPending": set()}
     for service, container, base_url, key_name, unknown_param in ARR_QUEUE_APPS:
         api_key = env.get(key_name)
         if service not in running or not api_key:
@@ -308,11 +331,16 @@ def arr_stuck_imports(running):
             records = json.loads(res.stdout)["records"]
         except (subprocess.TimeoutExpired, json.JSONDecodeError, KeyError, TypeError):
             return None
+        if not isinstance(records, list):
+            return None
         for record in records:
             state = record.get("trackedDownloadState")
-            if state in counts:
-                counts[state] += 1
-    return counts
+            if state in downloads:
+                # Préfixé par l'arr : un même infoHash suivi par Sonarr ET Radarr
+                # reste deux imports distincts. Sans downloadId (jamais vu sur un
+                # téléchargement fini), l'entrée compte seule.
+                downloads[state].add((service, record.get("downloadId") or f"queue:{record.get('id')}"))
+    return {state: len(ids) for state, ids in downloads.items()}
 
 
 def lan_middleware_names():
@@ -592,7 +620,8 @@ def render_torrents_files_card(stats, imports):
             value_class=(("stat-value-critical" if imports["importBlocked"] else "stat-value-good")
                          if imports else ""),
             title="Imports bloqués par Sonarr/Radarr (importBlocked) — "
-                  "téléchargements terminés que l'arr a refusé d'importer",
+                  "téléchargements terminés que l'arr a refusé d'importer "
+                  "(un pack compte pour un, pas un par épisode)",
         ),
         render_stat_item(
             str(imports["importPending"]) if imports else "—", "En attente",
@@ -999,24 +1028,67 @@ def build_stats_section(running, data_root, backup_dir):
     )
 
 
+def write_atomically(dest, data):
+    """Remplace `dest` par `data` (bytes) sans jamais exposer de fichier à
+    moitié écrit. Deux régénérations peuvent tourner en même temps (le tick cron
+    */5 et le garde `rearm` de lan-only-middleware.sh tombent sur la même
+    minute) : un temporaire au nom FIXE était alors tronqué par l'une pendant
+    que l'autre le renommait — page coupée publiée, et `os.replace` de l'autre
+    en FileNotFoundError. Nom unique (mkstemp) dans le même dossier, pour que le
+    rename reste atomique (même système de fichiers).
+
+    Remplacer le fichier ne gêne pas nginx : c'est le DOSSIER dashboard/html/
+    qui est monté (cf. traefik/docker-compose.yml), il voit donc le nouvel
+    inode ; un montage de fichier resterait, lui, figé sur l'ancien."""
+    fd, tmp = tempfile.mkstemp(dir=dest.parent, prefix=f".{dest.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        # mkstemp crée en 0600 : illisible par nginx, qui tourne sous un autre
+        # uid dans son conteneur (403 sur tout le dashboard).
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, dest)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def is_temp_file(path):
+    return path.name.startswith(".") and path.name.endswith(".tmp")
+
+
 def copy_assets():
     logos_out = OUT_DIR / "assets" / "logos"
     logos_out.mkdir(parents=True, exist_ok=True)
     # *.svg et *.png (clearr.png, ajouté le 2026-08-01 — avant ça, seul le
     # glob *.svg existait, donc un logo PNG n'était jamais copié dans le
     # dossier servi : carré d'image cassée sur le dashboard malgré un
-    # <img src> correct dans le HTML généré). On vide d'abord logos_out : un
-    # ancien fichier resté d'un format précédent (ex. clearr.svg après son
-    # remplacement par clearr.png) ne doit pas traîner indéfiniment.
+    # <img src> correct dans le HTML généré).
+    logos = list((ASSETS_SRC / "logos").glob("*.svg")) + list((ASSETS_SRC / "logos").glob("*.png"))
+    for logo in logos:
+        write_atomically(logos_out / logo.name, logo.read_bytes())
+    # Un ancien fichier resté d'un format précédent (ex. clearr.svg après son
+    # remplacement par clearr.png) ne doit pas traîner indéfiniment. Retiré
+    # APRÈS la copie et seulement s'il n'a plus de source : l'ancien « vider
+    # puis recopier » laissait, pendant une régénération, un dossier sans logos
+    # (images cassées servies) et faisait planter l'autre run concurrent sur un
+    # fichier disparu sous lui. Les temporaires d'un run concurrent sont
+    # épargnés ; `missing_ok` couvre le cas où l'autre run a déjà nettoyé.
+    wanted = {logo.name for logo in logos}
     for stale in logos_out.iterdir():
-        stale.unlink()
-    for logo in list((ASSETS_SRC / "logos").glob("*.svg")) + list((ASSETS_SRC / "logos").glob("*.png")):
-        shutil.copy(logo, logos_out / logo.name)
-    shutil.copy(ASSETS_SRC / "dashboard.css", OUT_DIR / "assets" / "dashboard.css")
-    shutil.copy(ASSETS_SRC / "dashboard.js", OUT_DIR / "assets" / "dashboard.js")
-    shutil.copy(ASSETS_SRC / "robots.txt", OUT_DIR / "robots.txt")
-    shutil.copy(ASSETS_SRC / "favicon.png", OUT_DIR / "assets" / "favicon.png")
-    shutil.copy(ASSETS_SRC / "favicon.ico", OUT_DIR / "favicon.ico")
+        if stale.name not in wanted and not is_temp_file(stale):
+            stale.unlink(missing_ok=True)
+    for src, dest in (
+        (ASSETS_SRC / "dashboard.css", OUT_DIR / "assets" / "dashboard.css"),
+        (ASSETS_SRC / "dashboard.js", OUT_DIR / "assets" / "dashboard.js"),
+        (ASSETS_SRC / "robots.txt", OUT_DIR / "robots.txt"),
+        (ASSETS_SRC / "favicon.png", OUT_DIR / "assets" / "favicon.png"),
+        (ASSETS_SRC / "favicon.ico", OUT_DIR / "favicon.ico"),
+    ):
+        write_atomically(dest, src.read_bytes())
 
 
 def main():
@@ -1066,10 +1138,9 @@ def main():
     # lan-only-middleware.sh), donc à la minute où une fenêtre WAN expire les
     # deux tombent ensemble. Une écriture en place (write_text tronque puis
     # écrit) sert alors une page tronquée au visiteur — précisément au moment où
-    # le bandeau « ouvert au WAN » doit être fiable.
-    tmp_file = out_file.with_suffix(".html.tmp")
-    tmp_file.write_text(page)
-    os.replace(tmp_file, out_file)
+    # le bandeau « ouvert au WAN » doit être fiable. Temporaire à nom unique,
+    # voir write_atomically().
+    write_atomically(out_file, page.encode())
     print(f"dashboard régénéré : {out_file}")
 
 

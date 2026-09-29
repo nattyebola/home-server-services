@@ -198,8 +198,15 @@ SEERR_SONARR_ANIME_PROFILE = "Anime (Fansub) VOSTFR"
 
 
 class Skipped(Exception):
-    """Prérequis absent (clé non renseignée, service non démarré...) : on le
-    signale et on continue, sans faire échouer tout le script."""
+    """Prérequis absent (clé non renseignée, fichier non copié, conteneur non
+    démarré...) : on le signale et on continue, sans faire échouer le script —
+    exit 0 si rien d'autre n'a échoué. Réservé à ce qui est optionnel ou
+    volontairement absent À CE STADE de l'installation. Une panne en cours de
+    route (HTTP en erreur, service injoignable alors que son conteneur tourne)
+    n'en est pas une : c'est une erreur, qui fait sortir le script en 1.
+
+    Levé au milieu d'une boucle, il ne doit concerner que l'élément en cours :
+    les fonctions qui itèrent le notent dans `skipped` et passent au suivant."""
 
 
 def log(message):
@@ -273,7 +280,17 @@ def request(container, url, method="GET", headers=(), body=None, allow_status=()
     res = subprocess.run(cmd, input=payload if (secret_header or body is not None) else None,
                          capture_output=True, text=True, timeout=120)
     if res.returncode != 0:
-        raise Skipped(f"docker exec {container} a échoué (conteneur arrêté ?)")
+        # Deux échecs très différents sous le même code non nul. Le démon
+        # Docker qui refuse l'exec (conteneur absent ou arrêté) est un
+        # prérequis manquant, comme une clé non renseignée : Skipped. Tout le
+        # reste vient de curl lui-même, conteneur démarré — connexion refusée
+        # (7), timeout (28), nom non résolu (6) : le service visé est en panne
+        # ou mal câblé, et l'ancien « ignoré » faisait sortir le script en 0
+        # sur un provisioning qui n'avait pas eu lieu.
+        if "Error response from daemon" in res.stderr:
+            raise Skipped(f"conteneur {container} absent ou arrêté")
+        raise RuntimeError(f"{method} {url} : curl a échoué dans {container} "
+                           f"(code {res.returncode} — service injoignable ?)")
     payload, _, status = res.stdout.rpartition("\n")
     status = status.strip()
     # curl -s sort 0 sur un 4xx/5xx : c'est le code HTTP qui fait foi (même
@@ -375,37 +392,41 @@ def jellyfin_api_key(token):
     raise RuntimeError("clé API Jellyfin créée mais introuvable à la relecture")
 
 
-def command_keys(shared, done, skipped):
+def command_keys(shared, done, skipped, errors):
+    """Chaque clé est une étape à part (run_step) : un 401 sur /Auth/Keys de
+    Jellyfin n'a pas à emporter les clés arr, ni surtout le rapport de ce qui a
+    DÉJÀ été écrit dans arr/.env — l'ancienne version laissait l'exception
+    remonter jusqu'à main(), qui sortait avant d'afficher les « fait: »."""
     data_root = shared["DATA_ROOT"]
     for name in ("prowlarr", "sonarr", "radarr"):
         var = ARRS[name]["key_var"]
-        try:
+
+        def arr_key(done, skipped, name=name, var=var):
             if fill_env(ARR_ENV, var, arr_api_key_from_disk(name, data_root)):
                 done.append(f"{var} renseignée dans arr/.env")
-        except Skipped as e:
-            skipped.append(f"{var} : {e}")
-    try:
+
+        run_step(var, arr_key, done, skipped, errors)
+
+    def cross_seed_key(done, skipped):
         if fill_env(ARR_ENV, "CROSSSEED_API_KEY", cross_seed_api_key()):
             done.append("CROSSSEED_API_KEY renseignée dans arr/.env")
-    except Skipped as e:
-        skipped.append(f"CROSSSEED_API_KEY : {e}")
 
-    jellyfin_env = read_env(JELLYFIN_ENV)
-    user = jellyfin_env.get("JELLYFIN_ADMIN_USER")
-    password = jellyfin_env.get("JELLYFIN_ADMIN_PASSWORD")
-    if not user or not password:
-        skipped.append("JELLYFIN_API_KEY : JELLYFIN_ADMIN_USER/PASSWORD absents de "
-                       "jellyfin/.env (voir .env.example)")
-        return
-    try:
+    run_step("CROSSSEED_API_KEY", cross_seed_key, done, skipped, errors)
+
+    def jellyfin_key(done, skipped):
+        jellyfin_env = read_env(JELLYFIN_ENV)
+        user = jellyfin_env.get("JELLYFIN_ADMIN_USER")
+        password = jellyfin_env.get("JELLYFIN_ADMIN_PASSWORD")
+        if not user or not password:
+            raise Skipped("JELLYFIN_ADMIN_USER/PASSWORD absents de jellyfin/.env "
+                          "(voir .env.example)")
         key, created = jellyfin_api_key(jellyfin_token(user, password))
-    except Skipped as e:
-        skipped.append(f"JELLYFIN_API_KEY : {e}")
-        return
-    if created:
-        done.append(f"clé API Jellyfin créée ({JELLYFIN_KEY_APP})")
-    if fill_env(ARR_ENV, "JELLYFIN_API_KEY", key):
-        done.append("JELLYFIN_API_KEY renseignée dans arr/.env")
+        if created:
+            done.append(f"clé API Jellyfin créée ({JELLYFIN_KEY_APP})")
+        if fill_env(ARR_ENV, "JELLYFIN_API_KEY", key):
+            done.append("JELLYFIN_API_KEY renseignée dans arr/.env")
+
+    run_step("JELLYFIN_API_KEY", jellyfin_key, done, skipped, errors)
 
 
 # --- services : 9c ----------------------------------------------------------
@@ -620,55 +641,80 @@ def provision_prowlarr_indexers(arr_env, done, skipped):
         raise Skipped("aucun indexeur déclaré dans prowlarr-indexers.json")
 
     existing = {i["name"] for i in arr_request("prowlarr", "/indexer", api_key=prowlarr_key)}
-    schema = None
-    app_profile_id = None
-    for spec in wanted:
-        if spec["name"] in existing:
+    to_create = [spec for spec in wanted if spec["name"] not in existing]
+    if not to_create:
+        return
+    # Chargé une fois, et seulement si on crée vraiment (621 définitions). Son
+    # échec emporte toute l'étape : sans schéma aucun indexeur n'est créable.
+    schema, app_profile_id = prowlarr_indexer_schema(prowlarr_key)
+    # Un indexeur par tour, indépendant des autres : le secret de A absent ne
+    # doit pas empêcher de créer B et C (l'ancien `raise Skipped` sortait de la
+    # boucle sans même les nommer). Les erreurs sont rendues ensemble à la fin,
+    # après que tous les indexeurs créables l'ont été.
+    failures = []
+    for spec in to_create:
+        try:
+            create_prowlarr_indexer(spec, arr_env, prowlarr_key, schema, app_profile_id)
+        except Skipped as e:
+            skipped.append(f"indexeur {spec['name']} : {e}")
             continue
-        if schema is None:  # 621 définitions, ne le charger que si on crée vraiment
-            schema = {s["definitionName"]: s
-                      for s in arr_request("prowlarr", "/indexer/schema", api_key=prowlarr_key)}
-            # Le schéma renvoie appProfileId=0 (placeholder) : Prowlarr refuse
-            # ("'App Profile Id' must be greater than '0'") tant qu'on ne pointe
-            # pas sur un app profile réel. "Standard" est celui créé par défaut
-            # à l'installation de Prowlarr, résolu par nom comme le reste de ce
-            # script (l'id n'est pas garanti stable d'une instance à l'autre).
-            profiles = {p["name"]: p["id"]
-                        for p in arr_request("prowlarr", "/appprofile", api_key=prowlarr_key)}
-            app_profile_id = profiles.get("Standard")
-            if app_profile_id is None:
-                raise RuntimeError("app profile 'Standard' introuvable dans Prowlarr "
-                                   f"(profils existants : {sorted(profiles)})")
-        base = schema.get(spec["definitionName"])
-        if base is None:
-            raise RuntimeError(f"définition Cardigann {spec['definitionName']!r} inconnue de "
-                               "Prowlarr — vérifier definitionName dans prowlarr-indexers.json")
-        body = dict(base)
-        body.update({"name": spec["name"], "enable": True,
-                     "priority": spec.get("priority", 25), "tags": [],
-                     "appProfileId": app_profile_id})
-        body["fields"] = [dict(f) for f in base.get("fields", [])]
-
-        values = dict(spec.get("fields", {}))
-        if spec.get("baseUrl"):
-            values["baseUrl"] = spec["baseUrl"]
-        for field, var in spec.get("secrets", {}).items():
-            secret = arr_env.get(var)
-            if not secret:
-                # Sans le secret l'indexeur serait créé mais ne répondrait à
-                # aucune recherche : mieux vaut ne pas le créer du tout et le
-                # dire, plutôt que de laisser un objet inerte dans Prowlarr.
-                raise Skipped(f"{spec['name']} : {var} absente de arr/.env")
-            values[field] = secret
-        for field in body["fields"]:
-            if field["name"] in values:
-                field["value"] = values.pop(field["name"])
-        if values:
-            raise RuntimeError(f"{spec['name']} : champ(s) {sorted(values)} absent(s) du schéma "
-                               f"de {spec['definitionName']!r}")
-
-        arr_request("prowlarr", "/indexer", "POST", body, prowlarr_key)
+        except Exception as e:
+            failures.append(f"{spec['name']} : {e}")
+            continue
         done.append(f"prowlarr : indexeur {spec['name']} ajouté")
+    if failures:
+        raise RuntimeError(" ; ".join(failures))
+
+
+def prowlarr_indexer_schema(prowlarr_key):
+    """Renvoie ({definitionName: squelette}, id de l'app profile « Standard »)."""
+    schema = {s["definitionName"]: s
+              for s in arr_request("prowlarr", "/indexer/schema", api_key=prowlarr_key)}
+    # Le schéma renvoie appProfileId=0 (placeholder) : Prowlarr refuse
+    # ("'App Profile Id' must be greater than '0'") tant qu'on ne pointe
+    # pas sur un app profile réel. "Standard" est celui créé par défaut
+    # à l'installation de Prowlarr, résolu par nom comme le reste de ce
+    # script (l'id n'est pas garanti stable d'une instance à l'autre).
+    profiles = {p["name"]: p["id"]
+                for p in arr_request("prowlarr", "/appprofile", api_key=prowlarr_key)}
+    app_profile_id = profiles.get("Standard")
+    if app_profile_id is None:
+        raise RuntimeError("app profile 'Standard' introuvable dans Prowlarr "
+                           f"(profils existants : {sorted(profiles)})")
+    return schema, app_profile_id
+
+
+def create_prowlarr_indexer(spec, arr_env, prowlarr_key, schema, app_profile_id):
+    """Crée UN indexeur de prowlarr-indexers.json à partir de son squelette."""
+    base = schema.get(spec["definitionName"])
+    if base is None:
+        raise RuntimeError(f"définition Cardigann {spec['definitionName']!r} inconnue de "
+                           "Prowlarr — vérifier definitionName dans prowlarr-indexers.json")
+    body = dict(base)
+    body.update({"name": spec["name"], "enable": True,
+                 "priority": spec.get("priority", 25), "tags": [],
+                 "appProfileId": app_profile_id})
+    body["fields"] = [dict(f) for f in base.get("fields", [])]
+
+    values = dict(spec.get("fields", {}))
+    if spec.get("baseUrl"):
+        values["baseUrl"] = spec["baseUrl"]
+    for field, var in spec.get("secrets", {}).items():
+        secret = arr_env.get(var)
+        if not secret:
+            # Sans le secret l'indexeur serait créé mais ne répondrait à
+            # aucune recherche : mieux vaut ne pas le créer du tout et le
+            # dire, plutôt que de laisser un objet inerte dans Prowlarr.
+            raise Skipped(f"{var} absente de arr/.env")
+        values[field] = secret
+    for field in body["fields"]:
+        if field["name"] in values:
+            field["value"] = values.pop(field["name"])
+    if values:
+        raise RuntimeError(f"champ(s) {sorted(values)} absent(s) du schéma "
+                           f"de {spec['definitionName']!r}")
+
+    arr_request("prowlarr", "/indexer", "POST", body, prowlarr_key)
 
 
 def provision_prowlarr_apps(arr_env, done, skipped):
@@ -745,6 +791,7 @@ def provision_seerr(shared, arr_env, done, skipped):
     jellyfin_key = arr_env.get("JELLYFIN_API_KEY")
     initialized = bool(settings.get("public", {}).get("initialized"))
     changed = False
+    failures = []
 
     # Les identifiants admin ne servent qu'à créer le compte propriétaire, donc
     # seulement sur une instance jamais initialisée : ne pas les exiger sinon,
@@ -841,19 +888,30 @@ def provision_seerr(shared, arr_env, done, skipped):
             "tags": [], "animeTags": [],
         }),
     ):
-        existing = seerr_request(f"/settings/{name}", api_key=seerr_key) or []
-        if any(server.get("hostname") == payload["hostname"] for server in existing):
+        # Radarr et Sonarr indépendants : un profil Radarr absent (Skipped levé
+        # par arr_profile_id) sortait de la boucle, et Sonarr n'était alors
+        # jamais connecté ni l'installation marquée terminée — sans le dire,
+        # exit 0. Chaque serveur est désormais traité, l'échec d'un seul noté.
+        try:
+            existing = seerr_request(f"/settings/{name}", api_key=seerr_key) or []
+            if any(server.get("hostname") == payload["hostname"] for server in existing):
+                continue
+            key_var = ARRS[name]["key_var"]
+            if not payload["apiKey"]:
+                skipped.append(f"Seerr : {key_var} absente de arr/.env")
+                continue
+            payload["activeProfileId"] = arr_profile_id(name, payload["apiKey"],
+                                                        payload["activeProfileName"])
+            if name == "sonarr":
+                payload["activeAnimeProfileId"] = arr_profile_id(
+                    name, payload["apiKey"], payload["activeAnimeProfileName"])
+            seerr_request(f"/settings/{name}", "POST", payload, seerr_key)
+        except Skipped as e:
+            skipped.append(f"Seerr : {name} : {e}")
             continue
-        key_var = ARRS[name]["key_var"]
-        if not payload["apiKey"]:
-            skipped.append(f"Seerr : {key_var} absente de arr/.env")
+        except Exception as e:
+            failures.append(f"{name} : {e}")
             continue
-        payload["activeProfileId"] = arr_profile_id(name, payload["apiKey"],
-                                                    payload["activeProfileName"])
-        if name == "sonarr":
-            payload["activeAnimeProfileId"] = arr_profile_id(
-                name, payload["apiKey"], payload["activeAnimeProfileName"])
-        seerr_request(f"/settings/{name}", "POST", payload, seerr_key)
         done.append(f"Seerr : {name} connecté ({payload['activeProfileName']})")
         changed = True
 
@@ -868,6 +926,8 @@ def provision_seerr(shared, arr_env, done, skipped):
     if changed:
         seerr_request("/settings/jobs/jellyfin-full-scan/run", "POST", api_key=seerr_key)
         done.append("Seerr : job « Jellyfin Full Library Scan » lancé")
+    if failures:
+        raise RuntimeError(" ; ".join(failures))
 
 
 # --- points d'entrée -------------------------------------------------------
@@ -945,12 +1005,16 @@ def main():
     done, skipped, errors = [], [], []
     try:
         if command == "keys":
-            command_keys(shared, done, skipped)
+            command_keys(shared, done, skipped, errors)
         else:
             command_services(shared, done, skipped, errors)
     except Exception as e:
-        print(f"erreur: {e}", file=sys.stderr)
-        return 1
+        # Filet : chaque étape est déjà isolée par run_step, mais une exception
+        # qui passerait quand même ne doit pas faire sortir avant le rapport —
+        # des clés peuvent déjà avoir été écrites dans arr/.env.
+        errors.append(str(e))
+    # Code de sortie : 1 dès qu'une étape a ÉCHOUÉ ; des « ignoré: » seuls
+    # laissent 0 (prérequis optionnels ou pas encore en place, voir Skipped).
     for line in done:
         log(f"fait: {line}")
     if not done and not errors:

@@ -40,11 +40,16 @@ class BenchError(RuntimeError):
 
 
 def compose_cmd(*args):
+    # Mêmes fichiers que le `compose` du Makefile (override compris s'il existe),
+    # sans passer par `make restart` : lui redémarrerait toute la stack vpn, là
+    # où le bench ne doit couper que transmission-vpn.
+    override = REPO_ROOT / "vpn/docker-compose.override.yml"
     return [
         "docker", "compose",
         "--env-file", str(REPO_ROOT / ".env.shared"),
         "--env-file", str(REPO_ROOT / "vpn/.env"),
         "-f", str(REPO_ROOT / "vpn/docker-compose.yml"),
+        *(["-f", str(override)] if override.exists() else []),
         *args,
     ]
 

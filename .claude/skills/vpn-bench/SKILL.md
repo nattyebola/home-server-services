@@ -58,8 +58,9 @@ seed à chaque redémarrage.
 ## Avant de lancer
 
 - **Prévenir l'utilisateur** que ça va interrompre brièvement les
-  téléchargements/seed en cours à chaque changement de serveur (autant de
-  fois que de pays testés + 1 pour la restauration finale) — action
+  téléchargements/seed en cours à chaque redémarrage du VPN : N + 2 coupures
+  pour N pays testés (la baseline est elle aussi mesurée après un
+  redémarrage, puis la restauration finale en ajoute un) — action
   reversible mais avec un effet de bord réel sur un service en cours
   d'usage, à confirmer avant de lancer si ce n'est pas déjà explicitement
   demandé.

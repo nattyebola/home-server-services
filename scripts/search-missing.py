@@ -37,8 +37,10 @@
 #
 # Best-effort par arr, comme scripts/apply-arr-overrides.py : un Sonarr
 # injoignable n'empêche pas la passe Radarr. Sortie non nulle si l'un des deux
-# a échoué, pour que la chaîne `&&` de cron n'écrive pas son marqueur de succès
-# et que la carte « Tâches planifiées » du dashboard passe au rouge.
+# a échoué — y compris quand la commande de recherche, acceptée (201), finit en
+# `failed` côté arr (voir wait_command()) — pour que la chaîne `&&` de cron
+# n'écrive pas son marqueur de succès et que la carte « Tâches planifiées » du
+# dashboard passe au rouge.
 import argparse
 import datetime
 import json
@@ -46,6 +48,7 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -121,6 +124,36 @@ def api_command(container, base_url, api_key, payload):
     return json.loads(body) if body else None
 
 
+# Relecture de l'état d'une commande après son POST : un 201 veut seulement
+# dire « mise en file », pas « recherche faite ». Délai court et borné — une
+# recherche de 12 items sur 5 indexeurs dure couramment plus longtemps, et ce
+# script n'a pas à attendre la fin : il doit seulement attraper l'échec
+# immédiat (indexeurs tous désactivés, exception au démarrage de la commande).
+COMMAND_WATCH_SECONDS = 60
+COMMAND_POLL_SECONDS = 3
+# États Servarr qui disent que la commande n'a pas fait son travail.
+# `orphaned` = l'arr a redémarré pendant son exécution, elle n'ira pas au bout.
+COMMAND_FAILED_STATES = ("failed", "aborted", "cancelled", "orphaned")
+
+
+def wait_command(container, base_url, api_key, command, sleep=time.sleep, clock=time.monotonic):
+    """Relit GET /command/{id} jusqu'à un état terminal ou COMMAND_WATCH_SECONDS.
+    Renvoie (état, message). Encore `queued`/`started` au bout du délai =
+    considérée acceptée : attendre la fin bloquerait cron plusieurs minutes pour
+    un échec tardif rare, et l'item simplement repassera dans la rotation après
+    MIN_RESEARCH_INTERVAL_DAYS s'il est toujours manquant."""
+    command_id = (command or {}).get("id")
+    if command_id is None:
+        raise RuntimeError(f"POST /command : réponse sans id — {str(command)[:200]}")
+    status = command.get("status")
+    deadline = clock() + COMMAND_WATCH_SECONDS
+    while status not in ("completed", *COMMAND_FAILED_STATES) and clock() < deadline:
+        sleep(COMMAND_POLL_SECONDS)
+        command = api_get(container, base_url, api_key, f"/command/{command_id}")
+        status = command.get("status")
+    return status, command.get("message") or command.get("exception") or ""
+
+
 def load_state(data_root):
     """L'état est un confort d'étalement, pas une source de vérité : un fichier
     illisible ou absent repart de zéro (tout est candidat) plutôt que de faire
@@ -169,12 +202,15 @@ def pick_candidates(items, seen, today, limit):
     return [(k, lbl) for _, k, lbl in ready[:limit]], skipped
 
 
-def queued_ids(container, base_url, api_key, id_field):
+def queued_ids(container, base_url, api_key, id_field, unknown_param):
     """Ids présents dans la file de téléchargement, quel qu'en soit l'état :
     un `importBlocked` compte autant qu'un `downloading`, la release est
-    trouvée dans les deux cas."""
+    trouvée dans les deux cas. `unknown_param` : le paramètre « inclure les
+    entrées orphelines » n'a pas le même nom d'un arr à l'autre
+    (`includeUnknownSeriesItems` / `includeUnknownMovieItems`) — la variante
+    Radarr était passée aussi à Sonarr, qui l'ignorait sans erreur."""
     queue = api_get(container, base_url, api_key,
-                    "/queue?page=1&pageSize=1000&includeUnknownMovieItems=true")
+                    f"/queue?page=1&pageSize=1000&{unknown_param}")
     ids = set()
     for record in queue.get("records", []):
         value = record.get(id_field)
@@ -188,7 +224,8 @@ def sonarr_candidates(api_key):
     `wanted/missing` applique lui-même le filtre « déjà diffusé »."""
     missing = api_get(SONARR_CONTAINER, SONARR_URL, api_key,
                       "/wanted/missing?page=1&pageSize=1000&monitored=true&includeSeries=true")
-    in_queue = queued_ids(SONARR_CONTAINER, SONARR_URL, api_key, "episodeId")
+    in_queue = queued_ids(SONARR_CONTAINER, SONARR_URL, api_key, "episodeId",
+                          "includeUnknownSeriesItems=true")
     items = []
     for episode in missing.get("records", []):
         if episode["id"] in in_queue:
@@ -202,7 +239,8 @@ def sonarr_candidates(api_key):
 def radarr_candidates(api_key):
     missing = api_get(RADARR_CONTAINER, RADARR_URL, api_key,
                       "/wanted/missing?page=1&pageSize=1000&monitored=true")
-    in_queue = queued_ids(RADARR_CONTAINER, RADARR_URL, api_key, "movieId")
+    in_queue = queued_ids(RADARR_CONTAINER, RADARR_URL, api_key, "movieId",
+                          "includeUnknownMovieItems=true")
     items = []
     for movie in missing.get("records", []):
         # Le seul filtre que Radarr n'applique pas lui-même : sans lui on
@@ -218,7 +256,9 @@ def radarr_candidates(api_key):
 
 def run_arr(name, container, base_url, api_key, candidates, command_name,
             ids_field, state, today, limit, dry_run):
-    """Renvoie (lignes de rapport, nb d'items réellement cherchés)."""
+    """Renvoie (lignes de rapport, nb d'items réellement cherchés, erreur ou
+    None). L'erreur est rendue plutôt que levée pour que les lignes du rapport
+    (ce qui était visé) restent imprimées à côté."""
     seen = state.setdefault(name, {})
     picked, skipped = pick_candidates(candidates, seen, today, limit)
     lines = [f"{name} : {len(candidates)} manquant(s) éligible(s), "
@@ -227,12 +267,18 @@ def run_arr(name, container, base_url, api_key, candidates, command_name,
     for _, label in picked:
         lines.append(f"  - {label}")
     if not picked:
-        return lines, 0
+        return lines, 0, None
     if dry_run:
         lines.append("  (dry-run : aucune recherche envoyée)")
-        return lines, 0
-    api_command(container, base_url, api_key,
-                {"name": command_name, ids_field: [key for key, _ in picked]})
+        return lines, 0, None
+    command = api_command(container, base_url, api_key,
+                          {"name": command_name, ids_field: [key for key, _ in picked]})
+    status, message = wait_command(container, base_url, api_key, command)
+    lines.append(f"  commande {command.get('id')} : {status}")
+    # Échec = items NON marqués : les marquer les aurait sortis de la rotation
+    # 14 jours pour une recherche qui n'a jamais eu lieu.
+    if status in COMMAND_FAILED_STATES:
+        return lines, 0, f"commande {command_name} {command.get('id')} : {status} — {message[:200] or 'sans message'}"
     for key, _ in picked:
         seen[str(key)] = today.isoformat()
     # Purge des ids qui ne sont plus manquants (importés, ou titre retiré) :
@@ -240,7 +286,7 @@ def run_arr(name, container, base_url, api_key, candidates, command_name,
     # correspondent plus à rien.
     still_missing = {str(key) for key, _ in candidates}
     state[name] = {k: v for k, v in seen.items() if k in still_missing}
-    return lines, len(picked)
+    return lines, len(picked), None
 
 
 def main():
@@ -270,11 +316,13 @@ def main():
             errors.append(f"{name} : {key_name} absent de arr/.env (voir `make api-keys`)")
             continue
         try:
-            lines, count = run_arr(name, container, base_url, api_key,
-                                   collect(api_key), command_name, ids_field,
-                                   state, today, args.limit, args.dry_run)
+            lines, count, error = run_arr(name, container, base_url, api_key,
+                                          collect(api_key), command_name, ids_field,
+                                          state, today, args.limit, args.dry_run)
             print("\n".join(lines))
             searched += count
+            if error:
+                errors.append(f"{name} : {error}")
         except Exception as e:
             errors.append(f"{name} : {e}")
 

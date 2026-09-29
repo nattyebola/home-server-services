@@ -1,6 +1,6 @@
 # Logique métier partagée par tui.py (TUI curses, `make clearr`), webapp.py
 # (service web FastAPI/HTMX, clearr.${DOMAIN}) et cli.py (mode non-interactif
-# delete-by-inode, utilisé par le skill anime-vf). Aucun des trois n'a de
+# delete-by-inode, outil manuel). Aucun des trois n'a de
 # logique de matching/suppression en propre — tout passe par ici.
 #
 # Anciennement scripts/torrent-cleanup.py (TUI seule, tournait sur l'hôte via

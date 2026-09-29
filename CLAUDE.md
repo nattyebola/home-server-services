@@ -170,7 +170,7 @@ server/
 ├── .env.shared(.example)   PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT/LAN_CIDR/DNS_*
 ├── Makefile                `make help` (défaut), généré depuis les annotations des cibles
 ├── README.md, docs/        doc humaine (une page par thème)
-├── CLAUDE.md, .claude/     docs/ par domaine + skills/ (anime-vf, indexer-quota,
+├── CLAUDE.md, .claude/     docs/ par domaine + skills/ (indexer-quota,
 │                           manual-import, server-report, vpn-bench)
 ├── scripts/                crontab + install-crontab.sh, logrotate.conf,
 │                           provision.py, apply-arr-overrides.py, search-missing.py,

@@ -15,16 +15,26 @@ questions, dans cet ordre :
 3. **Lesquelles sont inutiles ?** (rendement grabs/requêtes par couple
    app × indexeur)
 
-## 0. Prérequis — récupérer les clés d'API
+## 0. Prérequis — appeler les API sans exposer les clés
 
-Les images linuxserver.io embarquent BusyBox : **`grep -P` n'existe pas**,
-utiliser `sed`. Piège rencontré le 2026-08-03.
+Les arr exigent une clé même en local (`authenticationRequired: enabled`).
+Les clés sont dans `arr/.env` ; les passer **sur stdin** (`-H @-`), jamais
+dans la ligne de commande (`?apikey=…` ou `-H "X-Api-Key: $KEY"`), où `ps`
+la montrerait — même règle que les scripts du repo. `-f` fait échouer sur un
+4xx au lieu de sortir en 0 avec un corps d'erreur. Depuis la racine du repo :
 
 ```bash
-PAK=$(docker exec arr-prowlarr-1 sed -n 's|.*<ApiKey>\([^<]*\)</ApiKey>.*|\1|p' /config/config.xml)
-SAK=$(docker exec arr-sonarr-1   sed -n 's|.*<ApiKey>\([^<]*\)</ApiKey>.*|\1|p' /config/config.xml)
-RAK=$(docker exec arr-radarr-1   sed -n 's|.*<ApiKey>\([^<]*\)</ApiKey>.*|\1|p' /config/config.xml)
+# api <conteneur> <port> <variable de arr/.env> <chemin> [options curl…]
+# (`route` et pas `path` : sous zsh, `path` est lié au PATH et le vide.)
+api() {
+  local c=$1 p=$2 k=$3 route=$4; shift 4
+  grep "^$k=" arr/.env | cut -d= -f2- | sed 's/^/X-Api-Key: /' \
+    | docker exec -i "$c" curl -sf -H @- "$@" "http://localhost:$p$route"
+}
 ```
+
+Les images linuxserver.io embarquent BusyBox : **`grep -P` n'existe pas**
+dans les conteneurs, utiliser `grep -E` ou `sed`. Piège rencontré le 2026-08-03.
 
 Préférer les **fichiers de log** (`/config/logs/*.txt` dans chaque
 conteneur) à `docker logs` : ils sont horodatés à la seconde, conservés plus
@@ -70,7 +80,7 @@ Deux vérifications de contexte :
   `baseSettings.queryLimit`/`grabLimit` sont à `None` sur tous nos
   indexeurs, donc tout 429 de quota vient du tracker.
   ```bash
-  docker exec arr-prowlarr-1 curl -s "http://localhost:9696/api/v1/indexer?apikey=$PAK" | python3 -c "
+  api arr-prowlarr-1 9696 PROWLARR_API_KEY /api/v1/indexer | python3 -c "
   import sys,json
   for i in json.load(sys.stdin):
       f={x['name']:x.get('value') for x in i['fields']}
@@ -103,10 +113,17 @@ Causes déjà rencontrées, et comment les lire :
 Confirmer l'état courant plutôt que de conclure sur des logs passés :
 
 ```bash
-# liste vide = aucun indexeur en échec actuellement
-docker exec arr-prowlarr-1 curl -s "http://localhost:9696/api/v1/indexerstatus?apikey=$PAK"
-# test réel des 4 indexeurs
-docker exec arr-prowlarr-1 curl -s -X POST "http://localhost:9696/api/v1/indexer/testall?apikey=$PAK" \
+# liste vide = aucun indexeur en échec actuellement (lecture seule)
+api arr-prowlarr-1 9696 PROWLARR_API_KEY /api/v1/indexerstatus
+```
+
+Le test réel de **tous** les indexeurs (`testall`) envoie de vraies requêtes
+aux trackers : en plein diagnostic de quota, il peut consommer ce quota ou
+relancer un backoff. **Ne le lancer qu'après accord de l'utilisateur**, et
+seulement si `indexerstatus` ne suffit pas :
+
+```bash
+api arr-prowlarr-1 9696 PROWLARR_API_KEY /api/v1/indexer/testall -X POST \
   | python3 -c "import sys,json;[print(r.get('id'), r.get('isValid'), r.get('validationFailures') or '') for r in json.load(sys.stdin)]"
 ```
 
@@ -152,7 +169,7 @@ manquants, ou une boucle de regrab (cf. `cutoffFormatScore` dans
 Vue agrégée, la plus rapide :
 
 ```bash
-docker exec arr-prowlarr-1 curl -s "http://localhost:9696/api/v1/indexerstats?apikey=$PAK" | python3 -m json.tool
+api arr-prowlarr-1 9696 PROWLARR_API_KEY /api/v1/indexerstats | python3 -m json.tool
 ```
 
 Donne, par indexeur, `numberOfQueries` (recherches) vs
@@ -179,10 +196,10 @@ plancher RSS/jour = (1440 / rssSyncInterval) × nombre d'indexeurs activés en R
 ```
 
 ```bash
-for s in sonarr:8989:$SAK radarr:7878:$RAK; do
-  svc=${s%%:*}; port=$(echo $s|cut -d: -f2); ak=$(echo $s|cut -d: -f3)
-  docker exec arr-$svc-1 curl -s "http://localhost:$port/api/v3/config/indexer?apikey=$ak" | python3 -c "import sys,json;print('$svc rssSyncInterval =', json.load(sys.stdin)['rssSyncInterval'])"
-  docker exec arr-$svc-1 curl -s "http://localhost:$port/api/v3/indexer?apikey=$ak" | python3 -c "
+for s in sonarr:8989:SONARR_API_KEY radarr:7878:RADARR_API_KEY; do
+  svc=${s%%:*}; port=$(echo $s|cut -d: -f2); var=$(echo $s|cut -d: -f3)
+  api arr-$svc-1 $port $var /api/v3/config/indexer | python3 -c "import sys,json;print('$svc rssSyncInterval =', json.load(sys.stdin)['rssSyncInterval'])"
+  api arr-$svc-1 $port $var /api/v3/indexer | python3 -c "
 import sys,json
 for i in json.load(sys.stdin): print('   %-26s rss=%s autoSearch=%s' % (i['name'], i['enableRss'], i['enableAutomaticSearch']))"
 done
@@ -195,7 +212,10 @@ source × indexeur (depuis l'historique, cf. point 5). Un couple à quelques
 ‰ interroge un tracker qui n'a pas le contenu demandé.
 
 Référence mesurée le **2026-08-03** (sur toute la vie de l'instance), à
-comparer lors d'un prochain passage :
+comparer lors d'un prochain passage. **V3X n'y figure pas** : ajouté après
+cette mesure, il n'a pas encore de référence — ne pas conclure à un
+rendement anormal faute de point de comparaison. La liste des indexeurs se
+relit dans Prowlarr (`/api/v1/indexer`), elle n'est pas figée ici :
 
 | Source | C411 | TR4KER | Nyaa.si | YggReborn |
 |---|---|---|---|---|

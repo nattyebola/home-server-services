@@ -1,5 +1,6 @@
-# Mode non-interactif utilisé par le skill anime-vf
-# (.claude/skills/anime-vf/SKILL.md) : après qu'une nouvelle release ait
+# Mode non-interactif, écrit pour le skill anime-vf (retiré le 2026-09-29) et
+# gardé comme outil manuel (`docker exec arr-clearr-1 python -m app
+# delete-by-inode <dev> <ino> [--dry-run]`) : après qu'une nouvelle release ait
 # remplacé un fichier library/ existant, retrouve et supprime le torrent de
 # l'ANCIENNE version par inode. L'appelant doit avoir capturé ce (dev, inode)
 # AVANT l'import — une fois la nouvelle release importée, Sonarr/Radarr a pu
@@ -7,7 +8,7 @@
 # Ne touche PAS au monitoring Sonarr/Radarr (contrairement à une suppression
 # dans la TUI/le web, voir core.plan_sonarr_unmonitor) : l'épisode reste
 # surveillé, on vient de le remplacer par une meilleure release, pas de le
-# retirer. Affiche un JSON sur stdout pour que l'appelant (Claude) parse le
+# retirer. Affiche un JSON sur stdout pour qu'un appelant scripté parse le
 # résultat sans dépendre du log.
 import json
 

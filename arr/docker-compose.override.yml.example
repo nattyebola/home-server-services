@@ -1,12 +1,19 @@
 # Copy this file to docker-compose.override.yml (gitignored, host-specific)
 # ONLY if you want Sonarr/Radarr's organized library on a folder OUTSIDE
 # DATA_ROOT. By default, no override is needed at all: the base
-# docker-compose.yml already mounts ${DATA_ROOT}/library at /library in
-# both sonarr and radarr, and that's the recommended setup (see docs/telechargement.md —
-# "Hardlinks" section — for why a separate organized library exists in the first
-# place, distinct from the raw downloads folder).
+# docker-compose.yml mounts the whole ${DATA_ROOT} once at /data_root in both
+# sonarr and radarr, and their root folders are /data_root/library/series,
+# /data_root/library/anime (Sonarr) and /data_root/library/film (Radarr) —
+# see ARR_ROOT_FOLDERS in scripts/provision.py. That's the recommended setup
+# (see docs/telechargement.md — "Hardlinks" section — for why a separate
+# organized library exists in the first place, distinct from the raw
+# downloads folder).
 #
-# WARNING: don't copy this file with the placeholder path below left
+# The targets below MUST be those root folders: a mount anywhere else (e.g.
+# /library/series, what this file used to say) is simply never read by
+# Sonarr/Radarr — no error, the override just has no effect.
+#
+# WARNING: don't copy this file with the placeholder paths below left
 # unfilled — Docker will silently create a bogus root-owned directory tree
 # at literally /path/to/your/... on the host (happened once, see git
 # history). Only create this file if you're actually overriding the
@@ -18,15 +25,20 @@
 # the same underlying disk is NOT enough. Two separate `-v host:container`
 # binds of the same physical filesystem still get `Cross-device link` from
 # link(2), even though `stat` reports the same st_dev on both (confirmed
-# 2026-07-23, see CLAUDE.md "Pièges à ne pas répéter"). The base compose
-# file mounts the whole ${DATA_ROOT} once at /data_root for this reason —
-# if you override the library path below to somewhere outside DATA_ROOT,
-# hardlink import silently falls back to copy+delete (works, just slower
-# and doubles disk usage for that content).
+# 2026-07-23, see CLAUDE.md "Pièges à ne pas répéter"). A mount below is a
+# second bind on top of /data_root, so hardlink import silently falls back
+# to copy+delete for that content (works, just slower and doubles disk
+# usage). clearr and Jellyfin also mount ${DATA_ROOT}/library themselves:
+# give them the matching override (clearr: same /data_root/library/... target;
+# Jellyfin: /library/..., in jellyfin/docker-compose.override.yml), or they
+# won't see these files. Jellyfin mounts /library READ-ONLY: a bind under it
+# only works if the target folder already exists in ${DATA_ROOT}/library
+# (otherwise `mkdirat … read-only file system`, see docs/depannage.md).
 services:
   sonarr:
     volumes:
-      - /path/to/your/alternate/library/series:/library/series
+      - /path/to/your/alternate/library/series:/data_root/library/series
+      - /path/to/your/alternate/library/anime:/data_root/library/anime
   radarr:
     volumes:
-      - /path/to/your/alternate/library/movies:/library/movies
+      - /path/to/your/alternate/library/film:/data_root/library/film

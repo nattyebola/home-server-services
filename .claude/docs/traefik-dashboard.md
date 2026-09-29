@@ -161,11 +161,14 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
     n'est pas anormal, contrairement à une erreur. « Actifs » = `status != 0`
     (spec RPC), « surveillés » = tous les torrents présents.
   - **3e colonne « Imports » (Bloqués / En attente)** dans cette même carte,
-    demandée le 2026-08-31 : nombre d'entrées de file Sonarr+Radarr en
-    `importBlocked`/`importPending` (`arr_stuck_imports()`), les mêmes états
-    que `stuck_queue_records()` de `scripts/manual-import.py` — **à garder
-    alignés**, ce qui est compté doit être ce que `manual-import.py list` sait
-    traiter.
+    demandée le 2026-08-31 : nombre de **téléchargements distincts**
+    (downloadId) Sonarr+Radarr en `importBlocked`/`importPending`
+    (`arr_stuck_imports()`), les mêmes états que `stuck_queue_records()` de
+    `scripts/manual-import.py` — **à garder alignés**, ce qui est compté doit
+    être ce que `manual-import.py list` sait traiter. **Par downloadId, pas par
+    entrée de file** (2026-09-29) : Sonarr crée une entrée par épisode d'un
+    même téléchargement, un pack de 12 épisodes affichait « 12 » pour une seule
+    chose à débloquer ; `manual-import.py` regroupe de la même façon.
     **`GET /api/v3/queue` masque par défaut les entrées orphelines**, et le
     paramètre qui les réintègre n'a pas le même nom d'un arr à l'autre :
     `includeUnknownSeriesItems=true` (Sonarr) / `includeUnknownMovieItems=true`
@@ -217,6 +220,31 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   régénéré **par cron toutes les 5 min**, pas seulement par `make
   dashboard-refresh` — sinon un service devenu unhealthy resterait affiché
   comme sain arbitrairement longtemps.
+- **Une commande d'inspection en échec fait échouer la régénération, elle ne
+  rend jamais un état vide** : `docker ps` (`docker_ps_set()`) et, depuis le
+  2026-09-29, `docker compose config` (`docker_compose_config()`). Ce dernier
+  renvoyait `{}` sur timeout/code ≠ 0/JSON illisible : la stack disparaissait
+  de la page, **y compris de « Stack non lancée »**, avec exit 0 et marqueur
+  vert. Désormais `RuntimeError` : le dernier `index.html` valide reste servi,
+  le surlignage « page périmée » de `dashboard.js` et la tâche au rouge
+  signalent la panne. Pas de faux positif sur une stack non configurée :
+  `config` réussit sans son `.env` (aucun `${VAR:?}` dans les compose). À
+  l'inverse les cartes de données (Prowlarr, Transmission…) restent
+  best-effort : une réponse inattendue omet la carte, jamais la page —
+  `prowlarr_indexer_health()` vérifie donc qu'il reçoit une **liste** (une
+  erreur Servarr arrive en objet `{"message": …}`, qui passe `json.loads` et
+  faisait planter toute la régénération sur `AttributeError`).
+- **Écritures atomiques à nom de temporaire unique** (`write_atomically()` :
+  `mkstemp` dans le même dossier + `os.replace`, `chmod 644` sinon nginx lit
+  un 0600 en 403). Deux régénérations tombent ensemble (tick */5 et `rearm`) :
+  un temporaire au nom fixe (`index.html.tmp`) publiait une page tronquée et
+  faisait planter l'autre run. Même course dans `copy_assets()`, qui vidait
+  `logos/` avant de le recopier (logos absents le temps de la copie) : il
+  copie désormais fichier par fichier puis ne retire que les fichiers sans
+  source, en épargnant les temporaires d'un run concurrent. Remplacer un
+  fichier est sans risque ici : c'est le **dossier** `dashboard/html/` qui est
+  monté dans nginx, pas des fichiers ; ne jamais renommer ce dossier lui-même
+  (le montage suivrait l'ancien inode).
 - **Stats Transmission visibles WAN et LAN**, sans gating : ce sont des
   chiffres agrégés en snapshot, pas un accès de contrôle au client — voulu
   explicitement. `scripts/transmission-stats.py` sort le JSON consommé par le

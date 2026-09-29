@@ -19,11 +19,13 @@ touchent toutes les stacks.
 | Plus de DNS ni de ping dans `transmission-vpn`, `rtnl: generic error (-101)` | conteneur attaché à un 2e réseau, ou `LOCAL_NETWORK` mal réglé | [Téléchargement](telechargement.md#vpn--transmission) |
 | `transmission-vpn` ne démarre pas / ne route rien | module `ip_tables` absent sur l'hôte | [Installation](installation.md#prérequis) |
 | `Connection refused` vers un tracker qui répond ailleurs | DNS du FAI qui renvoie `127.0.0.1` | [plus bas](#dns-du-fai-menteur) |
+| Dashboard surligné **« périmé »** | régénération en échec (`docker ps` ou `docker compose config`), voir `dashboard/refresh.log` | [Traefik](traefik.md#pièges-connus) |
 | Carte **grisée** sur le dashboard alors que le service est `healthy` | chemin de sonde qui redirige vers `/login` (arr : sonder `/Content/…`) | [Traefik](traefik.md#le-dashboard) |
 | Les 5 services LAN répondent **404** | `traefik/dynamic/lan-only.yml` absent | [Traefik](traefik.md#pièges-connus) |
 | Certificat resté en échec | Traefik ne retente pas seul | [Traefik](traefik.md#pièges-connus) |
 | Titre mal identifié dans Jellyfin/Kodi, ou insupprimable depuis Kodi | `.nfo` absent ou ancien : rescan côté arr, puis « Identifier » dans Jellyfin | [Médias](medias.md#des-titres-bien-identifiés--les-nfo) |
 | Épisode rangé dans la **mauvaise saison** | Jellyfin lit la saison dans le nom de fichier | [Médias](medias.md#des-titres-bien-identifiés--les-nfo) |
+| Jellyfin : toutes les connexions notées depuis `172.18.0.x` | `KnownProxies` résolu sur une ancienne IP de Traefik | [Médias](medias.md#pièges-connus-jellyfin) |
 | Jellyfin mal rafraîchi après un import, `401` dans les logs arr | forme d'authentification refusée par Jellyfin 12 | [Médias](medias.md#pièges-connus-jellyfin) |
 | Seerr en crash `EACCES` en boucle | dossier de config créé en root | [Médias](medias.md#pièges-connus) |
 | Seerr propose de redemander un titre déjà là | pas de bibliothèque Jellyfin sur `library/` | [Médias](medias.md#seerr) |

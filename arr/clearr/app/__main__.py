@@ -3,7 +3,7 @@
 #   serve            service web (uvicorn), lancé en continu par
 #                     `make up STACK=arr` (arr/docker-compose.yml)
 #   tui              TUI interactive, `make clearr`
-#   delete-by-inode  mode non-interactif, utilisé par le skill anime-vf
+#   delete-by-inode  mode non-interactif (outil manuel, voir cli.py)
 import argparse
 import sys
 
@@ -15,7 +15,7 @@ def main():
     sub.add_parser("serve", help="service web (uvicorn)")
     sub.add_parser("tui", help="TUI interactive")
 
-    p_inode = sub.add_parser("delete-by-inode", help="supprime un torrent par (dev, inode) — skill anime-vf")
+    p_inode = sub.add_parser("delete-by-inode", help="supprime un torrent par (dev, inode), à capturer avant un remplacement")
     p_inode.add_argument("dev", type=int)
     p_inode.add_argument("ino", type=int)
     p_inode.add_argument("--dry-run", action="store_true")
