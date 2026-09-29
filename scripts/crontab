@@ -104,4 +104,4 @@ MAILTO=""
 # cron_marker_age_seconds()).
 # the placeholders below are substituted by `make cron-install` with this
 # checkout's absolute path and DATA_ROOT — never hardcode literals here.
-0 2 * * * __REPO_ROOT__/scripts/require-running.sh arr/sonarr && docker exec arr-sonarr-1 sh /config/custom-mark-finale.sh --all >> __REPO_ROOT__/arr/mark-finales.log 2>&1 && date +\%s > __DATA_ROOT__/.cron-status/mark-finales
+0 2 * * * __REPO_ROOT__/scripts/require-running.sh arr/sonarr && docker exec arr-sonarr-1 sh /custom-scripts/mark-finale.sh --all >> __REPO_ROOT__/arr/mark-finales.log 2>&1 && date +\%s > __DATA_ROOT__/.cron-status/mark-finales

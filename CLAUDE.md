@@ -54,7 +54,13 @@ Ne pas proposer d'y revenir sans demande explicite de l'utilisateur.
   le manifeste de digests de `make backup`. **Exception subie : `recyclarr:8`**
   (plus de tag `latest` upstream, `edge` = build de dev). Ne pas y remettre
   `:latest`, le pull échouerait. Le bump vers `:9` est manuel et rien ne le
-  signalera.
+  signalera. **Majeur tenu, par choix (2026-09-29) : `traefik:v3`** (un
+  majeur casse la config) **et `postgres:15-alpine`** (un majeur ne relit pas
+  le répertoire de données : dump + réimport à la main, fin de vie 11/2027).
+- **Arr : `authenticationRequired: enabled`** (2026-09-29), login même depuis
+  le LAN. `disabledForLocalAddresses` laissait les conteneurs WAN de
+  `traefik-public` lire la clé API (`/initialize.json`). Sonde du dashboard
+  sur `/Content/…`, servi sans auth.
 - **Secrets et valeurs propres au déploiement** : `.env` par stack +
   `.env.shared` (gitignorés) avec leur `.example`. `LAN_CIDR` alimente les
   `ipAllowList` — jamais en dur dans un compose file. Toujours `make <cible>

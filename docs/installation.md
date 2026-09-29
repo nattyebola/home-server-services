@@ -140,19 +140,9 @@ sont créées à l'étape 17.
 make up STACK=nextcloud
 ```
 
-Le compte admin est créé depuis `nextcloud/.env`. Puis créer le **mot de
-passe d'application du rafraîchisseur de flux** :
-
-```sh
-cp nextcloud/news-updater/config.ini.example nextcloud/news-updater/config.ini
-chmod 600 nextcloud/news-updater/config.ini
-docker exec -u "$PUID" nextcloud-app-1 php occ user:auth-tokens:add \
-    --name="news-updater" <compte-admin>
-```
-
-Reporter le compte et le mot de passe affiché dans `config.ini`, puis
-`make up STACK=nextcloud`. Pourquoi un fichier : voir
-[Nextcloud](nextcloud.md#le-rafraîchisseur-de-flux-news-updater).
+Le compte admin est créé depuis `nextcloud/.env`. Les flux de l'app News se
+rafraîchissent seuls, via le cron de l'hôte (`cron.php`, étape
+`make cron-install`).
 
 ### 11. VPN / Transmission
 

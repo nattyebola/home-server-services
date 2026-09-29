@@ -35,7 +35,9 @@ if [ ! -f "$RESTIC_PASSWORD_FILE" ] && [ -f "$LEGACY_PASSWORD_FILE" ]; then
 fi
 export RESTIC_PASSWORD_FILE
 
-STACKS="traefik jellyfin nextcloud vpn arr seerr"
+# Toutes les stacks du Makefile (STACKS) : komga y manquait, son digest
+# n'apparaissait donc pas dans le manifeste d'images.
+STACKS="traefik jellyfin nextcloud vpn arr seerr komga"
 
 compose_for() {
 	local stack="$1"; shift
@@ -81,12 +83,23 @@ if "$REPO_ROOT/scripts/require-running.sh" nextcloud/db-next; then
 	# rw-rw-r-- (543 Mo lisibles par tout compte de la machine) et n'était
 	# jamais purgé — il restait donc en clair sur le disque système en
 	# permanence, là où le dépôt restic, lui, est chiffré.
+	# --create : le dump porte son propre CREATE DATABASE, avec son
+	# propriétaire. Sans lui, un cluster neuf (perte du disque DATA_ROOT, le
+	# scénario visé) n'a pas de base `nextcloud` où importer.
+	# Les rôles à part (pg_dumpall --roles-only) : pg_dump n'en sauvegarde
+	# aucun, or Nextcloud se connecte avec le rôle `oc_<admin>` que son
+	# installeur a créé (dbuser de config.php), propriétaire de la base. Sans
+	# ce fichier, une restauration sur cluster neuf échoue sur chaque
+	# `OWNER TO`, puis Nextcloud ne peut plus se connecter du tout.
 	( umask 077; compose_for nextcloud exec -T db-next \
-		sh -c 'pg_dump -U "$POSTGRES_USER" "${POSTGRES_DB:-nextcloud}"' \
+		sh -c 'pg_dump -U "$POSTGRES_USER" --create "${POSTGRES_DB:-nextcloud}"' \
 		>"$STAGING_DIR/nextcloud-db.sql" )
+	( umask 077; compose_for nextcloud exec -T db-next \
+		sh -c 'pg_dumpall -U "$POSTGRES_USER" --roles-only' \
+		>"$STAGING_DIR/nextcloud-roles.sql" )
 else
 	echo "nextcloud/db-next n'est pas démarré — dump DB ignoré pour cette sauvegarde" >&2
-	rm -f "$STAGING_DIR/nextcloud-db.sql"
+	rm -f "$STAGING_DIR/nextcloud-db.sql" "$STAGING_DIR/nextcloud-roles.sql"
 fi
 
 echo "==> recording exact image digests currently running"
@@ -130,13 +143,17 @@ done
 # arr/.env, already above.
 [ -f "$REPO_ROOT/arr/profiles/prowlarr-indexers.json" ] &&
 	env_files+=("$REPO_ROOT/arr/profiles/prowlarr-indexers.json")
-# Idem : gitignoré parce qu'il porte le mot de passe d'application Nextcloud du
-# news-updater, et absent des .env par construction (le secret ne doit pas
-# transiter par une variable d'env, sinon l'entrypoint de l'image le recopie
-# dans argv — voir nextcloud/docker-compose.yml). Régénérable à la main, mais
-# sans lui le conteneur redémarre en boucle après une restauration.
-[ -f "$REPO_ROOT/nextcloud/news-updater/config.ini" ] &&
-	env_files+=("$REPO_ROOT/nextcloud/news-updater/config.ini")
+# Montages propres à la machine (bibliothèques perso, GPU de Jellyfin) :
+# gitignorés par décision, seul leur .example est versionné — donc sans cette
+# ligne leurs valeurs n'existaient nulle part ailleurs que sur ce disque.
+for stack in $STACKS; do
+	[ -f "$REPO_ROOT/$stack/docker-compose.override.yml" ] &&
+		env_files+=("$REPO_ROOT/$stack/docker-compose.override.yml")
+done
+# Configuration OpenVPN (clé privée + certificats AirVPN) : gitignorée, et
+# sans elle transmission-vpn ne démarre pas. Régénérable depuis le compte
+# AirVPN, mais ce n'est pas à découvrir au milieu d'une restauration.
+[ -d "$REPO_ROOT/vpn/custom" ] && env_files+=("$REPO_ROOT/vpn/custom")
 echo "    gitignored config files included: ${#env_files[@]}"
 
 # Cache et logs à l'intérieur des arborescences sauvegardées ci-dessous — revus
@@ -185,7 +202,7 @@ restic backup \
 
 # Le dump n'a plus de raison d'exister une fois dans le dépôt chiffré. Il
 # était conservé indéfiniment (543 Mo en clair) entre deux sauvegardes.
-rm -f "$STAGING_DIR/nextcloud-db.sql"
+rm -f "$STAGING_DIR/nextcloud-db.sql" "$STAGING_DIR/nextcloud-roles.sql"
 
 echo "==> checking repository integrity (structure + 5% of data packs read back)"
 # 5%/week averages a full --read-data pass roughly every ~5 months without

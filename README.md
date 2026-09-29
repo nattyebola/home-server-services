@@ -60,7 +60,7 @@ dans [Téléchargement](docs/telechargement.md#le-parcours-dun-téléchargement)
 | 🎬 [Médias](docs/medias.md) | Jellyfin, `.nfo`, Seerr, Kodi |
 | 🧹 [clearr](docs/clearr.md) | suppression propre |
 | 📚 [Komga](docs/komga.md) | BD lues directement depuis les données seedées |
-| ☁️ [Nextcloud](docs/nextcloud.md) | services, `occ`, rafraîchisseur de flux |
+| ☁️ [Nextcloud](docs/nextcloud.md) | services, `occ`, flux News |
 | 💾 [Sauvegarde](docs/sauvegarde.md) | ce qui est sauvegardé, restauration |
 | 🩺 [Dépannage](docs/depannage.md) | du symptôme à la cause, pièges Docker, WSL2 |
 

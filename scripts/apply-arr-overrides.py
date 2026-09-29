@@ -584,6 +584,17 @@ def trusted_proxy_networks():
     return ",".join(subnets), True
 
 
+# `authenticationRequired: enabled` (2026-09-29) : login exigé MÊME depuis une
+# adresse locale. `disabledForLocalAddresses` tenait toute IP RFC1918 pour
+# locale, y compris celle d'un conteneur Docker : jellyfin, seerr et
+# nextcloud-web — les services exposés au WAN — partagent traefik-public avec
+# les arr et lisaient sans authentification /initialize.json, qui renvoie la
+# clé API en clair (200 mesuré depuis jellyfin). Contrepartie acceptée : un
+# login par navigateur sur le LAN. Les appelants programmatiques (Seerr,
+# cross-seed, Prowlarr -> applications, clearr, ce script) passent par la clé
+# API et ne sont pas concernés. `trustedNetworks` reste utile : il fait
+# journaliser l'IP réelle du client plutôt que celle de Traefik.
+#
 # `allowedHosts` vient avec : les Servarr REFUSENT le PUT (400, "Allowed Hosts
 # is required when 'Authentication Required' is not 'Enabled'") tant que ce
 # champ est vide — c'est leur garde anti-DNS-rebinding, qui devient obligatoire
@@ -599,6 +610,7 @@ def trusted_proxy_networks():
 # et seulement au prochain sync — d'où la liste explicite plutôt qu'un `*`.
 def host_overrides(networks, domain, service):
     return {
+        "authenticationRequired": "enabled",
         "trustedNetworks": networks,
         "allowedHosts": f"{service}.{domain},{service},localhost,127.0.0.1",
     }

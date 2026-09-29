@@ -97,8 +97,8 @@ ou aux connexions arr → Jellyfin.
   La ligne de remplacement passe par un **fichier**, pas par `awk -v` : même
   piège d'échappement que `scripts/install-crontab.sh`.
   **Deux appelants, une seule implémentation** (pas de python dans l'image
-  Sonarr, mais curl/jq/sed/awk y sont ; script monté en `ro` sur `/config`
-  comme `cross-seed-notify.sh`) :
+  Sonarr, mais curl/jq/sed/awk y sont ; `arr/scripts/` monté **en dossier**
+  en `ro` sur `/custom-scripts`, comme `cross-seed-notify.sh`) :
   - la Connection Custom Script de Sonarr (`provision.py`), sur
     **Import/Upgrade/Rename** — c'est elle qui rend le marqueur présent *dès
     la première apparition* de l'épisode dans Kodi : le hook s'exécute en ~1 s
@@ -359,6 +359,18 @@ ou aux connexions arr → Jellyfin.
   Une passe qui corrige remet le compteur à
   zéro, donc une écriture en deux temps ne conclut pas sur la première
   accalmie.
+- **`authenticationRequired: enabled` sur les trois arr (2026-09-29)**, donc
+  login même depuis le LAN — choix de l'utilisateur après l'audit. Avec
+  `disabledForLocalAddresses`, toute IP RFC1918 est « locale », y compris
+  celle d'un conteneur : jellyfin/seerr/nextcloud-web (exposés au WAN, sur
+  `traefik-public` avec les arr) lisaient `/initialize.json` sans auth, qui
+  renvoie la **clé API en clair** (200 mesuré depuis jellyfin, 302 après).
+  Écartée : sortir les arr de `traefik-public` (Sonarr/Radarr y joignent
+  `jellyfin:8096`, il aurait fallu un réseau dédié). Conséquence dashboard :
+  `/favicon.ico` redirige vers `/login`, la sonde vise
+  `/Content/Images/Icons/favicon-32x32.png` (`PROBE_PATH`), servi sans auth.
+  Le paragraphe suivant (2026-09-17) garde sa valeur pour `trustedNetworks`
+  et `allowedHosts`, plus pour le login LAN.
 - **`trustedNetworks` des trois arr = le réseau Docker du proxy, pas le LAN**
   (2026-09-17). `authenticationRequired: disabledForLocalAddresses` ne
   reconnaît plus une IP LAN relayée par Traefik : les trois arr s'étaient mis

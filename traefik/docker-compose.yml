@@ -2,11 +2,12 @@ services:
   socket-proxy:
     image: tecnativa/docker-socket-proxy:latest
     restart: unless-stopped
+    # Le strict nécessaire du provider docker de Traefik (hors Swarm) : lister
+    # et inspecter conteneurs et réseaux, en lecture. SERVICES/TASKS, retirés
+    # le 2026-09-29, ne servent qu'au provider Swarm.
     environment:
       - CONTAINERS=1
       - NETWORKS=1
-      - SERVICES=1
-      - TASKS=1
       - LOG_LEVEL=warning
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -21,7 +22,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    # Seul service du dépôt à en être resté dépourvu avec news-updater, alors
+    # Seul service du dépôt à en être resté longtemps dépourvu, alors
     # que c'est lui qui médie l'accès Docker de Traefik : figé sans crasher, le
     # provider docker cesse de voir les créations/suppressions de conteneurs,
     # les routeurs se figent, et `restart: unless-stopped` ne se déclenche
@@ -43,7 +44,13 @@ services:
         max-file: "3"
 
   traefik:
-    image: traefik:v3.7
+    # `v3` et pas `latest` : la même exception que recyclarr:8 (voir
+    # CLAUDE.md), un majeur de Traefik casse la configuration (v2 -> v3 a
+    # renommé ipWhiteList, changé la syntaxe des règles...). Tenir le majeur
+    # suffit ; l'ancien `v3.7`, figé depuis le scaffold, aurait cessé de
+    # recevoir les correctifs de sécurité à la fin de vie de la 3.7. Le bump
+    # vers v4 est manuel et rien ne le signalera.
+    image: traefik:v3
     restart: unless-stopped
     user: "${PUID}:${PGID}"
     depends_on:

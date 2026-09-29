@@ -91,13 +91,18 @@ echo "1. Secrets et configuration hors dépôt (gitignorés, donc absents de git
 # n'en contient pas autant qu'un récent. Afficher une liste théorique ferait
 # copier des chemins inexistants — constaté en exerçant la procédure sur le
 # snapshot du 2026-08-09, antérieur au dernier de ces ajouts.
+# Même liste que les ajouts de scripts/backup.sh : overrides compose et
+# vpn/custom/ (dossier, d'où le `cp -r`).
 restored_conf="$(find "${TARGET}${REPO_ROOT}" -maxdepth 3 \
-	\( -name ".env" -o -name ".env.shared" -o -name "prowlarr-indexers.json" \) \
+	\( -name ".env" -o -name ".env.shared" -o -name "prowlarr-indexers.json" \
+	-o -name "docker-compose.override.yml" \) \
 	2>/dev/null | sort)"
+restored_vpn="${TARGET}${REPO_ROOT}/vpn/custom"
 if [ -n "$restored_conf" ]; then
 	while IFS= read -r f; do
 		echo "     cp $f  ${f#$TARGET}"
 	done <<<"$restored_conf"
+	[ -d "$restored_vpn" ] && echo "     cp -r $restored_vpn/.  $REPO_ROOT/vpn/custom/"
 else
 	echo "     (aucun fichier de configuration dans ce snapshot — vérifier son contenu)"
 fi
@@ -110,6 +115,7 @@ echo "     make down STACK=arr && rsync -a --delete ${TARGET}${DATA_ROOT}/.arr/ 
 echo "     make down STACK=jellyfin && rsync -a --delete ${TARGET}${DATA_ROOT}/.jellyfin/config/ ${DATA_ROOT}/.jellyfin/config/"
 echo "     make down STACK=seerr && rsync -a --delete ${TARGET}${DATA_ROOT}/.seerr/config/ ${DATA_ROOT}/.seerr/config/"
 echo "     make down STACK=vpn && rsync -a --delete ${TARGET}${DATA_ROOT}/.transmission/config/ ${DATA_ROOT}/.transmission/config/"
+echo "     make down STACK=komga && rsync -a --delete ${TARGET}${DATA_ROOT}/.komga/config/ ${DATA_ROOT}/.komga/config/"
 echo "   Restaurer à chaud écraserait des fichiers qu'un service a ouverts —"
 echo "   les bases SQLite de Sonarr/Radarr/Prowlarr en particulier."
 echo "   Ces arborescences portent ce que le dépôt ne sait PAS recréer :"
@@ -119,9 +125,32 @@ echo
 echo "3. Nextcloud — webroot puis base, dans cet ordre :"
 echo "     make down STACK=nextcloud"
 echo "     rsync -a --delete ${TARGET}${DATA_ROOT}/.nextcloud/nexcloud/ ${DATA_ROOT}/.nextcloud/nexcloud/"
-echo "   Démarrer db-next SEUL (commenter app/web/news-updater), puis importer :"
-if [ -n "$staging" ]; then
-	echo "     docker compose ... exec -T db-next sh -c 'psql -U \"\$POSTGRES_USER\" \"\${POSTGRES_DB:-nextcloud}\"' < $staging/nextcloud-db.sql"
+echo "   Démarrer db-next SEUL (app ne doit pas voir une base vide) :"
+echo "     make rebuild STACK=nextcloud SERVICE=db-next"
+if [ -n "$staging" ] && [ -f "$staging/nextcloud-db.sql" ]; then
+	psql_cmd="docker exec -i nextcloud-db-next-1 sh -c 'psql -U \"\$POSTGRES_USER\" -d postgres'"
+	# Rôles d'abord : la base appartient au rôle oc_<admin> de Nextcloud, que
+	# pg_dump ne sauvegarde pas. Absent des snapshots d'avant le 2026-09-29.
+	if [ -f "$staging/nextcloud-roles.sql" ]; then
+		echo "   Rôles (l'erreur « role \"postgres\" already exists » est attendue) :"
+		echo "     $psql_cmd < $staging/nextcloud-roles.sql"
+	else
+		echo "   ⚠ pas de nextcloud-roles.sql (snapshot antérieur au 2026-09-29) : recréer"
+		echo "     le rôle à la main, nom et mot de passe = dbuser/dbpassword de"
+		echo "     ${DATA_ROOT}/.nextcloud/nexcloud/config/config.php :"
+		echo "     CREATE ROLE <dbuser> LOGIN CREATEDB PASSWORD '<dbpassword>';"
+	fi
+	# Dump en --create depuis le 2026-09-29 : il crée lui-même la base. Les
+	# plus anciens supposent qu'elle existe déjà.
+	if grep -q '^CREATE DATABASE' "$staging/nextcloud-db.sql"; then
+		echo "   Base (le dump la crée lui-même, avec son propriétaire — sur un"
+		echo "   cluster qui l'a encore, la supprimer d'abord : dropdb -U \"\$POSTGRES_USER\" nextcloud) :"
+	else
+		echo "   Base (dump antérieur au 2026-09-29, sans CREATE DATABASE) :"
+		echo "     docker exec nextcloud-db-next-1 sh -c 'createdb -U \"\$POSTGRES_USER\" -O <dbuser> nextcloud'"
+		psql_cmd="docker exec -i nextcloud-db-next-1 sh -c 'psql -U \"\$POSTGRES_USER\" -d nextcloud'"
+	fi
+	echo "     $psql_cmd < $staging/nextcloud-db.sql"
 else
 	echo "     (dump introuvable dans ce snapshot — vérifier .staging/)"
 fi

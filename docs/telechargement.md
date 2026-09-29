@@ -181,10 +181,15 @@ folders, tags…) peut être ajusté librement dans les UI.
   haut que le fichier importé. La même release a alors l'air d'un upgrade
   d'elle-même, et le même magnet a été grabé 3 à 5 fois. Tout
   `cutoffFormatScore` doit être atteignable par un *fichier*.
+- **Les arr demandent un login, même depuis le LAN** (`authenticationRequired:
+  enabled`, posé par `make arr-overrides`). Avec `disabledForLocalAddresses`,
+  toute IP Docker comptait comme locale : jellyfin, seerr ou nextcloud-web,
+  exposés au WAN, lisaient la clé API sur `/initialize.json`. Les appels par
+  clé API (Seerr, cross-seed, clearr, scripts) ne sont pas concernés.
+  Réglage relu au démarrage seulement : redémarrer l'arr après un changement.
 - **`trustedNetworks` = le réseau Docker du proxy**, pas le LAN : il désigne
-  les proxies dont on croit le `X-Forwarded-For`. Symptôme d'une valeur
-  fausse : les arr exigent un login depuis le LAN, et leurs cartes sont
-  grisées sur le dashboard. Réglage relu au démarrage seulement.
+  les proxies dont on croit le `X-Forwarded-For` (l'IP réelle du client dans
+  les journaux).
 
 ## cross-seed
 
@@ -203,6 +208,12 @@ fois. Déclenché à chaque import par un **Custom Script** Sonarr/Radarr
 
 - **Custom Script, pas Webhook** : le Webhook générique envoie un test sans
   vrai hash, cross-seed le rejette et **la connexion ne s'enregistre pas**.
+- **Scripts montés en dossier** : `arr/scripts/` est vu en
+  `/custom-scripts` (lecture seule) par Sonarr et Radarr. Un script modifié
+  par `git pull` est pris en compte **tout de suite**, sans restart. Avant le
+  2026-09-29, chaque script était monté seul sous `/config/custom-*.sh`, et
+  le conteneur gardait l'ancienne version. `make provision` repointe une
+  connexion restée sur l'ancien chemin.
 - **`useClientTorrents: true`** requis dans `arr/cross-seed/config.js`, sinon
   chaque notification échoue (`Torrent client does not have any torrent…`).
 - **Les ID d'indexeur Prowlarr changent** quand un indexeur est recréé. Un ID

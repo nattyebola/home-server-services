@@ -85,8 +85,9 @@ flowchart LR
 
 > [!TIP]
 > Une carte grisée alors que le conteneur est `healthy` ne vient pas forcément
-> du chemin sondé. Le 2026-09-17, les trois arr redirigeaient tout vers
-> `/login`. Diagnostiquer d'abord avec
+> du chemin sondé. Les arr redirigent tout vers `/login` (login exigé depuis
+> le LAN), d'où leur sonde sur `/Content/Images/Icons/favicon-32x32.png`,
+> servi sans authentification. Diagnostiquer d'abord avec
 > `curl -o /dev/null -w '%{http_code} %{content_type}' <url data-probe>`.
 
 ## Pièges connus

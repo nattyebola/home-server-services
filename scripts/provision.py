@@ -174,10 +174,20 @@ ARR_TAGS = ["pour-les-enfants"]
 # 12g — Connection "Custom Script" pour cross-seed. Custom Script et pas
 # Webhook : le type Webhook envoie un payload de test factice que cross-seed
 # rejette, ce qui empêche d'enregistrer la connexion (voir docs/telechargement.md). Le chemin
-# est celui du montage dans arr/docker-compose.yml.
-CROSS_SEED_SCRIPT = "/config/custom-cross-seed-notify.sh"
+# est celui du montage dans arr/docker-compose.yml : le DOSSIER arr/scripts/,
+# pas chaque fichier (2026-09-29). Un montage de fichier suit l'inode, et un
+# `git pull` qui remplace le script laissait le conteneur exécuter l'ancien.
+CROSS_SEED_SCRIPT = "/custom-scripts/cross-seed-notify.sh"
 # Sonarr seulement : finaleType n'existe pas côté Radarr.
-FINALE_SCRIPT = "/config/custom-mark-finale.sh"
+FINALE_SCRIPT = "/custom-scripts/mark-finale.sh"
+# Chemins d'avant le 2026-09-29 (montage fichier par fichier sous /config).
+# Seule exception au « jamais réécrire un objet existant » de ce script : une
+# connexion restée sur l'ancien chemin pointerait vers un fichier qui n'existe
+# plus, et le test « chemin identique » ci-dessous en ajouterait une seconde.
+LEGACY_SCRIPT_PATHS = {
+    CROSS_SEED_SCRIPT: "/config/custom-cross-seed-notify.sh",
+    FINALE_SCRIPT: "/config/custom-mark-finale.sh",
+}
 
 # 14c — profils qualité et dossiers que Seerr doit utiliser, désignés par NOM :
 # les ids sont propres à l'instance. Ces profils sont créés par
@@ -518,8 +528,27 @@ def provision_remote_path_mapping(name, api_key, done, skipped):
     done.append(f"{name} : remote path mapping {wanted['remotePath']} -> {wanted['localPath']} ajouté")
 
 
+def migrate_script_path(name, api_key, existing, path, done):
+    """Repointe sur `path` une Connection Custom Script restée sur l'ancien
+    chemin (voir LEGACY_SCRIPT_PATHS). Renvoie True si une connexion existe
+    désormais sur `path`, migrée ou non."""
+    legacy = LEGACY_SCRIPT_PATHS[path]
+    migrated = False
+    for n in existing:
+        if n["implementation"] == "CustomScript" and field_value(n, "path") == legacy:
+            for f in n["fields"]:
+                if f["name"] == "path":
+                    f["value"] = path
+            arr_request(name, f"/notification/{n['id']}", "PUT", n, api_key)
+            done.append(f"{name} : Connection {n['name']} repointée {legacy} -> {path}")
+            migrated = True
+    return migrated
+
+
 def provision_cross_seed_script(name, api_key, done, skipped):
     existing = arr_request(name, "/notification", api_key=api_key)
+    if migrate_script_path(name, api_key, existing, CROSS_SEED_SCRIPT, done):
+        return
     if any(n["implementation"] == "CustomScript"
            and field_value(n, "path") == CROSS_SEED_SCRIPT for n in existing):
         return
@@ -545,6 +574,8 @@ def provision_finale_script(name, api_key, done, skipped):
     rattrape `make mark-finales`.
     """
     existing = arr_request(name, "/notification", api_key=api_key)
+    if migrate_script_path(name, api_key, existing, FINALE_SCRIPT, done):
+        return
     if any(n["implementation"] == "CustomScript"
            and field_value(n, "path") == FINALE_SCRIPT for n in existing):
         return

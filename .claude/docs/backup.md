@@ -77,6 +77,19 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   cacher ce genre de bug arbitrairement longtemps ; et un `${VAR:-default}`
   est un piège quand `VAR` n'est définie nulle part — le fallback devient le
   cas normal, silencieusement.
+- **Un `pg_dump` seul ne se restaure pas sur un cluster neuf** (trouvé à
+  l'audit du 2026-09-29, le scénario visé étant la perte du disque) : il ne
+  contient ni le `CREATE DATABASE` ni les **rôles**, or la base appartient au
+  rôle `oc_<admin>` que l'installeur Nextcloud a créé (`dbuser` de
+  `config.php`). Fix : `pg_dump --create` + `pg_dumpall --roles-only`
+  (`nextcloud-roles.sql`), tous deux en `umask 077` et effacés après le
+  backup (hachages de mots de passe). Vérifié en réimportant dans un
+  `postgres:15-alpine` jetable : 285 tables, propriétaire `oc_…`, seule
+  erreur « role postgres already exists », attendue. `restore.sh` détecte les
+  anciens snapshots (sans rôles ni `CREATE DATABASE`) et affiche la marche
+  manuelle.
+- **Overrides compose et `vpn/custom/` sauvegardés depuis le 2026-09-29** :
+  gitignorés par décision, ils n'existaient nulle part ailleurs.
 - **`jellyfin.db` corrompue (`SQLite Error 11: database disk image is
   malformed`)** : ne pas juste supprimer le fichier pour forcer une
   régénération — `config/config/system.xml` garde

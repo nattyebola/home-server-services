@@ -19,7 +19,7 @@ Sept stacks Docker Compose, une par dossier, toutes pilotées par le `Makefile`.
 |---|---|---|
 | [`traefik/`](traefik.md) | `socket-proxy`, `traefik`, `dashboard` | point d'entrée ; dashboard public |
 | [`jellyfin/`](medias.md) | `jellyfin` | 🌍 public |
-| [`nextcloud/`](nextcloud.md) | `db-next`, `app`, `web`, `news-updater` | 🌍 public |
+| [`nextcloud/`](nextcloud.md) | `db-next`, `app`, `web` | 🌍 public |
 | [`seerr/`](medias.md#seerr) | `seerr` | 🌍 public |
 | [`komga/`](komga.md) | `komga` | 🌍 public |
 | [`vpn/`](telechargement.md) | `transmission-vpn`, `transmission-proxy`, `webproxy` | 🏠 LAN uniquement |
@@ -96,7 +96,7 @@ flowchart TB
 | 🚫 **Jamais de socket Docker monté** | — | Un accès au socket équivaut à root sur l'hôte. C'est ce qui a écarté Nextcloud AIO, et ce qui dicte le transport de clearr et de l'addon Kodi. |
 | 🔑 **Secrets hors du dépôt** | `.env` par stack + `.env.shared` à la racine (gitignorés), chacun avec son `.example` versionné | Le dépôt est public. Exception : si l'image recopie ses variables dans sa ligne de commande (visible par `ps`), le secret passe par un fichier monté en lecture seule (`news-updater/config.ini`). |
 | 🗂️ **Montages propres à la machine à part** | `docker-compose.override.yml` gitignoré + `.example` | Les compose files de base ne gardent que les montages génériques (`${DATA_ROOT}/.<app>/…`). |
-| 🏷️ **Images en `:latest`** | aucun tag figé | Choix assumé : toujours la dernière version, au prix d'une casse possible. La restauration fidèle passe par le manifeste des digests de chaque sauvegarde. **Seule exception : `recyclarr:8`**, qui ne publie plus de `latest` (le bump vers `:9` sera manuel). |
+| 🏷️ **Images en `:latest`** | aucun tag figé | Choix assumé : toujours la dernière version, au prix d'une casse possible. La restauration fidèle passe par le manifeste des digests de chaque sauvegarde. **Exceptions** : `recyclarr:8`, qui ne publie plus de `latest` ; `traefik:v3` et `postgres:15-alpine`, dont un changement de majeur casse la config ou la base. Leurs bumps de majeur sont manuels. |
 | 🕐 **Fuseau horaire de l'hôte** | bind-mount `/etc/localtime:/etc/localtime:ro` | Ne dépend pas de `tzdata` dans l'image et suit l'heure d'été. Préféré à `TZ=`. |
 | 📜 **Logs bornés** | `max-size` **et** `max-file: "3"` | `max-size` seul garde un seul fichier : tout l'historique disparaît à chaque rotation. |
 | ❤️ **Healthcheck partout** | HTTP réel si un endpoint non authentifié existe (`/ping` des arr, `/status.php`, `/api/v1/status`, `/actuator/health`) ; sinon connexion TCP | Visibilité seulement (contour rouge sur le dashboard), **aucune auto-remédiation**. Exception : `recyclarr`, lancé à la demande, n'en a pas. |

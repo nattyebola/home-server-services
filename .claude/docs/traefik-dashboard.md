@@ -60,6 +60,8 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   forcément du chemin sondé** : le 2026-09-17, les trois arr grisaient parce
   qu'ils redirigeaient tout vers `/login` (voir `trustedNetworks` dans
   `.claude/docs/arr-config.md`) — le dashboard était le symptôme, pas la cause.
+  Depuis le 2026-09-29 les arr exigent un login même en LAN : leur sonde vise
+  donc `/Content/Images/Icons/favicon-32x32.png`, servi sans authentification.
   Réflexe de diagnostic : `curl -o /dev/null -w '%{http_code} %{content_type}'`
   sur l'URL `data-probe` de la carte, avant de toucher à `PROBE_PATH`.
   Exclu des moteurs/crawlers par trois voies redondantes (volontaire, couvre

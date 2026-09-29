@@ -1,5 +1,10 @@
 services:
   db-next:
+    # Majeur FIGÉ, exception assumée au `:latest` du dépôt (voir CLAUDE.md) :
+    # PostgreSQL ne lit pas un répertoire de données d'un autre majeur, un
+    # `:latest` qui passerait de 15 à 16 laisserait db-next en boucle de
+    # crash au démarrage. Monter de version = dump (make backup), nouveau
+    # volume, réimport — à la main. 15 est en fin de vie en novembre 2027.
     image: postgres:15-alpine
     restart: unless-stopped
     volumes:
@@ -50,12 +55,17 @@ services:
     # nextcloud:fpm-alpine only listens on the php-fpm fastcgi socket (9000),
     # no HTTP of its own — a plain TCP connect is the simplest signal that
     # the fpm master/worker are still accepting, without needing cgi-fcgi.
+    # start_period de 10 min : sur une nouvelle image, l'entrypoint fait la
+    # montée de version (rsync + occ upgrade) AVANT de lancer php-fpm, ce qui
+    # dure plusieurs minutes. Avec 30 s, app passait unhealthy en pleine
+    # montée et `make update` (up --wait) échouait à tort. Un check réussi
+    # termine la période, un démarrage normal n'attend donc pas plus.
     healthcheck:
       test: ["CMD-SHELL", "nc -z 127.0.0.1 9000 || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 10m
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -72,8 +82,11 @@ services:
     volumes:
       - ${DATA_ROOT}/.nextcloud/nexcloud:/var/www/html:ro
       - /etc/localtime:/etc/localtime:ro
+    # Attendre app healthy : pendant sa montée de version, status.php échoue
+    # et web passerait unhealthy à sa place (start_period de 15 s).
     depends_on:
-      - app
+      app:
+        condition: service_healthy
     # status.php is proxied through to app's php-fpm (see app's healthcheck
     # above) — also catches app being unreachable from web, not just nginx
     # itself being stuck.
@@ -104,50 +117,6 @@ services:
       - "traefik.http.routers.nextcloud.middlewares=hsts@docker"
       - "traefik.http.services.nextcloud.loadbalancer.server.port=8080"
       - "traefik.docker.network=traefik-public"
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "1m"
-        max-file: "3"
-
-  news-updater:
-    image: kr3ssh/nextcloud-news-updater
-    restart: unless-stopped
-    # L'image démarre root sans en avoir besoin (un script Python qui ne fait
-    # que des requêtes HTTP) et `cap_drop: ALL` lui retire CAP_DAC_OVERRIDE :
-    # root ne peut alors PAS lire le config.ini en 600 monté ci-dessous.
-    # Tourner sous le compte qui possède le fichier règle les deux.
-    user: "${PUID}:${PGID}"
-    volumes:
-      - /etc/localtime:/etc/localtime:ro
-      # Le dossier, pas le fichier seul : un bind-mount de fichier reste figé
-      # sur l'inode capturé au démarrage si on remplace le fichier au lieu de
-      # l'éditer en place (voir CLAUDE.md).
-      - ./news-updater:/config:ro
-    depends_on:
-      - app
-    # Identifiants passés par fichier plutôt que par les variables
-    # NEXTCLOUD_ADMIN_* que lit l'entrypoint de l'image : celui-ci les recopie
-    # dans `--user`/`--password`, ce qui rendait le mot de passe lisible dans
-    # un `ps` sur l'hôte, par n'importe quel utilisateur local. L'URL reste
-    # ici, en argument, pour garder la substitution de ${DOMAIN} — argparse
-    # prime sur le fichier de config, qui ne porte donc que le secret (voir
-    # news-updater/config.ini.example).
-    command: ["https://nextcloud.${DOMAIN}", "--config", "/config/config.ini"]
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    # Pas de serveur ni d'endpoint à interroger : ce conteneur ne fait que
-    # boucler sur cron.php. On vérifie donc que son process est toujours là —
-    # même approche que recyclarr (`pgrep supercronic`), avec la même limite
-    # assumée : ça détecte un scheduler mort, pas un job individuel bloqué.
-    healthcheck:
-      test: ["CMD-SHELL", "pgrep -f nextcloud-news-updater > /dev/null"]
-      interval: 60s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
     logging:
       driver: "json-file"
       options:

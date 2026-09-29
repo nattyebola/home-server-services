@@ -109,7 +109,7 @@ up: require-env-shared network ## STACK=<nom> — démarre (ou met à jour) les 
 	@# Le créer ici (donc en tant que l'utilisateur qui lance make) suffit à
 	@# éviter le cas, et remplace le mkdir+chown manuel de l'installation.
 	@if [ "$(STACK)" = "seerr" ]; then \
-		root=$$(grep '^DATA_ROOT=' .env.shared | cut -d= -f2); \
+		root=$$(grep '^DATA_ROOT=' .env.shared | cut -d= -f2-); \
 		test -n "$$root" || (echo "DATA_ROOT not set in .env.shared" >&2 && exit 1); \
 		mkdir -p "$$root/.seerr/config"; \
 	fi
@@ -120,7 +120,7 @@ up: require-env-shared network ## STACK=<nom> — démarre (ou met à jour) les 
 	@# root avant que Transmission n'ait à y écrire. C'est aussi la cible de la
 	@# catégorie `bd` du client de téléchargement Prowlarr.
 	@if [ "$(STACK)" = "komga" ]; then \
-		root=$$(grep '^DATA_ROOT=' .env.shared | cut -d= -f2); \
+		root=$$(grep '^DATA_ROOT=' .env.shared | cut -d= -f2-); \
 		test -n "$$root" || (echo "DATA_ROOT not set in .env.shared" >&2 && exit 1); \
 		mkdir -p "$$root/.komga/config" "$$root/.transmission/data/completed/bd"; \
 	fi
@@ -129,7 +129,7 @@ up: require-env-shared network ## STACK=<nom> — démarre (ou met à jour) les 
 	@# (accessLog dans traefik.yml), sans lequel aucune requête WAN ne laisse de
 	@# trace — y compris les 403 des middlewares LAN-only.
 	@if [ "$(STACK)" = "traefik" ]; then \
-		root=$$(grep '^DATA_ROOT=' .env.shared | cut -d= -f2); \
+		root=$$(grep '^DATA_ROOT=' .env.shared | cut -d= -f2-); \
 		test -n "$$root" || (echo "DATA_ROOT not set in .env.shared" >&2 && exit 1); \
 		mkdir -p "$$root/.traefik/log"; \
 	fi
@@ -137,7 +137,7 @@ up: require-env-shared network ## STACK=<nom> — démarre (ou met à jour) les 
 	@# s'il n'existe pas, Docker crée un DOSSIER à la place et le service crashe au
 	@# démarrage sur IsADirectoryError.
 	@if [ "$(STACK)" = "arr" ]; then \
-		root=$$(grep '^DATA_ROOT=' .env.shared | cut -d= -f2); \
+		root=$$(grep '^DATA_ROOT=' .env.shared | cut -d= -f2-); \
 		test -n "$$root" || (echo "DATA_ROOT not set in .env.shared" >&2 && exit 1); \
 		touch "$$root/.clearr.log"; \
 	fi
@@ -196,7 +196,13 @@ update: require-env-shared network ## STACK=<nom> — pull/rebuild puis recrée 
 	@test -n "$(STACK)" || (echo "usage: make update STACK=<$(STACKS)>" >&2 && exit 1)
 	$(compose) --profile manual pull
 	@if [ "$(STACK)" = "nextcloud" ] || [ "$(STACK)" = "arr" ]; then $(compose) build -q; fi
-	$(compose) up -d --remove-orphans
+	@# --wait : rend la main quand chaque conteneur est healthy (et échoue s'il
+	@# devient unhealthy), plutôt qu'aussitôt créé. Sans lui les `occ` ci-dessous
+	@# partaient pendant que l'entrypoint de Nextcloud faisait encore son propre
+	@# `occ upgrade` sur une nouvelle image, et update-all déclarait « succès »
+	@# une stack qui ne redémarrait pas. Plafond large : une montée de version
+	@# Nextcloud prend plusieurs minutes (voir le start_period de app).
+	$(compose) up -d --remove-orphans --wait --wait-timeout 900
 	@if [ "$(STACK)" = "nextcloud" ]; then \
 		$(compose) exec app ./occ app:update --all -n && \
 		$(compose) exec app ./occ db:add-missing-columns && \
@@ -343,7 +349,7 @@ arr-overrides: ## — réapplique les réglages arr que recyclarr écrase (aussi
 # finaleType/status révisé côté TVDB, qu'aucun déclencheur ne signale.
 # Idempotent et réversible (retire un marqueur devenu faux), donc relançable.
 mark-finales: ## — repose les marqueurs de fin de saison/série dans les .nfo (filet du hook Sonarr)
-	@docker exec arr-sonarr-1 sh /config/custom-mark-finale.sh --all
+	@docker exec arr-sonarr-1 sh /custom-scripts/mark-finale.sh --all
 
 # relance une recherche sur les épisodes/films manquants déjà sortis — ni Sonarr
 # ni Radarr n'ont de tâche planifiée pour ça, donc ce que le flux RSS a raté à
@@ -374,8 +380,6 @@ recyclarr-sync: network ## — lance `recyclarr sync` en one-shot (aussi enchaî
 switch-lan-only-middleware: ## — ouvre/referme les services LAN-only au WAN (referme seul au bout d'1 h)
 	@scripts/lan-only-middleware.sh toggle
 
-# weekly restic backup (nextcloud DB dump + data + .env secrets + image
-# digest manifest) — see scripts/backup.sh. Also run by cron, see CLAUDE.md.
 test: ## — lance les tests des chemins destructifs de clearr (stdlib, rien à installer)
 	@# unittest et pas pytest : le dépôt n'installe aucune dépendance de
 	@# développement, et python3 est déjà un prérequis. Les tests tournent dans
@@ -383,6 +387,8 @@ test: ## — lance les tests des chemins destructifs de clearr (stdlib, rien à 
 	@# bibliothèque réelle NI les API arr — les appels réseau sont bouchonnés.
 	@python3 arr/clearr/tests/test_core.py
 
+# weekly restic backup (nextcloud DB dump + data + .env secrets + image
+# digest manifest) — see scripts/backup.sh. Also run by cron, see CLAUDE.md.
 backup: require-env-shared ## — sauvegarde restic (aussi faite par cron le dimanche à 3 h)
 	@scripts/backup.sh
 
@@ -409,8 +415,8 @@ restore: require-env-shared ## SNAPSHOT=<id|latest> — restaure un snapshot dan
 # this repo) is preserved — piping into `crontab -` replaced the whole crontab
 # and dropped them silently.
 cron-install: require-env-shared ## — installe les crons du repo dans le crontab, en préservant les jobs perso
-	$(eval PUID := $(shell grep '^PUID=' .env.shared | cut -d= -f2))
-	$(eval DATA_ROOT := $(shell grep '^DATA_ROOT=' .env.shared | cut -d= -f2))
+	$(eval PUID := $(shell grep '^PUID=' .env.shared | cut -d= -f2-))
+	$(eval DATA_ROOT := $(shell grep '^DATA_ROOT=' .env.shared | cut -d= -f2-))
 	@test -n "$(PUID)" || (echo "PUID not set in .env.shared" >&2 && exit 1)
 	@test -n "$(DATA_ROOT)" || (echo "DATA_ROOT not set in .env.shared" >&2 && exit 1)
 	@mkdir -p "$(DATA_ROOT)/.cron-status"
@@ -435,8 +441,7 @@ cron-install: require-env-shared ## — installe les crons du repo dans le cront
 # Never overwrites an existing settings.xml: Kodi rewrites that file itself, and
 # the URL may have been adjusted by hand since.
 kodi-install: require-env-shared ## [KODI_HOME=<chemin>] — installe l'addon de menu contextuel clearr dans Kodi
-	@test -f .env.shared || (echo ".env.shared missing — see .env.shared.example" >&2 && exit 1)
-	$(eval DOMAIN := $(shell grep '^DOMAIN=' .env.shared | cut -d= -f2))
+	$(eval DOMAIN := $(shell grep '^DOMAIN=' .env.shared | cut -d= -f2-))
 	@test -n "$(DOMAIN)" || (echo "DOMAIN not set in .env.shared" >&2 && exit 1)
 	@test -d "$(KODI_HOME)" || (echo "$(KODI_HOME) not found — run Kodi once first, or pass KODI_HOME=" >&2 && exit 1)
 	@mkdir -p "$(KODI_HOME)/addons" "$(KODI_HOME)/userdata/addon_data/context.clearr"

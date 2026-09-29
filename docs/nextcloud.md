@@ -13,7 +13,6 @@ flowchart LR
     Traefik -->|"nextcloud.DOMAIN<br>hsts seul"| Web["web<br>nginx-unprivileged :8080"]
     Web -->|"FastCGI :9000"| App["app<br>nextcloud:fpm-alpine + ffmpeg"]
     App --> DB[("db-next<br>Postgres")]
-    News["news-updater"] -->|"https://nextcloud.DOMAIN<br>mot de passe d'application"| Traefik
     Cron["cron hôte */5 min"] -.->|"php cron.php"| App
 ```
 
@@ -22,7 +21,6 @@ flowchart LR
 | `db-next` | Postgres, données sous `${DATA_ROOT}/.nextcloud/db-next`. Un des deux seuls services avec `cap_add` (démarre root puis descend). |
 | `app` | build local (`nextcloud/app/Dockerfile`) : image FPM + `ffmpeg` pour les aperçus vidéo. Webroot sous `${DATA_ROOT}/.nextcloud/nexcloud`. |
 | `web` | nginx non-root avec le `nginx.conf` officiel ; porte les en-têtes de sécurité |
-| `news-updater` | rafraîchit les flux de l'app News pour **tous** les utilisateurs |
 
 ## Au quotidien
 
@@ -33,27 +31,23 @@ make update STACK=nextcloud     # pull + rebuild + maintenance occ (voir ci-dess
 
 `make update STACK=nextcloud` enchaîne après la recréation :
 `app:update --all`, `db:add-missing-columns/indices/primary-keys` et
-`maintenance:mimetype:update-*`. Le cron interne (`cron.php`) est lancé par
+`maintenance:mimetype:update-*`, une fois `app` **healthy** (`up --wait`) :
+l'entrypoint fait lui-même son `occ upgrade` sur une nouvelle image, d'où le
+`start_period` de 10 min de `app`. Le cron interne (`cron.php`) est lancé par
 le crontab de l'hôte toutes les 5 minutes.
 
 **Stockages externes** (dossiers de l'hôte à exposer dans Nextcloud) :
 `nextcloud/docker-compose.override.yml`.
 
-## Le rafraîchisseur de flux (`news-updater`)
+## Flux de l'app News
 
-Il s'authentifie en admin, via un **mot de passe d'application** dédié (et
-révocable seul) lu dans `nextcloud/news-updater/config.ini` (`chmod 600`). Deux
-choix délibérés :
+Rafraîchis par le job interne de News (`OCA\News\Cron\UpdaterJob`, toutes
+les heures), exécuté par `cron.php`. Vérifier :
+`occ news:updater:job` (date du dernier passage).
 
-- **un fichier plutôt qu'une variable d'environnement** : l'entrypoint de
-  l'image recopie ses variables dans `--password`, lisible par tout
-  utilisateur local via `ps` ;
-- **`user: PUID:PGID`** plutôt que root. Avec `cap_drop: ALL`, root perd
-  `CAP_DAC_OVERRIDE` et ne peut plus lire un fichier `600` qui ne lui
-  appartient pas.
-
-Tant que `config.ini` est vide, seul ce conteneur redémarre en boucle, le
-reste de Nextcloud fonctionne.
+Il n'y a plus de conteneur `news-updater` (retiré le 2026-09-29) : l'image
+`kr3ssh/nextcloud-news-updater` n'avait pas bougé depuis 7 ans, échouait en
+boucle (404/504), et doublait le job interne.
 
 ## Pièges connus
 

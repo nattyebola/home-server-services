@@ -24,11 +24,11 @@ flowchart LR
 
 | ✅ Sauvegardé | ❌ Exclu volontairement |
 |---|---|
-| Base Nextcloud (`pg_dump` cohérent, pas une copie des fichiers Postgres) | `library/` et `.transmission/data/` : médias re-téléchargeables, trop volumineux |
+| Base Nextcloud (`pg_dump --create` cohérent, pas une copie des fichiers Postgres) **et ses rôles** (`pg_dumpall --roles-only`) | `library/` et `.transmission/data/` : médias re-téléchargeables, trop volumineux |
 | Webroot Nextcloud, dont le code (l'entrypoint en a besoin pour arbitrer install/upgrade) et `custom_apps/` | Aperçus Nextcloud (`appdata_*/preview`) |
 | Configs Jellyfin (sans `metadata/`), Prowlarr/Sonarr/Radarr (dont leurs `Backups/`, seule copie cohérente de leur base), cross-seed, recyclarr, Seerr, Komga, Transmission | Cache Jellyfin, `metadata/` Jellyfin, `MediaCover` et logs des arr |
 | Tous les `.env` (collectés par boucle sur les stacks, un nouveau est couvert d'office), `.env.shared` | `nextcloud.log`, `audit.log`, `transmission.log` |
-| `arr/profiles/prowlarr-indexers.json`, `nextcloud/news-updater/config.ini` | |
+| `arr/profiles/prowlarr-indexers.json`, les `docker-compose.override.yml`, `vpn/custom/` (config OpenVPN) | |
 | **Manifeste des digests d'images** : les tags étant `:latest`, c'est lui qui dit quelle version tournait | |
 
 **Critère de tri** : ce qui change chaque semaine coûte à chaque snapshot, le

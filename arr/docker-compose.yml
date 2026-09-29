@@ -78,8 +78,11 @@ services:
       # path mapping (host transmission-vpn) et root folders à reconfigurer
       # côté Sonarr en conséquence.
       - ${DATA_ROOT}:/data_root
-      - ./scripts/cross-seed-notify.sh:/config/custom-cross-seed-notify.sh:ro
-      - ./scripts/mark-finale.sh:/config/custom-mark-finale.sh:ro
+      # Le DOSSIER, pas chaque script : un montage de fichier suit l'inode, et
+      # un `git pull` qui remplace le fichier laissait Sonarr exécuter
+      # l'ancienne version jusqu'au prochain restart (voir CLAUDE.md). Chemins
+      # référencés par les Connections Custom Script (scripts/provision.py).
+      - ./scripts:/custom-scripts:ro
       - /etc/localtime:/etc/localtime:ro
     env_file:
       - .env
@@ -135,7 +138,8 @@ services:
       # même raison que sonarr ci-dessus : un seul montage pour permettre le
       # hardlink entre téléchargement et bibliothèque.
       - ${DATA_ROOT}:/data_root
-      - ./scripts/cross-seed-notify.sh:/config/custom-cross-seed-notify.sh:ro
+      # même raison que sonarr : le dossier, pas le fichier.
+      - ./scripts:/custom-scripts:ro
       - /etc/localtime:/etc/localtime:ro
     env_file:
       - .env
