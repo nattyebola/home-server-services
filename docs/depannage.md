@@ -30,6 +30,7 @@ touchent toutes les stacks.
 | Seerr en crash `EACCES` en boucle | dossier de config créé en root | [Médias](medias.md#pièges-connus) |
 | Seerr propose de redemander un titre déjà là | pas de bibliothèque Jellyfin sur `library/` | [Médias](medias.md#seerr) |
 | clearr : bandeau rouge après une suppression, ou « Purge refusée » | arr injoignable au moment de la suppression ; données Transmission non montées | [clearr](clearr.md#pièges-connus) |
+| Un port paraît ouvert au WAN quand on teste depuis le serveur | `/etc/hosts` fait résoudre le domaine vers l'IP LAN | [Installation](installation.md#hôte--etchosts) |
 | BD illisible dans Komga | `.cbr` en RAR5 ou archive « solid » | [Komga](komga.md#pièges-connus) |
 | Avertissements de sécurité dans l'admin Nextcloud | `security-headers` remis sur son routeur | [Nextcloud](nextcloud.md#pièges-connus) |
 | Une tâche cron « réussit » à la main mais pas sous cron | `%` non échappé | [Exploitation](exploitation.md#tâches-planifiées) |

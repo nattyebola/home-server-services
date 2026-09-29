@@ -298,3 +298,60 @@ mais à refaire sur une installation neuve :
 - plugins Jellyfin, transcodage matériel VAAPI ;
 - le port d'écoute Transmission ouvert côté VPN (`settings.json`) ;
 - le tag `fr-priority` de Sonarr et son delay profile.
+
+### Hôte : fail2ban (SSH ouvert au WAN)
+
+La box redirige le port 22 et SSH accepte les mots de passe (choix assumé).
+Les réglages Debian par défaut (bannissement de 10 min) laissaient revenir les
+mêmes IP en boucle : environ 3 500 échecs par jour. À poser **hors du repo**,
+dans `/etc/fail2ban/jail.d/local.conf` :
+
+```ini
+[sshd]
+bantime  = 1h
+findtime = 1h
+maxretry = 5
+
+[recidive]
+# une IP bannie 3 fois en une journée l'est pour une semaine
+enabled  = true
+bantime  = 1w
+findtime = 1d
+```
+
+```sh
+sudo fail2ban-client reload
+sudo fail2ban-client status sshd    # ou pkexec depuis la session GNOME
+```
+
+> [!WARNING]
+> 5 échecs de mot de passe en une heure depuis une même IP la bloquent une
+> heure, y compris la vôtre.
+
+### Hôte : `/etc/hosts`
+
+Sur le serveur, le domaine et chaque sous-domaine pointent vers son IP LAN :
+
+```
+<IP_LAN>  <DOMAIN>
+<IP_LAN>  www.<DOMAIN>
+<IP_LAN>  clearr.<DOMAIN>
+<IP_LAN>  jellyfin.<DOMAIN>
+<IP_LAN>  komga.<DOMAIN>
+<IP_LAN>  nextcloud.<DOMAIN>
+<IP_LAN>  prowlarr.<DOMAIN>
+<IP_LAN>  radarr.<DOMAIN>
+<IP_LAN>  seerr.<DOMAIN>
+<IP_LAN>  sonarr.<DOMAIN>
+<IP_LAN>  transmission.<DOMAIN>
+```
+
+Un sous-domaine ajouté plus tard doit y être ajouté aussi.
+
+> [!WARNING]
+> Conséquence : depuis le serveur, « l'IP publique » résolue est en fait
+> l'IP LAN. Un test d'exposition lancé depuis l'hôte voit donc tout port
+> en écoute comme ouvert au WAN. Pour tester ce que voit Internet, résoudre
+> via un résolveur public (`dig +short A <DOMAIN> @1.1.1.1`) et sonder depuis
+> le conteneur VPN, qui sort par AirVPN :
+> `docker exec vpn-transmission-vpn-1 timeout 6 bash -c "</dev/tcp/<IP>/<port>"`.
