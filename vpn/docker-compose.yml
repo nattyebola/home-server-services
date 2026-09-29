@@ -138,11 +138,14 @@ services:
     # Simple connect TCP plutôt qu'une requête RPC réelle : sans en-tête
     # X-Transmission-Session-Id, l'upstream répond 409 (comportement normal
     # du protocole RPC de Transmission), pas un 200 — un check HTTP se
-    # tromperait de signal. Suffisant pour détecter nginx planté/bloqué ;
-    # transmission-vpn a déjà son propre healthcheck (image haugene, voir
-    # `depends_on` ci-dessus).
+    # tromperait de signal.
+    # Deux sondes : nginx écoute, ET l'upstream est joignable depuis ici. La
+    # seconde n'est pas redondante avec le healthcheck de transmission-vpn :
+    # le 2026-09-28, un `make restart` a laissé le sidecar webproxy (même
+    # schéma) sans AUCUN réseau — nginx écoutait toujours sur 127.0.0.1, la
+    # sonde locale seule le disait healthy alors que le relais était mort.
     healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 8080 || exit 1"]
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8080 && nc -z -w 3 transmission-vpn 9091 || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -196,8 +199,11 @@ services:
     # rediriger ce port sur la box.
     ports:
       - "${WEBPROXY_HOST_IP:-127.0.0.1}:8118:8118"
+    # Sonde l'upstream en plus de nginx : voir le healthcheck de
+    # transmission-proxy (panne du 2026-09-28, conteneur sans réseau mais
+    # healthy).
     healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 8118 || exit 1"]
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8118 && nc -z -w 3 transmission-vpn 8118 || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
