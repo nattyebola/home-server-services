@@ -45,7 +45,6 @@ flowchart LR
 | VPN | module noyau `ip_tables` chargé | absent par défaut sur les Ubuntu récents : `echo ip_tables \| sudo tee /etc/modules-load.d/ip-tables.conf && sudo modprobe ip_tables` |
 | VPN | une config OpenVPN (`.ovpn`) | testé avec AirVPN |
 | option | GPU exposant `/dev/dri/renderD128` | transcodage Jellyfin, à déclarer dans `jellyfin/docker-compose.override.yml` (voir son `.example`) ; sans GPU, rien à faire |
-| option | `fail2ban` sur l'hôte | avec une jail sur l'access log Traefik, seule trace des requêtes WAN |
 | option | Kodi 19+ avec `jellyfin-kodi` en mode sync | pour l'addon de l'étape 22 |
 
 ## ① Préparation

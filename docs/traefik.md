@@ -109,5 +109,4 @@ flowchart LR
   `docker compose config` échoue (sinon une stack entière disparaîtrait de la
   page). Lire `dashboard/refresh.log`, relancer `make dashboard-refresh`.
 - **Access log** (`${DATA_ROOT}/.traefik/log/`) : seule trace des requêtes WAN,
-  403 des filtres LAN compris. Un `fail2ban` sur l'hôte qui lit ce fichier est
-  recommandé (hors stack).
+  403 des filtres LAN compris.
