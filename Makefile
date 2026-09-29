@@ -13,7 +13,7 @@ STACKS := traefik jellyfin nextcloud vpn arr seerr komga
 # reflète donc l'état d'après redémarrage.
 UPDATE_STACKS := nextcloud vpn jellyfin arr seerr komga traefik
 
-.PHONY: help require-env-shared network up down restart config logs update rebuild update-all backup restore cron-install dashboard-refresh clearr arr-overrides search-missing mark-finales recyclarr-sync kodi-install gnome-install api-keys provision switch-lan-only-middleware test
+.PHONY: help require-env-shared network up down restart restart-all config logs update rebuild update-all backup restore cron-install dashboard-refresh clearr arr-overrides search-missing mark-finales recyclarr-sync kodi-install gnome-install api-keys provision switch-lan-only-middleware test
 
 # `make` sans argument affiche l'aide plutôt que de lancer la première cible
 # (c'était `network`, qui ne dit rien de ce que le reste sait faire).
@@ -156,6 +156,23 @@ down: ## STACK=<nom> — arrête et supprime les conteneurs de la stack
 restart: require-env-shared ## STACK=<nom> — redémarre les conteneurs sans les recréer (remonte les bind-mounts)
 	@test -n "$(STACK)" || (echo "usage: make restart STACK=<$(STACKS)>" >&2 && exit 1)
 	$(compose) restart
+
+restart-all: ## — `restart` sur chaque stack qui a des conteneurs, même arrêtés (même ordre que update-all, traefik en dernier)
+	@# Même garde que update-all : un daemon injoignable ferait tout sauter en succès.
+	@docker ps -q >/dev/null || (echo "docker ne répond pas — rien redémarré" >&2 && exit 1)
+	@failed=""; \
+	for s in $(UPDATE_STACKS); do \
+		if [ -z "$$(docker ps -aq --filter label=com.docker.compose.project=$$s)" ]; then \
+			echo "skip $$s (aucun conteneur)"; \
+			continue; \
+		fi; \
+		echo "\n======================== restart $$s ========================\n"; \
+		$(MAKE) restart STACK=$$s || failed="$$failed $$s"; \
+	done; \
+	if [ -n "$$failed" ]; then \
+		echo "échec(s) :$$failed" >&2; \
+		exit 1; \
+	fi
 
 config: ## STACK=<nom> — affiche le compose résolu (labels, env, montages)
 	@test -n "$(STACK)" || (echo "usage: make config STACK=<$(STACKS)>" >&2 && exit 1)
