@@ -146,6 +146,7 @@ lent et en plus gros.
 | Ce que recyclarr écrase ou ne couvre pas | `apply-arr-overrides.py` | tailles de palier, langue, connexions Jellyfin, `.nfo`, renommage, ratio des indexeurs publics… réappliqué chaque nuit |
 | Délai de 3 h sur l'anime VOSTFR | tag `anime-vostfr-delai` | laisse arriver une release VOSTFR plutôt que grabber la première puis la remplacer 5 fois ; une release déjà ≥ 50 part tout de suite |
 | Ratio 1.5 sur les indexeurs publics | `PUBLIC_INDEXER_SEED_RATIO` | un tracker public ne compte pas le ratio ; les privés ne sont pas touchés |
+| Repacks départagés par le score | `downloadPropersAndRepacks: doNotPrefer` | un REPACK n'est plus grabé s'il score moins que le fichier en place (le CF `Repack/Proper` garde la préférence) |
 | Rejet des archives/exécutables | `failDownloads` | une « release » `.exe`/`.zipx` est marquée en échec et remplacée automatiquement |
 | Recherche des manquants | `search-missing.py`, lundi 5 h | Sonarr/Radarr **ne re-cherchent jamais** seuls un manquant raté au RSS ; plafonné à 12 recherches, rotation par ancienneté ; tâche en rouge si l'arr fait échouer la commande de recherche |
 | Marqueurs de fin de saison | `mark-finale.sh`, hook + cron 2 h | `†` fin de saison, `‡` fin de série, `½` mi-saison devant le titre d'épisode (visible dans Kodi) |
@@ -168,6 +169,11 @@ folders, tags…) peut être ajusté librement dans les UI.
   Le dashboard compte ces téléchargements (un pack compte pour un, même si
   Sonarr crée une entrée de file par épisode) ; `scripts/manual-import.py`
   (skill `manual-import`) les débloque.
+- **Un REPACK grabé puis refusé à l'import** (« Not a Custom Format upgrade »),
+  sur un fichier déjà en place en mieux : symptôme du défaut
+  `preferAndUpgrade`, qui fait passer le repack avant le score. Réglé à
+  `doNotPrefer` par `make arr-overrides` (2026-10-01). L'entrée restée en file
+  se purge via le skill `manual-import`.
 - **Fichiers posés en vrac** à la racine d'un dossier scanné : ignorés sans
   log. Utiliser *Manual Import*.
 - **Écritures asynchrones** : certaines écritures de config Servarr répondent

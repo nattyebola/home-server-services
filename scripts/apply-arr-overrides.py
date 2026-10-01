@@ -533,8 +533,7 @@ def apply_radarr_language(container, base_url, api_key, profile_name):
     return [f"Radarr {profile_name}: language {before} -> Any"]
 
 
-# Réglages de /config/mediamanagement à maintenir sur les deux arr. Un seul
-# aujourd'hui, mais celui-là porte à lui seul le fix du 2026-07-23.
+# Réglages de /config/mediamanagement à maintenir sur les deux arr.
 #
 # copyUsingHardlinks est la valeur par défaut du produit, donc une installation
 # neuve la retrouve — mais RIEN ne la protégeait d'un basculement dans l'UI ni
@@ -544,7 +543,15 @@ def apply_radarr_language(container, base_url, api_key, profile_name):
 # et aucune erreur nulle part — la seule manifestation est le disque qui se
 # remplit deux fois plus vite. C'est exactement le genre de réglage qu'un
 # script déclaratif doit tenir.
-MEDIA_MANAGEMENT_OVERRIDES = {"copyUsingHardlinks": True}
+#
+# downloadPropersAndRepacks: doNotPrefer (2026-10-01, recommandation TRaSH).
+# Le défaut `preferAndUpgrade` fait passer un repack AVANT le score de custom
+# format : Sonarr a grabé `Tomb Raider King S01E12 REPACK … H.264` (CF 5) sur un
+# fichier x265 déjà en place (CF 10), puis en a refusé l'import (« Not a Custom
+# Format upgrade ») — téléchargement pour rien, bloqué dans la file sans limite.
+# Le CF `Repack/Proper` des profils garde la préférence, mais dans le score.
+MEDIA_MANAGEMENT_OVERRIDES = {"copyUsingHardlinks": True,
+                              "downloadPropersAndRepacks": "doNotPrefer"}
 
 # --- renommage des fichiers à l'import --------------------------------------
 # Activé le 2026-09-07, les deux arr laissaient jusque-là le nom brut de la

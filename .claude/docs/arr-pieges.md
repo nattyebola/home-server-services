@@ -199,6 +199,13 @@ score de profil, cross-seed ou Seerr.
   (`VOSTFR (hors suffixe)`), le CF du guide restant intact et scoré **0** sur
   les profils concernés, le nôtre reprenant son score.
 
+- **`downloadPropersAndRepacks: doNotPrefer`** (2026-10-01, tenu par
+  `MEDIA_MANAGEMENT_OVERRIDES`). Avec le défaut `preferAndUpgrade`, un REPACK
+  prime sur le score CF : `Tomb Raider King S01E12 REPACK … H.264` (CF 5) grabé
+  sur un WEBRip x265 en place (CF 10), puis refusé à l'import et resté en
+  `importBlocked`. Ne pas revenir à `preferAndUpgrade` : la préférence repack
+  passe par le CF `Repack/Proper` (+5 dans les profils anime, TRaSH ailleurs).
+
 ## La boucle de regrab infini (`cutoffFormatScore` + regex)
 
 Le piège le plus coûteux du repo, diagnostiqué en trois passes. À lire en
