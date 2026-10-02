@@ -282,10 +282,16 @@ services:
     dns:
       - ${DNS_PRIMARY}
       - ${DNS_SECONDARY}
+    # service_healthy, pas la forme courte : cross-seed valide ses connexions
+    # arr/Torznab dès le démarrage, et un arr « démarré » ne répond pas encore
+    # (Could not contact Sonarr, puis nouvel essai 60 s plus tard).
     depends_on:
-      - prowlarr
-      - sonarr
-      - radarr
+      prowlarr:
+        condition: service_healthy
+      sonarr:
+        condition: service_healthy
+      radarr:
+        condition: service_healthy
     volumes:
       - ${DATA_ROOT}/.arr/cross-seed/config:/config
       - ./cross-seed/config.js:/config/config.js:ro
@@ -355,9 +361,13 @@ services:
     user: "${PUID}:${PGID}"
     profiles:
       - manual
+    # service_healthy : `compose run` démarre sonarr/radarr s'ils sont arrêtés,
+    # et le sync partirait sinon avant que leur API réponde.
     depends_on:
-      - sonarr
-      - radarr
+      sonarr:
+        condition: service_healthy
+      radarr:
+        condition: service_healthy
     volumes:
       - ${DATA_ROOT}/.arr/recyclarr/config:/config
       - ./recyclarr/recyclarr.yml:/config/recyclarr.yml:ro
