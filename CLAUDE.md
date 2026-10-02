@@ -172,13 +172,13 @@ server/
 ├── .env.shared(.example)   PUID/PGID/RENDER_GID/DOMAIN/DATA_ROOT/LAN_CIDR/DNS_*
 ├── Makefile                `make help` (défaut), généré depuis les annotations des cibles
 ├── README.md, docs/        doc humaine (une page par thème)
-├── CLAUDE.md, .claude/     docs/ par domaine + skills/ (indexer-quota,
+├── CLAUDE.md, .claude/     docs/ par domaine + skills/ (changelogs, indexer-quota,
 │                           manual-import, server-report, vpn-bench)
 ├── scripts/                crontab + install-crontab.sh, logrotate.conf,
 │                           provision.py, apply-arr-overrides.py, search-missing.py,
 │                           manual-import.py, backup.sh/restore.sh, generate-dashboard.py,
 │                           transmission-stats.py, lan-only-middleware.sh,
-│                           require-running.sh, vpn-bench.py
+│                           require-running.sh, vpn-bench.py, image-versions.py
 ├── traefik/ jellyfin/ nextcloud/ vpn/ arr/ seerr/ komga/   une stack par dossier
 │   └── arr/{clearr,profiles,recyclarr,cross-seed,scripts}/
 ├── dashboard/              templates/ + assets/ ; html/ généré

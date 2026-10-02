@@ -177,6 +177,10 @@ logs: ## STACK=<nom> — suit les logs de la stack (Ctrl-C pour sortir)
 # arr est la seule stack à déclarer un `profiles:`.
 update: require-env-shared network ## STACK=<nom> — pull/rebuild puis recrée la stack
 	@test -n "$(STACK)" || (echo "usage: make update STACK=<$(STACKS)>" >&2 && exit 1)
+	@# Versions notées avant le pull, comparées après le up : journal lu par le
+	@# skill `changelogs` (voir scripts/image-versions.py). Best-effort, ne
+	@# fait jamais échouer l'update.
+	@$(compose) --profile manual config --format json | python3 scripts/image-versions.py snapshot $(STACK)
 	$(compose) --profile manual pull
 	@if [ "$(STACK)" = "nextcloud" ] || [ "$(STACK)" = "arr" ]; then $(compose) build -q; fi
 	@# --wait : rend la main quand chaque conteneur est healthy (et échoue s'il
@@ -186,6 +190,7 @@ update: require-env-shared network ## STACK=<nom> — pull/rebuild puis recrée 
 	@# une stack qui ne redémarrait pas. Plafond large : une montée de version
 	@# Nextcloud prend plusieurs minutes (voir le start_period de app).
 	$(compose) up -d --remove-orphans --wait --wait-timeout 900
+	@$(compose) --profile manual config --format json | python3 scripts/image-versions.py record $(STACK)
 	@if [ "$(STACK)" = "nextcloud" ]; then \
 		$(compose) exec app ./occ app:update --all -n && \
 		$(compose) exec app ./occ db:add-missing-columns && \
@@ -250,12 +255,12 @@ rebuild: require-env-shared network ## STACK=<nom> SERVICE=<nom> — recrée UN 
 # passage un service isolé qui serait tombé — voulu). Les stacks sautées sont
 # listées à la fin, `make update STACK=<nom>` reste le moyen d'en mettre une
 # à jour sans la démarrer au préalable... à ceci près qu'il la démarrera.
-update-all: ## — `update` sur les stacks démarrées, prune les images orphelines, régénère le dashboard
+update-all: ## — `update` sur les stacks démarrées, prune les images orphelines, régénère le dashboard, récap des versions
 	@# Sans ce garde, un daemon injoignable ferait sortir tous les `docker ps`
 	@# vides : chaque stack serait déclarée arrêtée, donc sautée, et update-all
 	@# se terminerait en SUCCÈS sans avoir rien mis à jour.
 	@docker ps -q >/dev/null || (echo "docker ne répond pas — rien mis à jour" >&2 && exit 1)
-	@failed=""; skipped=""; \
+	@failed=""; skipped=""; start=$$(date +%s); \
 	for s in $(UPDATE_STACKS); do \
 		if [ -z "$$(docker ps -q --filter status=running --filter label=com.docker.compose.project=$$s)" ]; then \
 			echo "\n======================== skip $$s (aucun conteneur démarré) ========================\n"; \
@@ -267,6 +272,8 @@ update-all: ## — `update` sur les stacks démarrées, prune les images orpheli
 	done; \
 	docker image prune -f; \
 	$(MAKE) dashboard-refresh; \
+	echo ""; \
+	python3 scripts/image-versions.py recap --since $$start; \
 	echo ""; \
 	if [ -n "$$skipped" ]; then \
 		echo "stack(s) arrêtée(s), non mise(s) à jour :$$skipped"; \
