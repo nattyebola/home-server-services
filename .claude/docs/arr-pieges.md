@@ -140,6 +140,17 @@ score de profil, cross-seed ou Seerr.
   `episodes: []`). Vérifier la langue détectée au passage : sur une release
   MULTi/VFF, Radarr a proposé « Vietnamese » — elle part dans le nom du fichier
   renommé et dans le `.nfo` lu par Jellyfin.
+  **Jamais `seriesId` dans `GET /manualimport`** : il fait lister le dossier
+  de la série en bibliothèque et ignorer `downloadId`/`folder`. Le 2026-10-02,
+  le premier candidat renvoyé était un **autre épisode déjà importé**, et le
+  `ManualImport` l'a hardlinké sur l'épisode cible (S03E03 posé en S03E07),
+  puis a planté (`NullReferenceException`) en laissant ce mauvais import en
+  place. Toujours vérifier que `candidat.path` est bien le fichier téléchargé
+  avant le POST.
+  Un téléchargement non suivi par Sonarr (ajouté à la main dans Transmission,
+  parce que `POST /release` renvoie 404 « Unable to find matching series and
+  episodes » sur une numérotation absolue) s'importe par
+  `manualimport?folder=<chemin du fichier>`.
   Outillé par `scripts/manual-import.py` (`list`/`apply`/`assign`) et le skill
   `.claude/skills/manual-import/SKILL.md`. Le script **sépare quatre familles
   et n'en importe qu'une** — celle sans rejet ni ambiguïté : une cible devinée
