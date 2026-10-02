@@ -132,6 +132,19 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   pour une BD : l'absence de correspondance y est la normale, l'annoncer
   ferait croire à un problème à chaque suppression.
   **La TUI n'a pas bougé**, comme les autres ajouts récents.
+- **Onglets masqués quand leur service est arrêté** (2026-10-02,
+  `webapp.TAB_SERVICES` + `core.service_running`, global Jinja `tab_visible`
+  dans `_tabs.html`) : BD → Komga, Séries/Animés → Sonarr, Films → Radarr.
+  Seule l'entrée de la barre disparaît, les routes `/tab/...` restent servies.
+  Sondes : `/ping` des Servarr (sans auth). **Komga est sondé À TRAVERS
+  Traefik** (`https://traefik:8443/actuator/health`, `Host: komga.${DOMAIN}`,
+  certificat non vérifié) : aucun réseau commun avec clearr, et il ne faut pas
+  en créer un, puisque Komga est exposé au WAN et pourrait alors joindre
+  clearr, qui n'a pas d'authentification (arbitré le 2026-10-02, réseau dédié
+  écarté). Stack arrêtée = routeur retiré = 404. Le corps `{"status":"UP"}`
+  est vérifié, pas seulement le code. Cache de 30 s par service, parce que
+  la barre est rendue à chaque clic. Un nom de conteneur absent échoue en
+  ~10 ms, donc les sondes restent séquentielles.
 - **Texte d'exception échappé** (`html.escape`) dans les deux handlers
   d'erreur HTML : le fragment part dans un `innerHTML` (`clearr.js`).
 - **Erreur réseau rendue en bandeau lisible**

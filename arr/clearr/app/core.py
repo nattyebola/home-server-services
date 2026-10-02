@@ -32,9 +32,11 @@
 # seeder. Supprimer un enfant seul ne touche ni au parent ni aux autres
 # cross-seeds.
 import hashlib
+import http.client
 import json
 import logging
 import os
+import ssl
 import time
 import urllib.error
 import urllib.parse
@@ -95,6 +97,16 @@ RADARR_API_KEY = os.environ.get("RADARR_API_KEY")
 
 SONARR_URL = "http://sonarr:8989"
 SONARR_API_KEY = os.environ.get("SONARR_API_KEY")
+
+# Komga n'a AUCUN réseau en commun avec clearr, et ne doit pas en avoir : il
+# est exposé au WAN, et clearr supprime des fichiers sans authentification
+# (même raisonnement que le retrait de traefik-public, voir arr/docker-compose.yml).
+# On le sonde donc à travers Traefik, joint sur traefik-restricted : routage par
+# l'en-tête Host, certificat non vérifié (SNI = « traefik », aucun certificat
+# ne peut correspondre). Stack arrêtée = routeur retiré par le provider docker
+# = 404, distinct du 200 {"status":"UP"} de /actuator/health.
+TRAEFIK_HTTPS = ("traefik", 8443)
+KOMGA_HEALTH_PATH = "/actuator/health"
 
 # Un seul fichier de log, pensé pour du debug/maintenance a posteriori : DEBUG
 # = détail RPC/lookups (utile pour comprendre un comportement inattendu),
@@ -1011,6 +1023,60 @@ def is_bd_torrent(torrent):
         # torrent_host_files() : on l'ignore plutôt que de lever.
         return False
     return host_dir == BD_ROOT or host_dir.startswith(BD_ROOT + os.sep)
+
+
+# --- disponibilité des services derrière les onglets web ---
+
+def _probe_arr(base_url):
+    """/ping des Servarr : servi sans authentification, comme la sonde du
+    healthcheck et du dashboard. Conteneur arrêté = nom introuvable (~10 ms)."""
+    try:
+        return json.loads(_http_json("GET", base_url + "/ping", timeout=2)).get("status") == "OK"
+    except (urllib.error.URLError, OSError, ValueError, AttributeError):
+        return False
+
+
+def _probe_komga():
+    """Voir TRAEFIK_HTTPS : on lit le corps, pas seulement le code, pour qu'une
+    page d'erreur servie en 200 ne passe pas pour un Komga vivant."""
+    if not DOMAIN:
+        return False
+    conn = http.client.HTTPSConnection(*TRAEFIK_HTTPS, timeout=2,
+                                       context=ssl._create_unverified_context())
+    try:
+        conn.request("GET", KOMGA_HEALTH_PATH, headers={"Host": f"komga.{DOMAIN}"})
+        resp = conn.getresponse()
+        return resp.status == 200 and json.loads(resp.read()).get("status") == "UP"
+    except (OSError, http.client.HTTPException, ValueError, AttributeError):
+        return False
+    finally:
+        conn.close()
+
+
+SERVICE_PROBES = {
+    "sonarr": lambda: _probe_arr(SONARR_URL),
+    "radarr": lambda: _probe_arr(RADARR_URL),
+    "komga": _probe_komga,
+}
+# La barre d'onglets est rendue à CHAQUE changement d'onglet : sans cache,
+# chaque clic coûterait trois allers-retours. 30 s = délai max avant qu'un
+# onglet apparaisse ou disparaisse après un `make up`/`make down`.
+SERVICE_STATUS_TTL = 30
+_service_status_cache = {}
+
+
+def service_running(name):
+    """Le service qui alimente un onglet web répond-il ? Mis en cache
+    SERVICE_STATUS_TTL secondes, par service."""
+    now = time.monotonic()
+    cached = _service_status_cache.get(name)
+    if cached and now - cached[1] < SERVICE_STATUS_TTL:
+        return cached[0]
+    up = SERVICE_PROBES[name]()
+    if not up:
+        logger.debug("service %s injoignable, onglet masqué", name)
+    _service_status_cache[name] = (up, now)
+    return up
 
 
 def is_seeding(torrent):

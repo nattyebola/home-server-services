@@ -58,6 +58,11 @@ flowchart TD
 | **Séries** / **Animés** | la liste Sonarr, séparée par le type de série Sonarr (`anime` ou non) |
 | **Films** | la liste Radarr |
 
+Un onglet **n'apparaît que si son service répond** : BD → Komga, Séries et
+Animés → Sonarr, Films → Radarr. Torrents est toujours là. L'état est
+revérifié toutes les 30 s au plus : après un `make up` ou un `make down`,
+l'onglet peut mettre ce temps à apparaître ou à disparaître.
+
 Dans Séries, Animés et Films, un titre se supprime **en entier** (tous ses
 torrents, y compris ceux grabés mais jamais importés, plus les fichiers
 restants). Les titres sans fichier sont masqués par défaut, un interrupteur
@@ -97,6 +102,7 @@ les affiche.
 | Bandeau rouge « action(s) Sonarr/Radarr ont ÉCHOUÉ » après une suppression | l'arr n'a pas répondu : fichiers partis, titre peut-être encore suivi | retirer le titre (ou désactiver la saison) à la main dans Sonarr/Radarr, sinon il revient |
 | Un torrent en cours de téléchargement marqué ABS (avant le 2026-09-29) | clearr ne cherchait ses fichiers que sous `completed/` | corrigé : `incomplete/` (et les `.part`) compte aussi |
 | « Purge refusée » sur les ABS | données Transmission non montées | vérifier le disque et le montage, puis `make restart STACK=arr` |
+| Onglet BD, Séries, Animés ou Films absent | son service (Komga, Sonarr, Radarr) ne répond pas, ou vient de démarrer (cache de 30 s) | `docker ps` ; attendre 30 s et recharger. Pour Komga, la sonde passe par Traefik : Traefik arrêté masque aussi BD |
 | Un pack de films emporte d'autres films | un torrent = un seul lot de fichiers | la confirmation (web et Kodi ≥ 1.1.1) liste les autres titres touchés |
 
 ## Tests

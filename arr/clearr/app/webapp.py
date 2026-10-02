@@ -22,6 +22,22 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(APP_DIR, "static")
 templates = Jinja2Templates(directory=os.path.join(APP_DIR, "templates"))
 
+# Onglet -> service qui l'alimente. Un onglet dont le service ne répond pas
+# disparaît de la barre (_tabs.html) au lieu d'afficher un bandeau d'erreur
+# à chaque clic. BD ne LIT rien dans Komga (c'est un filtre de la liste
+# Transmission), mais sans Komga ces BD ne sont lisibles nulle part. Torrents,
+# absent d'ici, est toujours affiché. Les routes /tab/... restent servies :
+# on ne masque que l'entrée.
+TAB_SERVICES = {"bd": "komga", "series": "sonarr", "animes": "sonarr", "films": "radarr"}
+
+
+def tab_visible(tab):
+    service = TAB_SERVICES.get(tab)
+    return service is None or core.service_running(service)
+
+
+templates.env.globals["tab_visible"] = tab_visible
+
 app = FastAPI(title="clearr")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
