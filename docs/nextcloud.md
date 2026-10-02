@@ -43,11 +43,17 @@ le crontab de l'hôte toutes les 5 minutes.
 
 Rafraîchis par le job interne de News (`OCA\News\Cron\UpdaterJob`, toutes
 les heures), exécuté par `cron.php`. Vérifier :
-`occ news:updater:job` (date du dernier passage).
+`occ news:updater:job` (date du dernier passage) — attention, cette date
+avance même quand le job ne fait rien (voir pièges).
 
 Il n'y a plus de conteneur `news-updater` (retiré le 2026-09-29) : l'image
 `kr3ssh/nextcloud-news-updater` n'avait pas bougé depuis 7 ans, échouait en
 boucle (404/504), et doublait le job interne.
+
+> [!WARNING]
+> Le job interne ne fait rien si `useCronUpdates` est faux, réglage qu'un
+> updater externe impose. Il doit valoir `1` :
+> `occ config:app:get news useCronUpdates`.
 
 ## Pièges connus
 
@@ -67,6 +73,12 @@ boucle (404/504), et doublait le job interne.
 - **Une mise à jour majeure peut désactiver une app** dont `max-version` est
   dépassée (vécu avec News en passant à NC 35). Vérifier
   `occ app:list` après chaque saut de version majeure.
+- **Plus aucun article dans News, sans erreur** : `useCronUpdates` resté à
+  faux (hérité de l'ancien `news-updater`, vécu du 2026-09-29 au
+  2026-10-02). `UpdaterJob` passe chaque heure, met sa date à jour, mais sort
+  aussitôt (durée 0 dans `occ background-job:list`). Fix :
+  `occ config:app:set news useCronUpdates --value=true --type=boolean`
+  (confirmer par `yes`).
 - **`admin_audit` est désactivée** : elle suit le `loglevel` global (à 2) et
   jetait donc ses événements. Ne la réactiver qu'avec un `log.condition`
   dédié.
