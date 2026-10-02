@@ -68,6 +68,10 @@ services:
       - TRANSMISSION_PEER_LIMIT_GLOBAL=1000
       - TRANSMISSION_PEER_LIMIT_PER_TORRENT=100
       - TRANSMISSION_UPLOAD_SLOTS_PER_TORRENT=14
+      # 10 et pas le défaut 5 : un magnet qui ne trouve pas ses métadonnées
+      # occupe une place sans rien télécharger, et 3 bloqués suffisaient à
+      # geler la file (2026-10-02).
+      - TRANSMISSION_DOWNLOAD_QUEUE_SIZE=10
       # Transmission 4 marque par défaut ses paquets en DSCP "le" (Lower Effort,
       # RFC 8622) : une classe explicitement "à jeter en premier en cas de
       # congestion", que le réseau du fournisseur VPN comme celui du FAI peuvent

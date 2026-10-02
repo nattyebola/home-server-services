@@ -66,6 +66,9 @@ flowchart LR
   `vpn-internal`. `transmission-proxy` ne sert qu'à l'accès humain.
 - **`webproxy`** expose le Privoxy de l'image pour qu'un navigateur du LAN
   sorte par l'IP du tunnel (contourner un blocage géographique).
+- **10 téléchargements simultanés** (`TRANSMISSION_DOWNLOAD_QUEUE_SIZE`, défaut
+  5). Un magnet qui ne trouve pas ses métadonnées garde sa place sans rien
+  télécharger : à 5, trois magnets bloqués suffisaient à geler toute la file.
 
 > [!CAUTION]
 > Privoxy **n'a aucune authentification**. Le port est lié à l'IP LAN de
