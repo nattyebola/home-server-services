@@ -17,7 +17,10 @@ services:
       # comme maximum, soit ~7,5 Go ici pour un service qui n'en a pas besoin.
       # À relever si le scan d'un .cbz très lourd finit en OutOfMemoryError —
       # les tomes font couramment 400 Mo.
-      JAVA_TOOL_OPTIONS: "-Xmx1g"
+      # Le reste rend au système la heap inutilisée : G1 ne la libère sinon
+      # jamais, et Komga restait à ~870 Mo au repos. Un GC périodique (60 s)
+      # ne garde que 10-30 % de marge libre après chaque cycle.
+      JAVA_TOOL_OPTIONS: "-Xmx1g -XX:G1PeriodicGCInterval=60000 -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30"
     volumes:
       - ${DATA_ROOT}/.komga/config:/config
       # LECTURE SEULE, et ce n'est pas une précaution de confort : les fichiers

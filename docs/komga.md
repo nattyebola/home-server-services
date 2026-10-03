@@ -82,4 +82,5 @@ pouvoir lire, pas d'avoir un rayonnage impeccable.**
   Komga **ne verrouille aucun compte** après des échecs : le `rate-limit` de
   Traefik est le seul frein à la force brute.
 - JVM plafonnée à 1 Go (`-Xmx1g`) ; à relever en cas d'`OutOfMemoryError` sur
-  un très gros `.cbz`.
+  un très gros `.cbz`. Au repos, la JVM rend la mémoire inutilisée au
+  système (GC périodique toutes les 60 s).

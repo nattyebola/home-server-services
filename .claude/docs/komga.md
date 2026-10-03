@@ -270,7 +270,10 @@ croyant n'y perdre que des vignettes.
   au démarrage).
 - **`JAVA_TOOL_OPTIONS: -Xmx1g`** : sans plafond la JVM prend 25 % de la RAM de
   l'hôte comme maximum. À relever si le scan d'un `.cbz` très lourd finit en
-  `OutOfMemoryError` — les tomes font couramment 400 Mo.
+  `OutOfMemoryError` — les tomes font couramment 400 Mo. **Ne pas baisser
+  `-Xmx` pour gagner de la RAM** (2026-10-03) : ce qui coûtait, c'est la heap
+  que G1 ne rend jamais (~870 Mo au repos). `-XX:G1PeriodicGCInterval=60000`
+  + `Min/MaxHeapFreeRatio=10/30` la rendent au système sans toucher au plafond.
 - **Exposé au WAN** (`rate-limit@docker,security-headers@docker,hsts@docker`,
   même chaîne que jellyfin et seerr), décidé le 2026-09-22 après audit de la
   `SecurityConfiguration` de Komga. Il n'est donc PAS concerné par
