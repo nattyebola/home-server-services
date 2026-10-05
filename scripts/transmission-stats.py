@@ -56,6 +56,9 @@ DATA_ROOT = load_env_file(os.path.join(REPO_ROOT, ".env.shared")).get("DATA_ROOT
 HISTORY_PATH = os.path.join(DATA_ROOT, ".transmission-stats-history.jsonl") if DATA_ROOT else None
 LIBRARY_ROOT = os.path.join(DATA_ROOT, "library") if DATA_ROOT else None
 TRANSMISSION_DATA_ROOT = os.path.join(DATA_ROOT, ".transmission", "data") if DATA_ROOT else None
+# Téléchargements en cours (TRANSMISSION_INCOMPLETE_DIR de
+# vpn/docker-compose.yml) : voir has_partial_files.
+INCOMPLETE_ROOT = os.path.join(TRANSMISSION_DATA_ROOT, "incomplete") if DATA_ROOT else None
 
 
 def parse_tracker_aliases(raw):
@@ -371,7 +374,21 @@ def analyze_torrent_files(torrent, library_index):
         any_exists = True
         if (st.st_dev, st.st_ino) in library_index:
             linked = True
-    return linked, not any_exists
+    return linked, not any_exists and not has_partial_files(torrent)
+
+
+def has_partial_files(torrent):
+    """Même test que arr/clearr/app/core.py (has_partial_files) : un
+    téléchargement en cours n'a rien sous son downloadDir, Transmission écrit
+    dans incomplete/ (en `.part`) et ne déplace qu'à la fin. Sans ce contrôle,
+    tout torrent en cours sortait « Absent »."""
+    if not INCOMPLETE_ROOT:
+        return False
+    for f in torrent.get("files", []):
+        path = os.path.join(INCOMPLETE_ROOT, f["name"])
+        if os.path.lexists(path) or os.path.lexists(path + ".part"):
+            return True
+    return False
 
 
 def main():

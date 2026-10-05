@@ -468,7 +468,11 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   `vpn/docker-compose.yml` : à changer ensemble. Contrôle fait seulement pour
   un torrent déjà sans fichier sous son downloadDir, donc aucun stat de plus
   sur les autres ; pas un critère `percentDone` (un torrent arrêté à 99,9 %
-  dont les données ont disparu doit rester ABS).
+  dont les données ont disparu doit rester ABS). **Dupliqué dans
+  `scripts/transmission-stats.py`** (carte « Absents » du dashboard) : porté
+  là-bas seulement le 2026-10-05, le dashboard comptait entre-temps chaque
+  téléchargement en cours comme absent. Tout changement du critère ABS se fait
+  des deux côtés.
 - TUI seulement : marqueur `'M'` pour un torrent dont le fichier a disparu
   (cas Transmission « No data found! », jamais nettoyé tout seul) +
   `Maj+P` pour les purger en masse (refusé, comme « Purger les ABS » du web,
