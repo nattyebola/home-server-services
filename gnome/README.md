@@ -74,6 +74,17 @@ seule ligne, sans les `\`). Le raccourci relit d'abord l'état des appareils
 majorité et l'annonce par une bulle à l'écran (comme le volume) : ~2 s au
 total, 1 + 2×N requêtes. Un appui pendant une bascule en cours est ignoré.
 
+Raccourci posé ici : **Ctrl+Alt+G** (Ctrl+lettre seul volerait la touche à
+toutes les applications). Bouton de télécommande : dans input-remapper, la
+sortie d'une combinaison est une **macro**, pas `Control_L + Alt_L + g` ;
+sortie vide = bouton muet. Pour la touche Menu (`XF86MenuKB`) de la MeLE :
+
+```
+modify(Control_L, modify(Alt_L, key(g)))
+```
+
+Save **puis Apply** : l'injection reste arrêtée pendant l'édition du preset.
+
 | Situation | Bulle |
 |---|---|
 | Majorité éteinte | « Tout allumer » |
