@@ -6,6 +6,18 @@ score de profil, cross-seed ou Seerr.
 
 ## Sonarr / Radarr / Prowlarr
 
+- **Sonarr/Radarr recréés à `00:00:01`** (vu le 2026-10-04 et le 2026-10-06) :
+  pas une panne. `arr/.env` modifié dans la journée + `make restart` (qui ne
+  recrée pas) → le `compose run recyclarr` de minuit, qui démarre ses
+  dépendances depuis `4822794`, recrée les deux. Preuve : `Recreate` dans
+  `arr/recyclarr-sync.log`. Ne pas comparer `docker compose config --hash` au
+  label `com.docker.compose.config-hash` pour prédire une recréation : les
+  deux ne se calculent pas pareil (faux positif le 2026-10-06) ; utiliser
+  `up --dry-run`. Depuis le 2026-10-06, Sonarr/Radarr n'ont plus
+  d'`env_file` : seule `CROSSSEED_API_KEY` (`cross-seed-notify.sh`) leur est
+  passée, ce qui retire aussi les passkeys de trackers de leur environnement.
+  Une nouvelle variable utile à un Custom Script s'ajoute à leur
+  `environment:`, pas en remettant l'`env_file`.
 - **Une release peut être une archive ou un exécutable, et le titre ne le dit
   pas.** Deux cas rencontrés, un `.exe` puis `Ted Lasso S04E06 …Atmos.zipx` le
   2026-09-07 (1,1 Go, vrai ZIP — magic `PK\x03\x04`), tous deux grabés sur

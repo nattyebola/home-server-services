@@ -41,6 +41,7 @@ touchent toutes les stacks.
 | Plus de nouveaux articles dans **Nextcloud News**, aucune erreur | `useCronUpdates` à faux : le job horaire sort sans rien faire | [Nextcloud](nextcloud.md#pièges-connus) |
 | Avertissements de sécurité dans l'admin Nextcloud | `security-headers` remis sur son routeur | [Nextcloud](nextcloud.md#pièges-connus) |
 | Une tâche cron « réussit » à la main mais pas sous cron | `%` non échappé | [Exploitation](exploitation.md#tâches-planifiées) |
+| Sonarr/Radarr **recréés à minuit**, ou un `.env` modifié « pas pris » | `make restart` ne recrée pas ; la commande compose suivante (le cron recyclarr) le fait | [plus bas](#env-modifié-conteneur-recréé--tout-seul--plus-tard) |
 | Un réglage arr corrigé « déjà à jour » alors qu'il a dérivé | écriture Servarr asynchrone (`202`) | [Téléchargement](telechargement.md#pièges-connus-1) |
 
 ## Pièges Docker transverses
@@ -53,6 +54,23 @@ script), le conteneur continue de lire l'ancien, alors que `docker inspect`
 montre le bon chemin. **`make restart STACK=…`** suffit. Quand un fichier
 doit pouvoir être remplacé à chaud, monter son **dossier** (c'est le cas de
 `traefik/dynamic/`).
+
+### `.env` modifié, conteneur recréé « tout seul » plus tard
+
+`make restart` redémarre un conteneur **sans le recréer** : il garde
+l'environnement de sa création. Une valeur modifiée dans un `.env` de stack
+n'est donc pas appliquée. La première commande compose qui touche ensuite
+ce service voit l'écart et le recrée. Pour Sonarr et Radarr, c'est souvent
+le `make recyclarr-sync` de minuit (recyclarr dépend d'eux) : recréés à
+`00:00:01`, `Recreate` dans `arr/recyclarr-sync.log`. Rien de cassé, la
+config en attente s'applique.
+
+> [!TIP]
+> Après avoir modifié un `.env` : `make up STACK=…`, pas `make restart`.
+
+Sonarr et Radarr ne lisent plus `arr/.env` en entier (2026-10-06) : seule
+`CROSSSEED_API_KEY` leur est passée. Une édition des passkeys d'indexeurs
+ne les touche donc plus.
 
 ### Pas de montage sous un parent en lecture seule
 

@@ -84,8 +84,12 @@ services:
       # référencés par les Connections Custom Script (scripts/provision.py).
       - ./scripts:/custom-scripts:ro
       - /etc/localtime:/etc/localtime:ro
-    env_file:
-      - .env
+    # Seule variable d'arr/.env dont Sonarr a besoin (scripts/cross-seed-notify.sh),
+    # pas d'`env_file` : il exposerait toutes les passkeys de trackers au
+    # conteneur, et toute édition d'arr/.env ferait recréer Sonarr à la
+    # prochaine commande compose (le `run recyclarr` de minuit), voir CLAUDE.md.
+    environment:
+      CROSSSEED_API_KEY: ${CROSSSEED_API_KEY}
     networks:
       - default
       - traefik-public
@@ -141,8 +145,9 @@ services:
       # même raison que sonarr : le dossier, pas le fichier.
       - ./scripts:/custom-scripts:ro
       - /etc/localtime:/etc/localtime:ro
-    env_file:
-      - .env
+    # même raison que sonarr : seule la clé du webhook cross-seed.
+    environment:
+      CROSSSEED_API_KEY: ${CROSSSEED_API_KEY}
     networks:
       - default
       - traefik-public

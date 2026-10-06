@@ -156,6 +156,9 @@ dépend d'un ordonnanceur, d'une file d'attente ou d'un échappement.
   = conteneur figé sur l'ancien contenu. `make restart`, et monter le dossier
   quand le fichier doit changer à chaud. Vérifier ça avant de conclure qu'une
   config « n'a pas pris ».
+- **`.env` modifié = `make up`, pas `make restart`** (qui ne recrée pas) :
+  sinon la commande compose suivante recrée le service, souvent le cron
+  recyclarr de minuit pour Sonarr/Radarr.
 - **`cap_drop: ALL` retire `CAP_DAC_OVERRIDE`** : secret `600` illisible
   (« introuvable »). Fix : `user: "${PUID}:${PGID}"`, jamais élargir les
   permissions ni le `cap_drop`.
