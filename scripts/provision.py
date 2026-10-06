@@ -880,13 +880,16 @@ def provision_seerr(shared, arr_env, done, skipped):
             done.append(f"Seerr : {len(enable)} bibliothèque(s) Jellyfin activée(s)")
             changed = True
 
+    # minimumAvailability "inCinemas" et pas "released" : TMDb renseigne mal la
+    # sortie numérique des films français, Radarr attendait la sortie physique
+    # alors que la WEB circulait déjà. Les CAM/TS sont rejetés par le profil.
     for name, payload in (
         ("radarr", {
             "name": "radarr", "hostname": "radarr", "port": 7878,
             "apiKey": arr_env.get("RADARR_API_KEY"), "useSsl": False, "baseUrl": "",
             "activeProfileName": SEERR_RADARR_PROFILE,
             "activeDirectory": ARR_ROOT_FOLDERS["radarr"][0],
-            "is4k": False, "minimumAvailability": "released", "tags": [],
+            "is4k": False, "minimumAvailability": "inCinemas", "tags": [],
             "isDefault": True, "syncEnabled": True, "preventSearch": False,
             "tagRequests": False,
         }),
