@@ -9,6 +9,15 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 import {GoveeCloud, GoveeError, isCancelled} from './govee.js';
 
+// Appelée par le raccourci clavier (Paramètres → Clavier → raccourci perso) :
+// gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell/Extensions/Govee --method org.gnome.Shell.Extensions.Govee.ToggleAll
+const DBUS_PATH = '/org/gnome/Shell/Extensions/Govee';
+const DBUS_IFACE = `<node>
+  <interface name="org.gnome.Shell.Extensions.Govee">
+    <method name="ToggleAll"/>
+  </interface>
+</node>`;
+
 // PopupSwitchMenuItem ferme le menu à chaque bascule (sauf à la touche Espace) :
 // on bascule sans remonter jusqu'à PopupBaseMenuItem.activate(), qui émet le
 // signal `activate` sur lequel le menu se referme. Échap le ferme toujours.
@@ -34,8 +43,19 @@ class GoveeIndicator extends PanelMenu.Button {
         this._devices = []; // [{sku, device, name, on, online, item, clicks}]
         this._error = null;
         this._loaded = false;
-        this._refreshing = false;
         this._syncing = false;
+        this._refreshing = null; // promesse du rafraîchissement en cours
+        this._switchingAll = false;
+        this._shortcutBusy = false;
+
+        // Interrupteur global, hors de _section : _rebuild() ne le recrée pas.
+        this._allItem = new StickySwitchMenuItem('Tout', false);
+        this._allItem.connect('toggled', (_item, state) => {
+            if (!this._syncing)
+                this._switchAll(state);
+        });
+        this.menu.addMenuItem(this._allItem);
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
         this._section = new PopupMenu.PopupMenuSection();
         this.menu.addMenuItem(this._section);
@@ -48,12 +68,18 @@ class GoveeIndicator extends PanelMenu.Button {
         this._refresh();
     }
 
+    // Un appel pendant un rafraîchissement attend celui-ci au lieu d'en lancer
+    // un second : le raccourci a besoin de l'état à jour avant de basculer.
+    _refresh() {
+        this._refreshing ??= this._doRefresh().finally(() => {
+            this._refreshing = null;
+        });
+        return this._refreshing;
+    }
+
     // Le menu garde la dernière liste connue pendant la requête, pour ne pas
     // s'ouvrir vide ; il n'est reconstruit que si la liste ou l'erreur change.
-    async _refresh() {
-        if (this._refreshing)
-            return;
-        this._refreshing = true;
+    async _doRefresh() {
         try {
             const list = await this._api.devices();
             const ids = devs => devs.map(d => `${d.device}|${d.name}`).sort().join();
@@ -91,8 +117,6 @@ class GoveeIndicator extends PanelMenu.Button {
                 logError(e, 'govee: rafraîchissement');
             this._error = e.message;
             this._rebuild();
-        } finally {
-            this._refreshing = false;
         }
     }
 
@@ -119,13 +143,35 @@ class GoveeIndicator extends PanelMenu.Button {
             this._section.addMenuItem(d.item);
             this._sync(d);
         }
-        this._updateIcon();
+        this._updateSummary();
     }
 
-    // Ampoule pleine dès qu'au moins un appareil joignable est allumé.
-    _updateIcon() {
+    // Majorité des appareils joignables ; une égalité compte comme allumé.
+    _majorityOn() {
+        const online = this._devices.filter(d => d.online);
+        return online.length > 0 && 2 * online.filter(d => d.on).length >= online.length;
+    }
+
+    // Ampoule pleine dès qu'au moins un appareil joignable est allumé ;
+    // interrupteur global sur l'état majoritaire.
+    _updateSummary() {
         const anyOn = this._devices.some(d => d.online && d.on);
         this._icon.gicon = anyOn ? this._iconOn : this._iconOff;
+        this._allItem.setSensitive(this._devices.some(d => d.online));
+        // Pendant une bascule globale, chaque réponse ferait osciller
+        // l'interrupteur global au gré de la majorité intermédiaire.
+        if (!this._switchingAll)
+            this._setSwitch(this._allItem, this._majorityOn());
+    }
+
+    // setToggleState() émet `toggled` : le garde évite de renvoyer une commande.
+    _setSwitch(item, on) {
+        this._syncing = true;
+        try {
+            item.setToggleState(on);
+        } finally {
+            this._syncing = false;
+        }
     }
 
     _addInfo(text) {
@@ -137,31 +183,87 @@ class GoveeIndicator extends PanelMenu.Button {
         // dont l'item a été détruit par _rebuild().
         if (!d.item || !this._devices.includes(d))
             return;
-        this._syncing = true;
-        try {
-            d.item.setToggleState(d.on);
-        } finally {
-            this._syncing = false;
-        }
+        this._setSwitch(d.item, d.on);
         d.item.setSensitive(d.online);
-        this._updateIcon();
+        this._updateSummary();
         d.item.label.text = d.online ? d.name : `${d.name} (hors ligne)`;
     }
 
-    async _toggle(d, on) {
+    // Renvoie le message d'erreur, null si la commande est passée.
+    async _toggle(d, on, {notify = true} = {}) {
         console.log(`govee: clic ${d.name} (${d.sku}) -> ${on ? 'on' : 'off'}`);
         d.clicks++;
+        let error = null;
         try {
             await this._api.turn(d, on);
             d.on = on;
         } catch (e) {
             if (isCancelled(e))
-                return;
+                return null;
             logError(e, `govee: bascule de ${d.name}`);
-            Main.notifyError(`Govee : ${d.name}`, e.message);
+            error = e.message;
+            if (notify)
+                Main.notifyError(`Govee : ${d.name}`, error);
         }
         // En cas d'échec, remet l'interrupteur sur l'état réel.
         this._sync(d);
+        return error;
+    }
+
+    // Commande envoyée à tous les appareils joignables, même ceux déjà dans
+    // l'état voulu : hors menu ouvert, l'état connu peut dater. Une seule
+    // notification pour l'ensemble des échecs.
+    async _switchAll(on) {
+        if (this._switchingAll)
+            return;
+        this._switchingAll = true;
+        const targets = this._devices.filter(d => d.online);
+        console.log(`govee: clic tout -> ${on ? 'on' : 'off'} (${targets.length} appareils)`);
+        let failed;
+        try {
+            for (const d of targets)
+                this._setSwitch(d.item, on);
+            const errors = await Promise.all(targets.map(d => this._toggle(d, on, {notify: false})));
+            failed = targets.map((d, i) => errors[i] && `${d.name} : ${errors[i]}`).filter(Boolean);
+        } finally {
+            this._switchingAll = false;
+        }
+        this._updateSummary();
+        if (failed.length > 0)
+            Main.notifyError('Govee', failed.join('\n'));
+    }
+
+    // Raccourci clavier : relit l'état (le menu est fermé, il peut dater),
+    // puis bascule vers l'inverse de la majorité. Un appui pendant qu'une
+    // bascule est en cours est ignoré.
+    async toggleAllFromShortcut() {
+        if (this._shortcutBusy)
+            return;
+        this._shortcutBusy = true;
+        try {
+            await this._refresh();
+            if (!this._devices.some(d => d.online)) {
+                this._osd(this._iconOff, this._error ?? 'Aucun appareil joignable');
+                return;
+            }
+            const on = !this._majorityOn();
+            this._osd(on ? this._iconOn : this._iconOff, on ? 'Tout allumer' : 'Tout éteindre');
+            await this._switchAll(on);
+        } catch (e) {
+            logError(e, 'govee: raccourci');
+        } finally {
+            this._shortcutBusy = false;
+        }
+    }
+
+    // Retour visuel du raccourci, menu fermé (même bulle que le volume).
+    // API interne de GNOME Shell : un échec ne doit pas empêcher la bascule.
+    _osd(icon, label) {
+        try {
+            Main.osdWindowManager.showAll(icon, label);
+        } catch (e) {
+            logError(e, 'govee: bulle OSD');
+        }
     }
 
     destroy() {
@@ -174,9 +276,20 @@ export default class GoveeExtension extends Extension {
     enable() {
         this._indicator = new GoveeIndicator(this);
         Main.panel.addToStatusArea(this.uuid, this._indicator);
+
+        // Pas de valeur de retour : gdbus rend la main tout de suite, la
+        // bascule se poursuit en arrière-plan.
+        this._dbus = Gio.DBusExportedObject.wrapJSObject(DBUS_IFACE, {
+            ToggleAll: () => {
+                this._indicator.toggleAllFromShortcut();
+            },
+        });
+        this._dbus.export(Gio.DBus.session, DBUS_PATH);
     }
 
     disable() {
+        this._dbus?.unexport();
+        this._dbus = null;
         this._indicator?.destroy();
         this._indicator = null;
     }

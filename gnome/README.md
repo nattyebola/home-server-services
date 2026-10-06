@@ -52,9 +52,41 @@ session (Wayland) — désactiver/réactiver ne recharge pas les modules JS.
   est ignoré (compteur `clicks` par appareil), sinon l'interrupteur et
   l'ampoule revenaient sur l'ancienne position.
 
+## Interrupteur global et raccourci clavier
+
+En tête du menu, **« Tout »** allume ou éteint tous les appareils joignables
+d'un coup. Sa position suit la **majorité** des appareils joignables ; une
+égalité compte comme allumé (un appui éteint alors tout). La commande part
+vers chaque appareil, même ceux déjà dans l'état voulu, en parallèle.
+
+Le même basculement est exposé en **D-Bus**, pour un raccourci clavier ou une
+touche de télécommande :
+
+```
+gdbus call --session --dest org.gnome.Shell \
+  --object-path /org/gnome/Shell/Extensions/Govee \
+  --method org.gnome.Shell.Extensions.Govee.ToggleAll
+```
+
+À poser dans Paramètres → Clavier → Raccourcis personnalisés (commande sur une
+seule ligne, sans les `\`). Le raccourci relit d'abord l'état des appareils
+(le menu est fermé, l'état connu peut dater), bascule vers l'inverse de la
+majorité et l'annonce par une bulle à l'écran (comme le volume) : ~2 s au
+total, 1 + 2×N requêtes. Un appui pendant une bascule en cours est ignoré.
+
+| Situation | Bulle |
+|---|---|
+| Majorité éteinte | « Tout allumer » |
+| Majorité allumée ou égalité | « Tout éteindre » |
+| Aucun appareil joignable / clé absente | message d'erreur |
+
+> [!NOTE]
+> Toute application de la session peut appeler cette méthode. C'est le même
+> niveau d'accès que la clé API dans le trousseau : rien de plus exposé.
+
 Diagnostic : `journalctl --user -f | grep govee:` — une ligne par clic et par
 requête API (code HTTP, durée). Un clic doit donner exactement une ligne
-`POST /device/control` ; plusieurs, c'est la boucle `setToggleState` → `toggled`
+`POST /device/control` (une par appareil joignable pour « Tout ») ; plusieurs, c'est la boucle `setToggleState` → `toggled`
 qui revient (voir plus bas).
 
 ## Montée de version de GNOME Shell
@@ -77,7 +109,10 @@ Pour la remettre en service :
    - **le garde `_syncing`** existe parce qu'en GNOME 50 `setToggleState()`
      émet `toggled`. Sans lui, chaque resynchro depuis l'API renvoie une
      commande, et un 429 fait basculer l'appareil en boucle. Si GNOME cesse
-     d'émettre ce signal, le garde devient inutile mais inoffensif.
+     d'émettre ce signal, le garde devient inutile mais inoffensif ;
+   - **`Main.osdWindowManager.showAll()`** (bulle du raccourci), interne
+     lui aussi : si elle casse, le raccourci bascule quand même, sans bulle,
+     avec une erreur `govee: bulle OSD` dans les logs.
 
 `govee.js` ne dépend que de libsoup 3 et libsecret, stables d'une version à
 l'autre.
