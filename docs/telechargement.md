@@ -179,6 +179,11 @@ folders, tags…) peut être ajusté librement dans les UI.
   se purge via le skill `manual-import`.
 - **Fichiers posés en vrac** à la racine d'un dossier scanné : ignorés sans
   log. Utiliser *Manual Import*.
+- **Un import manuel par l'API sans `downloadId` déplace le fichier** au lieu
+  de le hardlinker : le torrent perd ses données et passe ABS dans clearr.
+  Hors file d'attente, passer `"importMode": "hardlink"`. Pour réparer :
+  `ln` du fichier de `library/` vers son ancien chemin sous `completed/`, puis
+  vérifier le torrent dans Transmission.
 - **Écritures asynchrones** : certaines écritures de config Servarr répondent
   `202 Accepted` et s'appliquent plus tard (observé de 0,5 s à 53 s). Un
   « lire → comparer » juste derrière voit encore l'ancienne valeur.

@@ -15,6 +15,7 @@ touchent toutes les stacks.
 | Un titre « manquant » depuis des semaines | Sonarr/Radarr ne re-cherchent jamais seuls ; ou il est bloqué dans la file | [Téléchargement](telechargement.md#ce-que-le-dépôt-configure) |
 | Imports **en copie** au lieu de hardlinks, disque qui se remplit | deux bind-mounts séparés, ou `library/` sur un autre disque | [Téléchargement](telechargement.md#hardlinks--un-fichier-deux-chemins) |
 | Le **même torrent regrabé** en boucle | custom format qui matche le titre du post mais pas le nom de fichier | [Téléchargement](telechargement.md#pièges-connus-1) |
+| Torrent **ABS** dans clearr juste après un import manuel | `ManualImport` sans `downloadId` : fichier déplacé, pas hardlinké | [Téléchargement](telechargement.md#pièges-connus-1) |
 | Recherches cross-seed toujours à `Found 0 torrents` | ID d'indexeur obsolète dans `CROSS_SEED_INDEXER_IDS` | [Téléchargement](telechargement.md#cross-seed) |
 | Indexeur en `429` / « API Request Limit reached » | souvent le backoff d'échec de Prowlarr, pas un quota | skill `indexer-quota` |
 | Plus de DNS ni de ping dans `transmission-vpn`, `rtnl: generic error (-101)` | conteneur attaché à un 2e réseau, ou `LOCAL_NETWORK` mal réglé | [Téléchargement](telechargement.md#vpn--transmission) |

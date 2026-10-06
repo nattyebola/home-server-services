@@ -176,7 +176,10 @@ nom du fichier renommé et dans le `.nfo` lu par Jellyfin. Corriger avec
 - `importMode: auto` laisse l'arr choisir entre hardlink et copie selon sa
   config `mediamanagement` — c'est voulu, mais ça veut dire qu'un import
   peut consommer de l'espace disque si le hardlink échoue (voir le piège
-  des deux bind-mounts séparés dans `CLAUDE.md`).
+  des deux bind-mounts séparés dans `CLAUDE.md`). Ça ne vaut **qu'avec un
+  `downloadId`** (toujours présent dans le script) : un import fait hors du
+  script sans `downloadId` déplace le fichier et casse le seed. Dans ce cas,
+  passer `"importMode": "hardlink"`.
 - Rien ici ne détecte un téléchargement bloqué **avant** la fin (seeding
   arrêté, torrent mort) : ce script ne regarde que ce qui est téléchargé à
   100 % et refusé à l'import. Un torrent qui ne finit pas relève de

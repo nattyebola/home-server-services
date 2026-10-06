@@ -151,6 +151,13 @@ score de profil, cross-seed ou Seerr.
   parce que `POST /release` renvoie 404 « Unable to find matching series and
   episodes » sur une numérotation absolue) s'importe par
   `manualimport?folder=<chemin du fichier>`.
+  **Un `ManualImport` sans `downloadId` DÉPLACE le fichier**, même en
+  `importMode: "auto"` : l'arr ne le voit pas comme un téléchargement, donc ni
+  hardlink ni copie. Le torrent perd ses données et clearr le marque ABS
+  (vécu le 2026-10-02 sur One-Punch Man S03E07 et One Piece E1169). Hors
+  file d'attente, toujours `"importMode": "hardlink"` explicite. Réparation :
+  `ln <fichier en bibliothèque> <ancien chemin sous completed/>`, puis
+  `transmission-remote -t <id> --verify`.
   Outillé par `scripts/manual-import.py` (`list`/`apply`/`assign`) et le skill
   `.claude/skills/manual-import/SKILL.md`. Le script **sépare quatre familles
   et n'en importe qu'une** — celle sans rejet ni ambiguïté : une cible devinée
