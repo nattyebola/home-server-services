@@ -95,8 +95,13 @@ C'est le successeur de Jellyseerr/Overseerr, fusionnés et dépréciés.
   nocturne, et un 429 y est indiscernable d'un titre supprimé.
 - `externalHostname` porte l'URL publique de Jellyfin (sans `/` final). Sans
   elle, les liens « Lire sur Jellyfin » deviendraient `http://jellyfin:8096/…`.
+- **Saisons des anime lues sur TVDB, pas TMDB** (Paramètres → Métadonnées).
+  TMDB met souvent tous les cours d'un anime dans une seule saison (Frieren,
+  Les Carnets de l'apothicaire, Ranma ½), alors que Sonarr, Jellyfin et Kodi
+  suivent TVDB, qui les sépare. On peut ainsi demander seulement la dernière
+  saison. Les autres séries restent sur TMDB.
 - Tout est configuré par `make provision` : compte propriétaire, bibliothèques,
-  Sonarr/Radarr avec leurs profils, scan initial.
+  Sonarr/Radarr avec leurs profils, fournisseur de métadonnées, scan initial.
 
 ### Pièges connus
 
@@ -104,6 +109,9 @@ C'est le successeur de Jellyseerr/Overseerr, fusionnés et dépréciés.
   tourne en UID 1000 et ne corrige pas les droits de son volume. `make up`
   crée `${DATA_ROOT}/.seerr/config` au préalable ; en cas de doute,
   `sudo chown -R "$PUID:$PGID" ${DATA_ROOT}/.seerr`.
+- **Anime affiché en une seule saison, ou demande qui récupère la plus
+  ancienne** : métadonnées anime repassées sur TMDB. Seerr transmet ses
+  numéros de saison tels quels à Sonarr, qui numérote selon TVDB.
 - **`settings.json` s'édite conteneur arrêté** (`docker stop`/`start`) : Seerr
   le réécrit lui-même, une édition à chaud est perdue.
 

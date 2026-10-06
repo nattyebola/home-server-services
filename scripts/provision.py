@@ -195,6 +195,8 @@ LEGACY_SCRIPT_PATHS = {
 SEERR_RADARR_PROFILE = "[SQP] SQP-1 WEB (2160p)"
 SEERR_SONARR_PROFILE = "WEB-2160p (Combined)"
 SEERR_SONARR_ANIME_PROFILE = "Anime (Fansub) VOSTFR"
+# Fournisseur des saisons affichées par Seerr (voir provision_seerr).
+SEERR_METADATA = {"tv": "tmdb", "anime": "tvdb"}
 
 
 class Skipped(Exception):
@@ -927,6 +929,24 @@ def provision_seerr(shared, arr_env, done, skipped):
             continue
         done.append(f"Seerr : {name} connecté ({payload['activeProfileName']})")
         changed = True
+
+    # Anime en TVDB, séries en TMDB (2026-10-05) : TMDB range les cours d'un
+    # anime dans une seule saison (Frieren, Apothicaire, Ranma ½ 2024) là où
+    # TVDB les sépare, et Seerr transmet ses numéros de saison tels quels à
+    # Sonarr, qui suit TVDB — demander « la saison » TMDB faisait suivre la S1
+    # TVDB. Le PUT teste TVDB et répond 500 si le test échoue. Additif comme le
+    # reste : écrit seulement par-dessus le défaut de Seerr (tout en TMDB),
+    # jamais par-dessus un choix fait à la main.
+    try:
+        current = seerr_request("/settings/metadatas", api_key=seerr_key) or {}
+        if current == {"tv": "tmdb", "anime": "tmdb"}:
+            seerr_request("/settings/metadatas", "PUT", SEERR_METADATA, seerr_key)
+            done.append("Seerr : métadonnées anime sur TVDB, séries sur TMDB")
+        elif current != SEERR_METADATA:
+            skipped.append(f"Seerr : métadonnées réglées à la main ({current}), "
+                           f"laissées telles quelles (attendu {SEERR_METADATA})")
+    except Exception as e:
+        failures.append(f"métadonnées : {e}")
 
     if not initialized:
         seerr_request("/settings/initialize", "POST", {}, seerr_key)

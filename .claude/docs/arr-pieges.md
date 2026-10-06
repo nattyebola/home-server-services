@@ -331,3 +331,15 @@ entier avant de toucher à un score ou à une regex de custom format.
   déjà présent. Après ajout, lancer manuellement « Jellyfin Full Library
   Scan » au lieu d'attendre le cron.
 
+- **Saisons anime : Seerr en TVDB, pas TMDB** (2026-10-05, `SEERR_METADATA`
+  dans `provision.py`, onglet Paramètres → Métadonnées, route API
+  `/settings/metadatas` — avec un `s`, `/settings/metadata` répond 404).
+  TMDB range tous les cours d'un anime dans une seule saison (Frieren 38 ép.,
+  Apothicaire 60, Ranma ½ 2024 36), TVDB les sépare en S1/S2/S3, et Seerr
+  transmet ses numéros de saison **tels quels** à Sonarr : demander « la »
+  saison TMDB faisait suivre la S1 TVDB, la plus ancienne. Sonarr, Jellyfin
+  (`SxxExx` du nom de fichier), Kodi et clearr suivent déjà TVDB : seul Seerr
+  divergeait. Les séries non-anime restent en TMDB. Le cas d'un anime **non
+  découpé sur TVDB non plus** (Boruto, ~293 ép. en S1) reste sans solution :
+  pistes évaluées le 2026-10-05 (corriger TVDB, proxy réécrivant skyhook,
+  saisons virtuelles par année dans clearr), aucune retenue faute de cas réel.

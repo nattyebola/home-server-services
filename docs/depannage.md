@@ -30,6 +30,7 @@ touchent toutes les stacks.
 | Jellyfin mal rafraîchi après un import, `401` dans les logs arr | forme d'authentification refusée par Jellyfin 12 | [Médias](medias.md#pièges-connus-jellyfin) |
 | Seerr en crash `EACCES` en boucle | dossier de config créé en root | [Médias](medias.md#pièges-connus) |
 | Seerr propose de redemander un titre déjà là | pas de bibliothèque Jellyfin sur `library/` | [Médias](medias.md#seerr) |
+| Seerr montre un anime en **une seule saison**, ou sa demande récupère la plus ancienne | métadonnées anime sur TMDB au lieu de TVDB | [Médias](medias.md#pièges-connus) |
 | clearr : bandeau rouge après une suppression, ou « Purge refusée » | arr injoignable au moment de la suppression ; données Transmission non montées | [clearr](clearr.md#pièges-connus) |
 | clearr : un onglet (BD, Séries, Animés, Films) a disparu | son service (Komga, Sonarr, Radarr) ne répond pas ; cache de 30 s après un `make up` | [clearr](clearr.md#pièges-connus) |
 | Un port paraît ouvert au WAN quand on teste depuis le serveur | `/etc/hosts` fait résoudre le domaine vers l'IP LAN | [Installation](installation.md#hôte--etchosts) |
