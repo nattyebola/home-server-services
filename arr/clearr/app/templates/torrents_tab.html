@@ -2,6 +2,7 @@
 {% from "_kind_icon.html" import kind_icon %}
 {% include "_tabs.html" %}
 {% if message %}<div class="alert alert-{{ message_kind }} py-2">{{ message }}</div>{% endif %}
+{% if mount_warning %}<div class="alert alert-danger py-2">⚠ {{ mount_warning }}</div>{% endif %}
 
 <div class="d-flex flex-wrap gap-3 align-items-center justify-content-between mb-2">
   <div class="d-flex flex-wrap gap-2 align-items-center">

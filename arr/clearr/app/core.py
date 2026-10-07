@@ -1180,6 +1180,31 @@ def kind_filter_groups(kinds):
     return groups
 
 
+def mount_suspicion(all_torrents, missing_ids):
+    """Avertissement à afficher si les données Transmission semblent non
+    montées, ou None.
+
+    « absent » veut dire « les fichiers de CE torrent ont disparu ». Si le disque
+    manque ou que le montage a raté au démarrage, TOUS les torrents le
+    deviennent d'un coup : en supprimer un ligne à ligne retirerait de
+    Transmission un torrent dont les données sont intactes. Deux signaux :
+    completed/ absent ou vide, ou plus d'un torrent et aucun qui ait encore un
+    fichier sur le disque. Reprend les critères de l'ancien garde-fou de la
+    purge des ABS (retirée avec la TUI le 2026-10-08), sans rien bloquer."""
+    try:
+        completed_empty = not os.listdir(COMPLETED_ROOT)
+    except OSError:
+        completed_empty = True
+    if completed_empty:
+        return (f"{COMPLETED_ROOT} est absent ou vide : les données Transmission ne semblent pas "
+                "montées. Ne rien supprimer avant d'avoir vérifié le disque.")
+    ids = {t["id"] for t in all_torrents}
+    if len(ids) > 1 and ids <= set(missing_ids):
+        return (f"Les {len(ids)} torrents sont tous « absent » : c'est un problème de montage "
+                "plutôt que des fichiers disparus. Ne rien supprimer avant d'avoir vérifié le disque.")
+    return None
+
+
 # --- disponibilité des services derrière les onglets web ---
 
 def _probe_arr(base_url):

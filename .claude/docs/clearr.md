@@ -173,9 +173,11 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   pas les files arr (`queue_states=None`), inutiles à ses deux types.
   **« Purger les ABS » retiré** (web le 2026-10-07, demandé ; `Maj+P` parti
   avec la TUI le 2026-10-08, confirmé) : plus aucune purge en masse des
-  absents. Ne pas la réintroduire sans demande. Le garde-fou qu'elle portait
-  (montage raté = tous ABS) n'a plus d'objet ligne à ligne ; le symptôme
-  reste documenté dans `docs/clearr.md`.
+  absents. Ne pas la réintroduire sans demande. Son garde-fou (montage raté =
+  tous ABS) survit en **bandeau rouge, sans rien bloquer** :
+  `core.mount_suspicion()` (mêmes critères que l'ex-`abs_purge_refusal` :
+  `completed/` absent ou vide, ou plus d'un torrent et tous absents), évalué
+  sur l'état global, affiché dans Torrents et BD (2026-10-08).
   **Sains / dégradés** (2026-10-07) : `core.HEALTHY_KINDS` (film, série,
   anime, BD) ; le reste de `TORRENT_KINDS` est dégradé. Le filtre les montre
   en deux `btn-group` distincts, séparés par leur seul espacement (un `.vr`

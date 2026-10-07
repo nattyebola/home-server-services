@@ -42,6 +42,10 @@ app = FastAPI(title="clearr")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 DEFAULT_SORT = {"torrents": "AGE", "bd": "AGE", "series": "TITRE", "animes": "TITRE", "films": "TITRE"}
+# Sens par défaut ("1" = décroissant, comme le paramètre `reverse` des routes).
+# Torrents : plus récents en haut (demandé le 2026-10-08) — AGE trie sur
+# addedDate, décroissant = dernier ajouté en tête.
+DEFAULT_REVERSE = {"torrents": "1", "bd": "0", "series": "0", "animes": "0", "films": "0"}
 
 
 def _compute_asset_version():
@@ -342,6 +346,9 @@ def render_torrents_tab(sort, reverse, filter_str, message=None, message_kind="s
         # Compté sur les groupes RENDUS et non sur cross_seed_groups entier :
         # celui-ci est global, il annoncerait les groupes des autres onglets.
         group_count=sum(1 for g in groups if g["children"]),
+        # Sur l'état global, pas sur la sélection de l'onglet : un montage raté
+        # touche Torrents et BD à la fois.
+        mount_warning=core.mount_suspicion(state["all_torrents"], state["missing_ids"]),
         message=message, message_kind=message_kind,
     )
 
@@ -442,32 +449,32 @@ def render_arr_tab(tab, sort, reverse, filter_str, message=None, message_kind="s
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    content = render_torrents_tab(DEFAULT_SORT["torrents"], False, "")
+    content = render_torrents_tab(DEFAULT_SORT["torrents"], DEFAULT_REVERSE["torrents"] == "1", "")
     return HTMLResponse(render("page.html", initial_content=content, v=ASSET_VERSION))
 
 
 @app.get("/tab/torrents", response_class=HTMLResponse)
-def tab_torrents(sort: str = DEFAULT_SORT["torrents"], reverse: str = "0", filter: str = ""):
+def tab_torrents(sort: str = DEFAULT_SORT["torrents"], reverse: str = DEFAULT_REVERSE["torrents"], filter: str = ""):
     return HTMLResponse(render_torrents_tab(sort, reverse == "1", filter))
 
 
 @app.get("/tab/bd", response_class=HTMLResponse)
-def tab_bd(sort: str = DEFAULT_SORT["bd"], reverse: str = "0", filter: str = ""):
+def tab_bd(sort: str = DEFAULT_SORT["bd"], reverse: str = DEFAULT_REVERSE["bd"], filter: str = ""):
     return HTMLResponse(render_torrents_tab(sort, reverse == "1", filter, tab="bd"))
 
 
 @app.get("/tab/series", response_class=HTMLResponse)
-def tab_series(sort: str = DEFAULT_SORT["series"], reverse: str = "0", filter: str = ""):
+def tab_series(sort: str = DEFAULT_SORT["series"], reverse: str = DEFAULT_REVERSE["series"], filter: str = ""):
     return HTMLResponse(render_arr_tab("series", sort, reverse == "1", filter))
 
 
 @app.get("/tab/animes", response_class=HTMLResponse)
-def tab_animes(sort: str = DEFAULT_SORT["animes"], reverse: str = "0", filter: str = ""):
+def tab_animes(sort: str = DEFAULT_SORT["animes"], reverse: str = DEFAULT_REVERSE["animes"], filter: str = ""):
     return HTMLResponse(render_arr_tab("animes", sort, reverse == "1", filter))
 
 
 @app.get("/tab/films", response_class=HTMLResponse)
-def tab_films(sort: str = DEFAULT_SORT["films"], reverse: str = "0", filter: str = ""):
+def tab_films(sort: str = DEFAULT_SORT["films"], reverse: str = DEFAULT_REVERSE["films"], filter: str = ""):
     return HTMLResponse(render_arr_tab("films", sort, reverse == "1", filter))
 
 
@@ -477,7 +484,7 @@ def tab_films(sort: str = DEFAULT_SORT["films"], reverse: str = "0", filter: str
 # nombre de séries), trop cher pour chaque rendu d'onglet. ---
 
 @app.get("/library/orphans/confirm", response_class=HTMLResponse)
-def library_orphans_confirm(sort: str = DEFAULT_SORT["torrents"], reverse: str = "0", filter: str = ""):
+def library_orphans_confirm(sort: str = DEFAULT_SORT["torrents"], reverse: str = DEFAULT_REVERSE["torrents"], filter: str = ""):
     state = core.load_full_state()
     orphans = core.library_orphan_files(state)
     return HTMLResponse(render(
@@ -491,7 +498,7 @@ def library_orphans_confirm(sort: str = DEFAULT_SORT["torrents"], reverse: str =
 
 
 @app.post("/library/orphans", response_class=HTMLResponse)
-def library_orphans_delete(sort: str = Form(DEFAULT_SORT["torrents"]), reverse: str = Form("0"),
+def library_orphans_delete(sort: str = Form(DEFAULT_SORT["torrents"]), reverse: str = Form(DEFAULT_REVERSE["torrents"]),
                            filter: str = Form(""), fingerprint: str = Form("")):
     # Recalculé ici plutôt que repris du POST : la liste des chemins à supprimer
     # ne doit jamais venir du client. Mais elle doit être CELLE qui a été
@@ -814,7 +821,7 @@ def _torrent_confirm_context(torrent, state, sort, reverse, filter_str, post_url
 
 
 @app.get("/torrents/{tid}/confirm", response_class=HTMLResponse)
-def torrent_confirm(tid: int, sort: str = DEFAULT_SORT["torrents"], reverse: str = "0", filter: str = "",
+def torrent_confirm(tid: int, sort: str = DEFAULT_SORT["torrents"], reverse: str = DEFAULT_REVERSE["torrents"], filter: str = "",
                      tab: str = "torrents"):
     state = core.load_full_state()
     torrent = next((t for t in state["all_torrents"] if t["id"] == tid), None)
@@ -826,7 +833,7 @@ def torrent_confirm(tid: int, sort: str = DEFAULT_SORT["torrents"], reverse: str
 
 
 @app.post("/torrents/{tid}/delete", response_class=HTMLResponse)
-def torrent_delete(tid: int, sort: str = Form(DEFAULT_SORT["torrents"]), reverse: str = Form("0"),
+def torrent_delete(tid: int, sort: str = Form(DEFAULT_SORT["torrents"]), reverse: str = Form(DEFAULT_REVERSE["torrents"]),
                     filter: str = Form(""), tab: str = Form("torrents")):
     tab = torrent_tab_name(tab)
     state = core.load_full_state()
@@ -948,7 +955,7 @@ def _delete_movie(movie, state):
 # --- suppression d'une série entière (vue Séries) ---
 
 @app.get("/series/{sid}/confirm", response_class=HTMLResponse)
-def series_confirm(sid: int, sort: str = DEFAULT_SORT["series"], reverse: str = "0", filter: str = "",
+def series_confirm(sid: int, sort: str = DEFAULT_SORT["series"], reverse: str = DEFAULT_REVERSE["series"], filter: str = "",
                     tab: str = "series"):
     """Écran de choix des saisons + purge. Chaque ligne de saison porte SON
     bilan, donc reste exacte quelle que soit la sélection : c'est ce qui évite
@@ -994,7 +1001,7 @@ def series_confirm(sid: int, sort: str = DEFAULT_SORT["series"], reverse: str = 
 
 @app.post("/series/{sid}/delete", response_class=HTMLResponse)
 def series_delete(sid: int, purge: str = "0", seasons: list[int] = Form(default=[]),
-                   sort: str = Form(DEFAULT_SORT["series"]), reverse: str = Form("0"),
+                   sort: str = Form(DEFAULT_SORT["series"]), reverse: str = Form(DEFAULT_REVERSE["series"]),
                    filter: str = Form(""), tab: str = Form("series")):
     """`seasons` ne porte que des numéros de saison, jamais un chemin : rien de
     ce qui sera supprimé ne vient du client, le plan est recalculé côté serveur
@@ -1031,7 +1038,7 @@ def series_delete(sid: int, purge: str = "0", seasons: list[int] = Form(default=
 # --- suppression d'un film (vue Films) ---
 
 @app.get("/films/{mid}/confirm", response_class=HTMLResponse)
-def film_confirm(mid: int, sort: str = DEFAULT_SORT["films"], reverse: str = "0", filter: str = ""):
+def film_confirm(mid: int, sort: str = DEFAULT_SORT["films"], reverse: str = DEFAULT_REVERSE["films"], filter: str = ""):
     movie = core.find_movie_by_id(mid)
     if not movie:
         return HTMLResponse("<p>Film introuvable. Fermez et rafraîchissez.</p>")
@@ -1051,7 +1058,7 @@ def film_confirm(mid: int, sort: str = DEFAULT_SORT["films"], reverse: str = "0"
 
 
 @app.post("/films/{mid}/delete", response_class=HTMLResponse)
-def film_delete(mid: int, sort: str = Form(DEFAULT_SORT["films"]), reverse: str = Form("0"), filter: str = Form("")):
+def film_delete(mid: int, sort: str = Form(DEFAULT_SORT["films"]), reverse: str = Form(DEFAULT_REVERSE["films"]), filter: str = Form("")):
     movie = core.find_movie_by_id(mid)
     if not movie:
         return HTMLResponse(render_arr_tab("films", sort, reverse == "1", filter,

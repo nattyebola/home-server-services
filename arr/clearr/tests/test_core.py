@@ -485,6 +485,44 @@ class AssignTorrentKinds(unittest.TestCase):
         self.assertEqual(seul["_kind"], "bd")
 
 
+class ArrQueueStates(unittest.TestCase):
+    """Forme lue par torrent_kind. Sans includeSeries, Sonarr omet `series` de
+    chaque entrée : tous les animes en cours redeviendraient « série », sans
+    aucune erreur."""
+
+    def setUp(self):
+        self.addCleanup(setattr, core, "arr_api", core.arr_api)
+        self.params = {}
+
+    def _stub(self, sonarr, radarr):
+        def arr_api(base, key, method, path, params=None, json_body=None):
+            category = "sonarr" if base == core.SONARR_URL else "radarr"
+            self.params[category] = params
+            return sonarr if category == "sonarr" else radarr
+        core.arr_api = arr_api
+
+    def test_forme_et_parametres(self):
+        self._stub({"records": [
+            {"downloadId": "aaa", "trackedDownloadState": "downloading", "series": {"seriesType": "anime"}},
+            {"downloadId": "BBB", "trackedDownloadState": "importBlocked", "series": {"seriesType": "standard"}},
+            {"trackedDownloadState": "downloading"},  # sans downloadId : ignoré
+        ]}, {"records": [{"downloadId": "ccc", "trackedDownloadState": "imported"}]})
+        states = core.arr_queue_states()
+        self.assertEqual(states["sonarr"], {"AAA": {"state": "downloading", "anime": True},
+                                            "BBB": {"state": "importBlocked", "anime": False}})
+        self.assertEqual(states["radarr"], {"CCC": {"state": "imported", "anime": False}})
+        self.assertEqual(self.params["sonarr"].get("includeSeries"), "true")
+        self.assertEqual(self.params["sonarr"].get("includeUnknownSeriesItems"), "true")
+        self.assertEqual(self.params["radarr"].get("includeUnknownMovieItems"), "true")
+
+    def test_file_injoignable_vaut_none(self):
+        # None et pas {} : {} voudrait dire « tout a été traité » (remplacé).
+        self._stub(None, {})
+        states = core.arr_queue_states()
+        self.assertIsNone(states["sonarr"])
+        self.assertIsNone(states["radarr"])
+
+
 class KindFilterGroups(unittest.TestCase):
 
     def test_comptes_et_groupes(self):
@@ -1002,6 +1040,34 @@ class SeriesEpisodeFilesForme(unittest.TestCase):
     def test_liste_vide_est_valide(self):
         core.arr_api = lambda *a, **k: []
         self.assertEqual(core.series_episode_files(1), [])
+
+
+class MountSuspicion(unittest.TestCase):
+    """Un montage absent rend TOUS les torrents « absent » : la vue doit le
+    dire, et seulement dans ce cas."""
+
+    def setUp(self):
+        self.marker = touch(Path(core.COMPLETED_ROOT, "anime", "present.mkv"))
+        self.addCleanup(os.remove, self.marker)
+        self.torrents = [{"id": 1}, {"id": 2}, {"id": 3}]
+
+    def test_cas_nominal(self):
+        self.assertIsNone(core.mount_suspicion(self.torrents, {2}))
+
+    def test_tous_absents(self):
+        self.assertIsNotNone(core.mount_suspicion(self.torrents, {1, 2, 3}))
+
+    def test_un_seul_torrent_absent_passe(self):
+        """Avec un seul torrent, « tous absents » ne dit rien d'un montage."""
+        self.assertIsNone(core.mount_suspicion([{"id": 1}], {1}))
+
+    def test_completed_absent(self):
+        """Données non montées : completed/ déplacé le temps du test."""
+        completed = Path(core.COMPLETED_ROOT)
+        moved = completed.with_name("completed.moved")
+        completed.rename(moved)
+        self.addCleanup(moved.rename, completed)
+        self.assertIsNotNone(core.mount_suspicion(self.torrents, {2}))
 
 
 class OrphansFingerprint(unittest.TestCase):
