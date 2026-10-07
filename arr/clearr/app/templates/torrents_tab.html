@@ -23,7 +23,8 @@
     {% for group, group_label in (("healthy", "Types sains"), ("degraded", "Types dégradés")) %}
     <div class="btn-group btn-group-sm" role="group" aria-label="{{ group_label }}">
       {% for f in kind_filters[group] %}
-      <input type="radio" class="btn-check" name="kind-filter" id="kind-{{ f.key }}" value="{{ f.key }}" data-kind-filter>
+      {# Désactivé à zéro : il ne montrerait qu'un tableau vide. #}
+      <input type="radio" class="btn-check" name="kind-filter" id="kind-{{ f.key }}" value="{{ f.key }}" data-kind-filter{% if not f.count %} disabled{% endif %}>
       <label class="btn btn-outline-secondary" for="kind-{{ f.key }}" title="{{ kind_descriptions[f.kind] }}">{{ kind_icon(f.kind) }} {{ f.label }} <span class="small">{{ f.count }}</span></label>
       {% endfor %}
     </div>
@@ -39,8 +40,8 @@
   </div>
   {# Agit sur tout library/, pas sur la sélection de l'onglet — donc hors sujet
      dans BD, où il promettrait une portée qu'il n'a pas. La purge en masse des
-     absents (ex-« Purger les ABS ») a été retirée du web le 2026-10-07 : un
-     absent se supprime ligne à ligne, ou en masse par Maj+P dans la TUI. #}
+     absents (ex-« Purger les ABS ») a été retirée le 2026-10-07 : un absent se
+     supprime ligne à ligne. #}
   <div class="d-flex gap-2">
     {% if not is_bd %}
     <a href="#" class="btn btn-outline-secondary btn-sm" data-get="/library/orphans/confirm?{{ qs }}" data-target="#modal-body"
@@ -118,6 +119,11 @@
     {% else %}
     <tr><td colspan="7" class="text-body-secondary py-3">{{ 'Aucune BD' if is_bd else 'Aucun torrent' }}{% if filter_str %} pour ce filtre{% endif %}.</td></tr>
     {% endfor %}
+    {# Affichée par clearr.js (syncKindEmpty) quand le filtre par type ne
+       laisse aucune ligne : sans data-kind, le CSS du filtre ne la masque pas. #}
+    {% if groups and not is_bd %}
+    <tr data-kind-empty hidden><td colspan="7" class="text-body-secondary py-3">Aucun torrent de ce type{% if filter_str %} pour ce filtre{% endif %}.</td></tr>
+    {% endif %}
   </tbody>
 </table>
 </div>

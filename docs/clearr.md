@@ -8,15 +8,15 @@ fichier dans `library/` : le titre, toujours suivi, est re-téléchargé à la
 recherche suivante. Aucun outil communautaire (Decluttarr, Removarr…) ne
 couvre ce cas. `clearr` (`arr/clearr/`) comble ce trou pour ce déploiement.
 
-## Trois façons de l'utiliser
+## Deux façons de l'utiliser
 
 | Interface | Accès | Quand |
 |---|---|---|
 | 🌐 **Web** | `https://clearr.<DOMAIN>` (LAN uniquement), démarré avec la stack `arr` | usage courant |
-| ⌨️ **TUI** | `make clearr` | en SSH |
 | 📺 **Kodi** | menu contextuel « Supprimer avec clearr » (`make kodi-install`) | depuis le canapé, voir [`kodi/README.md`](../kodi/README.md) |
 
-Les trois partagent le même code (`arr/clearr/app/core.py`).
+Les deux partagent le même code (`arr/clearr/app/core.py`). La TUI
+(`make clearr`) a été retirée le 2026-10-08.
 
 ## Ce qu'une suppression fait
 
@@ -39,7 +39,7 @@ flowchart TD
 - **Pas de re-téléchargement** : le volet arr retire ou désactive le suivi
   de ce qui a été supprimé.
 - **Un arr injoignable n'empêche pas de supprimer les fichiers**, mais ce
-  n'est jamais annoncé comme un succès : bandeau rouge (web, TUI) ou
+  n'est jamais annoncé comme un succès : bandeau rouge (web) ou
   notification d'erreur (Kodi), et l'action manquante apparaît déjà dans la
   fenêtre de confirmation. Il faut alors vérifier le titre dans Sonarr/Radarr.
 - **Exception : la suppression saison par saison s'arrête** si Sonarr refuse
@@ -53,7 +53,7 @@ flowchart TD
 
 | Onglet | Contenu |
 |---|---|
-| **Torrents** | tous les torrents : âge, taille, ratio, tracker (résolu via Prowlarr). Les cross-seeds sont regroupés sous leur téléchargement d'origine. Le nombre de torrents liés à `library/` est dans la ligne de résumé (les colonnes BIB et ABS n'existent plus que dans la TUI ; l'onglet BD garde ABS). Première colonne **TYPE**, un picto coloré : fedora = film, OVNI = série, dragon = anime, bulle = BD, **loupe = absent** (ex-ABS : données disparues du disque — un téléchargement en cours, dont les fichiers sont encore sous `incomplete/`, n'est pas absent), ? = inconnu. Source : dossier `bd`, titre Sonarr/Radarr rattaché (anime = série de type anime dans Sonarr), ou catégorie `sonarr`/`radarr`. Rien n'est deviné d'après un nom. Un grab Sonarr/Radarr **terminé sans aucun fichier dans `library/`** est classé d'après la file d'attente de l'arr : **signe interdit** = import bloqué (à débloquer dans l'arr, ou avec la skill `manual-import`), **sablier** = import en cours, **recyclage** = sorti de la file, donc remplacé par une autre release (ou retiré de la file à la main). Arr injoignable : inconnu, rien n'est deviné. Un grab en cours de téléchargement reste « série » ou « film », même si c'est un anime. Le titre d'une ligne dégradée est coloré : **rouge** = absent ou import bloqué, **orange** = remplacé, **gris** = inconnu. Avant le filtre par nom, des boutons radio filtrent par type (picto, libellé, nombre de torrents ; la description du type s'affiche au survol), en deux groupes : types sains (film, série, anime, BD) puis dégradés (bloqué, en import, remplacé, absent, inconnu). Ce filtre n'est pas mémorisé au rechargement. |
+| **Torrents** | tous les torrents : âge, taille, ratio, tracker (résolu via Prowlarr). Les cross-seeds sont regroupés sous leur téléchargement d'origine. Le nombre de torrents liés à `library/` est dans la ligne de résumé (plus de colonnes BIB ni ABS ; l'onglet BD garde ABS). Première colonne **TYPE**, un picto coloré : fedora = film, OVNI = série, dragon = anime, bulle = BD, **loupe = absent** (ex-ABS : données disparues du disque — un téléchargement en cours, dont les fichiers sont encore sous `incomplete/`, n'est pas absent), ? = inconnu. Source : dossier `bd`, titre Sonarr/Radarr rattaché (anime = série de type anime dans Sonarr), ou catégorie `sonarr`/`radarr`. Rien n'est deviné d'après un nom. Un grab Sonarr/Radarr **terminé sans aucun fichier dans `library/`** est classé d'après la file d'attente de l'arr : **signe interdit** = import bloqué (à débloquer dans l'arr, ou avec la skill `manual-import`), **sablier** = import en cours, **recyclage** = sorti de la file, donc remplacé par une autre release (ou retiré de la file à la main). Arr injoignable : inconnu, rien n'est deviné. Un grab Sonarr en cours de téléchargement est « anime » si la file de Sonarr le rattache à une série de type anime, « série » sinon (ou si Sonarr ne répond pas). Le titre d'une ligne dégradée est coloré : **rouge** = absent ou import bloqué, **orange** = remplacé, **gris** = inconnu. Avant le filtre par nom, des boutons radio filtrent par type (picto, libellé, nombre de torrents ; la description du type s'affiche au survol), en deux groupes : types sains (film, série, anime, BD) puis dégradés (bloqué, en import, remplacé, absent, inconnu). Un type à zéro est grisé ; si le filtre par nom ou une suppression vide le type choisi, « Aucun torrent de ce type » s'affiche. Ce filtre n'est pas mémorisé au rechargement. |
 | **BD** | les torrents sous `completed/bd`, c'est-à-dire la bibliothèque [Komga](komga.md). ⚠️ Supprimer une BD n'en laisse **aucun autre exemplaire**. |
 | **Séries** / **Animés** | la liste Sonarr, séparée par le type de série Sonarr (`anime` ou non) |
 | **Films** | la liste Radarr |
@@ -77,11 +77,9 @@ les affiche.
 
 **Actions groupées** (onglet Torrents) :
 
-- Plus de purge en masse des absents sur le web (retirée le 2026-10-07) :
-  filtre « Absent », puis suppression ligne à ligne. La TUI la garde
-  (`Maj+P`), refusée si `completed/` est absent ou vide, ou si **tous** les
-  torrents sont absents : c'est alors un montage raté, pas des fichiers
-  disparus.
+- Plus de purge en masse des absents (retirée du web le 2026-10-07, puis
+  avec la TUI le 2026-10-08) : filtre « Absent », puis suppression ligne à
+  ligne.
 - **Orphelins library/** liste les fichiers de `library/` qu'aucun torrent ne
   couvre et qu'aucun arr ne connaît. Si la liste a changé entre l'affichage et
   le clic, rien n'est supprimé : il faut rouvrir la fenêtre.
@@ -103,7 +101,7 @@ les affiche.
 |---|---|---|
 | Bandeau rouge « action(s) Sonarr/Radarr ont ÉCHOUÉ » après une suppression | l'arr n'a pas répondu : fichiers partis, titre peut-être encore suivi | retirer le titre (ou désactiver la saison) à la main dans Sonarr/Radarr, sinon il revient |
 | Un torrent en cours de téléchargement marqué ABS (avant le 2026-09-29) | clearr ne cherchait ses fichiers que sous `completed/` | corrigé : `incomplete/` (et les `.part`) compte aussi |
-| « Purge refusée » sur les ABS (TUI, `Maj+P`) | données Transmission non montées | vérifier le disque et le montage, puis `make restart STACK=arr` |
+| **Tous** les torrents en « absent » (loupe) d'un coup | données Transmission non montées (disque absent, montage raté) — ne rien supprimer | vérifier le disque et le montage, puis `make restart STACK=arr` |
 | Onglet BD, Séries, Animés ou Films absent | son service (Komga, Sonarr, Radarr) ne répond pas, ou vient de démarrer (cache de 30 s) | `docker ps` ; attendre 30 s et recharger. Pour Komga, la sonde passe par Traefik : Traefik arrêté masque aussi BD |
 | Un pack de films emporte d'autres films | un torrent = un seul lot de fichiers | la confirmation (web et Kodi ≥ 1.1.1) liste les autres titres touchés |
 

@@ -184,12 +184,12 @@ def render_lan_only_banner(data_root):
                   until=datetime.fromtimestamp(deadline).strftime("%H:%M"))
 
 
-# Les conteneurs one-off (`docker compose run`, ex. `make clearr` qui lance la
-# TUI) portent les mêmes labels project/service que le service lui-même mais
-# héritent aussi de son healthcheck, qu'ils ne peuvent pas satisfaire (la TUI
-# ne fait tourner aucun serveur HTTP sur :8000). Sans ce filtre, une session
-# `make clearr` faisait passer la carte du service web en "healthcheck en
-# échec" — et un one-off d'un service arrêté l'aurait fait passer pour démarré.
+# Les conteneurs one-off (`docker compose run`, comme l'était l'ancienne TUI
+# clearr, retirée le 2026-10-08) portent les mêmes labels project/service que
+# le service lui-même mais héritent aussi de son healthcheck, qu'ils ne
+# peuvent pas satisfaire (aucun serveur HTTP sur :8000). Sans ce filtre, un
+# one-off faisait passer la carte du service web en "healthcheck en échec" —
+# et un one-off d'un service arrêté l'aurait fait passer pour démarré.
 def docker_ps_set(extra_filters=()):
     args = ["docker", "ps", "--filter", "status=running",
             "--filter", "label=com.docker.compose.oneoff=False"]

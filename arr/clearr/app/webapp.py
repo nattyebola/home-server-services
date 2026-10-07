@@ -1,10 +1,9 @@
 # Service web FastAPI + gabarits Jinja2 (fragments rendus côté serveur,
 # swap client via static/clearr.js — pas de HTMX vendoré, voir ce fichier).
 # Chaque route recalcule l'état complet via core.load_full_state() plutôt que
-# de garder un état en mémoire entre requêtes (contrairement à la TUI, qui ne
-# recharge qu'une fois au démarrage) — voir CLAUDE.md "risque perf" : mesuré
-# acceptable (<1s) à l'échelle de cette bibliothèque, à revoir si ça dérive.
-import collections
+# de garder un état en mémoire entre requêtes — voir CLAUDE.md "risque perf" :
+# mesuré acceptable (<1s) à l'échelle de cette bibliothèque, à revoir si ça
+# dérive.
 import hashlib
 import html
 import os
@@ -64,10 +63,9 @@ ASSET_VERSION = _compute_asset_version()
 
 
 # TransmissionClient.call lève RuntimeError quand transmission-vpn est
-# injoignable (voir core.py) — la TUI l'attrape une seule fois en haut de
-# tui.run() et affiche un message propre ; côté web chaque route peut la
-# lever indépendamment (load_full_state() appelé par requête, voir plus
-# haut), d'où ce handler global plutôt qu'un try/except répété partout.
+# injoignable (voir core.py) — chaque route peut la lever indépendamment
+# (load_full_state() appelé par requête, voir plus haut), d'où ce handler
+# global plutôt qu'un try/except répété partout.
 @app.exception_handler(RuntimeError)
 async def runtime_error_handler(request: Request, exc: RuntimeError):
     # Les routes /api/ (menu contextuel Kodi) ont un appelant qui parse du JSON :
@@ -157,7 +155,7 @@ def poster(kind: str, arr_id: int):
                         headers={"Cache-Control": "public, max-age=86400"})
 
 
-# --- helpers d'affichage (équivalent web de ratio_color/col_label de tui.py) ---
+# --- helpers d'affichage ---
 
 def ratio_class(ratio):
     if ratio < 1.0:
@@ -179,9 +177,9 @@ KIND_LABELS = {
 # seule source pour que les deux ne divergent pas. Voir core.torrent_kind.
 KIND_DESCRIPTIONS = {
     "film": "Film : fichier dans la bibliothèque Radarr, ou téléchargement Radarr en cours",
-    "series": "Série : fichier dans la bibliothèque Sonarr, ou téléchargement Sonarr en cours "
-              "(anime compris, tant qu'il n'est pas importé)",
-    "anime": "Anime : fichier dans la bibliothèque, série Sonarr de type anime",
+    "series": "Série : fichier dans la bibliothèque Sonarr, ou téléchargement Sonarr en cours",
+    "anime": "Anime : fichier dans la bibliothèque, ou téléchargement Sonarr en cours, "
+             "d'une série Sonarr de type anime",
     "bd": "BD : déposée sous completed/bd, lue directement par Komga",
     "blocked": "Import bloqué : téléchargement Sonarr/Radarr terminé, que l'arr refuse "
                "d'importer (voir sa file d'attente)",
@@ -209,7 +207,8 @@ def torrent_view(t, child=False, meta=None):
         # Série/film Sonarr/Radarr auquel ce torrent appartient (None si jamais
         # importé) — porte la jaquette et les liens, voir core.torrent_meta.
         "meta": meta,
-        # Clé de KIND_ICONS (_kind_icon.html) ; None = inconnu.
+        # Clé de core.TORRENT_KINDS, picto par la macro kind_icon
+        # (_kind_icon.html) ; None = inconnu.
         "kind": t.get("_kind"),
         "title_class": KIND_TITLE_CLASSES.get(t.get("_kind"), ""),
         "name": t["name"],
@@ -235,8 +234,7 @@ def field_index(fields, label):
 
 def sort_url(tab, key, current_key, current_reverse, filter_str):
     # Clic sur une colonne déjà active -> inverse le sens ; sur une autre
-    # colonne -> bascule dessus en ascendant. Plus intuitif au clic qu'un
-    # raccourci s/S séparé comme dans la TUI.
+    # colonne -> bascule dessus en ascendant.
     reverse = "1" if (key == current_key and not current_reverse) else "0"
     q = urllib.parse.urlencode({"sort": key, "reverse": reverse, "filter": filter_str})
     return f"/tab/{tab}?{q}"
@@ -265,7 +263,7 @@ def query_string(sort, reverse, filter_str):
 # les colonnes changent. Même logique que ARR_TABS pour Séries/Animés : deux
 # vues d'une liste, pas deux gabarits.
 TORRENT_TABS = {
-    "torrents": {"select": None, "fields": core.WEB_SORT_FIELDS},
+    "torrents": {"select": None, "fields": core.SORT_FIELDS},
     "bd": {"select": core.is_bd_torrent, "fields": core.BD_SORT_FIELDS},
 }
 
@@ -293,19 +291,15 @@ def render_torrents_tab(sort, reverse, filter_str, message=None, message_kind="s
     # Métadonnées et type calculés AVANT le tri (la colonne TYPE trie sur
     # `_kind`), sur la liste complète : les enfants cross-seed d'un onglet
     # filtré n'y sont pas, mais sont rendus quand même sous leur parent.
+    # L'onglet BD n'a pas de colonne TYPE : on y épargne la lecture des files
+    # arr (2 appels à chaque frappe du filtre) — ses BD sortent « bd » ou
+    # « absent » sans elles, seuls types qu'il affiche (couleur du titre).
+    is_bd = tab == "bd"
     meta_index = core.build_arr_meta_index()
     metas = {t["id"]: core.torrent_meta(t, state["library_index"], meta_index)
              for t in state["all_torrents"]}
-    queue_states = core.arr_queue_states()
-    kinds = {t["id"]: core.torrent_kind(t, metas[t["id"]], queue_states) for t in state["all_torrents"]}
-    # Un cross-seed est le même contenu que son parent : il hérite de son type
-    # quand il n'en a pas (son downloadDir est .cross-seed-links/<tracker>, et
-    # il n'est pas toujours hardlinké à library/).
-    for parent_id, children in cross_seed_groups.items():
-        for c in children:
-            kinds[c["id"]] = kinds.get(c["id"]) or kinds.get(parent_id)
-    for t in state["all_torrents"]:
-        t["_kind"] = kinds[t["id"]]
+    queue_states = None if is_bd else core.arr_queue_states()
+    core.assign_torrent_kinds(state["all_torrents"], cross_seed_groups, metas, queue_states)
 
     fields = spec["fields"]
     core.sort_items(all_torrents, fields, field_index(fields, sort), reverse)
@@ -329,20 +323,17 @@ def render_torrents_tab(sort, reverse, filter_str, message=None, message_kind="s
             "force_open": bool(needle and matching_children and not parent_match),
         })
 
-    # Boutons du filtre par type : compté sur les groupes RENDUS, donc après le
-    # filtre par nom. Le masquage lui-même est fait en CSS (voir
+    # Boutons du filtre par type. Le masquage lui-même est fait en CSS (voir
     # torrents_tab.html), pas ici.
-    kind_counts = collections.Counter(g["parent"]["kind"] for g in groups)
-    kind_filters = {"healthy": [], "degraded": []}
-    for k in core.TORRENT_KINDS:
-        group = "healthy" if k in core.HEALTHY_KINDS else "degraded"
-        kind_filters[group].append({"kind": k, "key": k or "unknown", "label": KIND_LABELS[k],
-                                    "count": kind_counts[k]})
+    kind_filters = {
+        group: [{"kind": k, "key": k or "unknown", "label": KIND_LABELS[k], "count": n} for k, n in buttons]
+        for group, buttons in core.kind_filter_groups(g["parent"]["kind"] for g in groups).items()
+    }
 
     return render(
         "torrents_tab.html",
         active=tab,  # consommé par _tabs.html ; sans lui aucun onglet n'est marqué
-        tab=tab, is_bd=(tab == "bd"),
+        tab=tab, is_bd=is_bd,
         sort=sort, reverse=reverse, filter_str=filter_str,
         qs=query_string(sort, reverse, filter_str),
         columns=build_columns(tab, fields, sort, reverse, filter_str),
@@ -523,8 +514,7 @@ def library_orphans_delete(sort: str = Form(DEFAULT_SORT["torrents"]), reverse: 
 
 
 # --- suppression d'un torrent (vue Torrents, et vue Films quand un torrent
-# correspondant est trouvé — même gabarit confirm_torrent.html, réutilisé
-# comme confirm_delete() l'est par les deux vues côté TUI) ---
+# correspondant est trouvé — même gabarit confirm_torrent.html) ---
 
 # --- fiches détail ------------------------------------------------------------
 #

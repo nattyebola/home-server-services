@@ -1,7 +1,7 @@
-# Logique métier partagée par tui.py (TUI curses, `make clearr`), webapp.py
-# (service web FastAPI/HTMX, clearr.${DOMAIN}) et cli.py (mode non-interactif
-# delete-by-inode, outil manuel). Aucun des trois n'a de
-# logique de matching/suppression en propre — tout passe par ici.
+# Logique métier partagée par webapp.py (service web FastAPI, clearr.${DOMAIN})
+# et cli.py (mode non-interactif delete-by-inode, outil manuel). Aucun des
+# deux n'a de logique de matching/suppression en propre — tout passe par ici.
+# La TUI curses (`make clearr`) a été retirée le 2026-10-08.
 #
 # Anciennement scripts/torrent-cleanup.py (TUI seule, tournait sur l'hôte via
 # `docker exec <container> curl ...` pour atteindre Transmission/Sonarr/
@@ -16,10 +16,12 @@
 # traduire host <-> conteneur arr (host_to_arr_path/arr_path_to_host de
 # l'ancien script ont disparu).
 #
-# Marqueur 'M' (torrent dont le fichier a disparu du disque, ex. supprimé
-# manuellement hors de cet outil) + purge groupée côté Transmission — ajouté
-# le 2026-07-28 après un rattrapage cross-seed qui en a fait remonter 6 d'un
-# coup, tous antérieurs à la stack arr.
+# Marqueur ABS (torrent dont le fichier a disparu du disque, ex. supprimé
+# manuellement hors de cet outil) — ajouté le 2026-07-28 après un rattrapage
+# cross-seed qui en a fait remonter 6 d'un coup, tous antérieurs à la stack
+# arr. Devenu le type « absent » de la vue Torrents ; la purge groupée a
+# disparu (web le 2026-10-07, TUI le 2026-10-08) : un absent se supprime ligne
+# à ligne.
 #
 # Arbre cross-seed : les torrents qui partagent au moins un fichier réel
 # (même (dev, inode), voir build_cross_seed_groups) sont une seule et même
@@ -31,6 +33,7 @@
 # fois le téléchargement d'origine parti, ses cross-seeds n'ont plus rien à
 # seeder. Supprimer un enfant seul ne touche ni au parent ni aux autres
 # cross-seeds.
+import collections
 import hashlib
 import http.client
 import json
@@ -359,7 +362,7 @@ def tracker_display(torrent, tracker_map):
     "Autre" plutôt que listé tel quel : une release peut embarquer une
     vingtaine de trackers publics de secours en plus du sien (constaté le
     2026-08-02 sur un post YggReborn ancien, 24 hosts d'annonce), ce qui
-    débordait complètement la colonne — en TUI comme en web. Le détail reste
+    débordait complètement la colonne. Le détail reste
     accessible : les hostnames bruts sont renvoyés à part pour alimenter un
     tooltip côté web (`title=` natif — pas un tooltip Bootstrap, qui
     nécessiterait Popper, non vendoré, voir CLAUDE.md)."""
@@ -594,7 +597,8 @@ def execute_arr_plan(plan):
 
 def arr_failure_note(arr_failed):
     """Suffixe du message affiché après une suppression dont une action arr a
-    échoué — partagé par le web et la TUI pour qu'ils disent la même chose."""
+    échoué — partagé par toutes les routes de suppression pour qu'elles disent
+    la même chose."""
     if not arr_failed:
         return ""
     return (f" — ATTENTION : {arr_failed} action(s) Sonarr/Radarr ont ÉCHOUÉ, le titre peut être "
@@ -1055,30 +1059,40 @@ HEALTHY_KINDS = ("film", "series", "anime", "bd")
 # importing, downloading tant que l'arr n'a pas vu la fin...) = en cours.
 QUEUE_BLOCKED_STATES = {"importBlocked", "failedPending", "failed", "ignored"}
 
+# Grab déjà traité par l'arr mais encore listé dans sa file : même sens que
+# l'absence de la file (torrent_kind rend « remplacé » s'il n'a aucun fichier
+# dans library/).
+QUEUE_DONE_STATES = {"imported"}
+
 # Clés : catégories de ARR_CATEGORY_KINDS — un grab Sonarr se cherche dans la
 # file de Sonarr. includeUnknown* : sans lui, un grab que l'arr n'a pas su
 # rattacher à un titre (cas typique d'import bloqué) est absent de la file.
+# includeSeries : la série de chaque grab, seule source sûre pour typer
+# « anime » un téléchargement pas encore importé (torrent_kind).
 ARR_QUEUES = {
-    "sonarr": (SONARR_URL, SONARR_API_KEY, "includeUnknownSeriesItems"),
-    "radarr": (RADARR_URL, RADARR_API_KEY, "includeUnknownMovieItems"),
+    "sonarr": (SONARR_URL, SONARR_API_KEY, {"includeUnknownSeriesItems": "true", "includeSeries": "true"}),
+    "radarr": (RADARR_URL, RADARR_API_KEY, {"includeUnknownMovieItems": "true"}),
 }
 
 
 def arr_queue_states():
-    """{catégorie: {infoHash en majuscules: trackedDownloadState}} lu dans la
-    file de chaque arr — `downloadId` y est l'infoHash, comme dans
-    l'historique (voir series_grabbed_torrents). Une file injoignable vaut
-    None, pas {} : torrent_kind ne doit pas en conclure que tout a été traité
-    (il rend alors « inconnu »)."""
+    """{catégorie: {infoHash en majuscules: {"state": trackedDownloadState,
+    "anime": bool}}} lu dans la file de chaque arr — `downloadId` y est
+    l'infoHash, comme dans l'historique (voir series_grabbed_torrents).
+    "anime" = la série Sonarr du grab est de type anime (is_anime), toujours
+    False côté Radarr. Une file injoignable vaut None, pas {} : torrent_kind ne
+    doit pas en conclure que tout a été traité (il rend alors « inconnu »)."""
     states = {}
-    for category, (url, api_key, unknown_param) in ARR_QUEUES.items():
-        data = arr_api(url, api_key, "GET", "/api/v3/queue",
-                       params={"pageSize": 1000, unknown_param: "true"})
+    for category, (url, api_key, params) in ARR_QUEUES.items():
+        data = arr_api(url, api_key, "GET", "/api/v3/queue", params={"pageSize": 1000, **params})
         if not isinstance(data, dict) or "records" not in data:
             states[category] = None
             continue
-        states[category] = {str(r.get("downloadId") or "").upper(): r.get("trackedDownloadState")
-                            for r in data["records"] if r.get("downloadId")}
+        states[category] = {
+            str(r["downloadId"]).upper(): {"state": r.get("trackedDownloadState"),
+                                           "anime": is_anime(r.get("series") or {})}
+            for r in data["records"] if r.get("downloadId")
+        }
     return states
 
 
@@ -1096,24 +1110,27 @@ def torrent_kind(torrent, meta, queue_states=None):
     Uniquement des sources sûres, jamais une devinette sur le nom de la release
     ou d'un dossier posé à la main (arbitré le 2026-10-07 — completed/kids porte
     un film, completed/anime des séries non-anime) : dossier BD, puis titre arr
-    rattaché (`meta`, voir torrent_meta), puis catégorie arr du downloadDir — un
-    grab Sonarr en cours reste une série, même si c'est un anime (la
-    catégorie Sonarr est commune aux deux). Purement descriptif, rien ne se
-    décide dessus.
+    rattaché (`meta`, voir torrent_meta), puis catégorie arr du downloadDir.
+    La catégorie Sonarr est commune aux séries et aux animes : un grab Sonarr
+    pas encore importé est « anime » si la file de Sonarr le rattache à une
+    série de type anime (demandé le 2026-10-08), « série » sinon — y compris
+    quand la file est injoignable, la catégorie suffisant à dire « série ».
+    Purement descriptif, rien ne se décide dessus.
 
     Grab arr TERMINÉ sans aucun fichier dans library/ (demandé le 2026-10-07),
     départagé par la file de l'arr (`queue_states`, voir arr_queue_states) :
     - "blocked" (signe interdit) : dans la file, état QUEUE_BLOCKED_STATES ;
     - "importing" (sablier) : dans la file, tout autre état ;
-    - "replaced" (recyclage) : absent de la file, donc déjà traité par l'arr —
-      en pratique une release remplacée par une autre (ou une entrée retirée
-      de la file à la main).
+    - "replaced" (recyclage) : absent de la file (ou listé QUEUE_DONE_STATES),
+      donc déjà traité par l'arr — en pratique une release remplacée par une
+      autre (ou une entrée retirée de la file à la main).
     File de l'arr injoignable : None (inconnu), on ne devine pas (demandé le
     2026-10-07).
-    Sur `_linked` (la colonne BIB) et non sur `meta` : un titre retiré de l'arr
+    Sur `_linked` (lié à library/) et non sur `meta` : un titre retiré de l'arr
     en laissant ses fichiers dans library/ n'a plus de meta, mais il est
     toujours dans la bibliothèque. Un téléchargement en cours garde le type de
-    sa catégorie : il n'a simplement pas encore été importé."""
+    sa catégorie (ou « anime », voir plus haut) : il n'a simplement pas encore
+    été importé."""
     if torrent.get("_missing"):
         return "absent"
     if is_bd_torrent(torrent):
@@ -1123,16 +1140,44 @@ def torrent_kind(torrent, meta, queue_states=None):
     for category, kind in ARR_CATEGORY_KINDS.items():
         if not _download_dir_under(torrent, os.path.join(COMPLETED_ROOT, category)):
             continue
-        if torrent.get("percentDone", 0) < 1 or torrent.get("_linked"):
-            return kind
         queue = (queue_states or {}).get(category)
+        entry = (queue or {}).get(str(torrent.get("hashString") or "").upper())
+        if torrent.get("percentDone", 0) < 1 or torrent.get("_linked"):
+            return "anime" if entry and entry["anime"] else kind
         if queue is None:
             return None
-        state = queue.get(str(torrent.get("hashString") or "").upper())
-        if state is None:
+        if entry is None or entry["state"] in QUEUE_DONE_STATES:
             return "replaced"
-        return "blocked" if state in QUEUE_BLOCKED_STATES else "importing"
+        return "blocked" if entry["state"] in QUEUE_BLOCKED_STATES else "importing"
     return None
+
+
+def assign_torrent_kinds(all_torrents, cross_seed_groups, metas, queue_states):
+    """Pose `_kind` (torrent_kind) sur chaque torrent — avant le tri, la
+    colonne TYPE trie dessus. `metas` : {id: torrent_meta(...)}.
+
+    Un cross-seed est le même contenu que son parent : il hérite de son type
+    quand il n'en a pas (son downloadDir est .cross-seed-links/<tracker>, et il
+    n'est pas toujours hardlinké à library/). Jamais l'inverse : un type propre
+    à l'enfant (absent, film rattaché par inode...) reste le sien."""
+    kinds = {t["id"]: torrent_kind(t, metas.get(t["id"]), queue_states) for t in all_torrents}
+    for parent_id, children in cross_seed_groups.items():
+        for c in children:
+            kinds[c["id"]] = kinds.get(c["id"]) or kinds.get(parent_id)
+    for t in all_torrents:
+        t["_kind"] = kinds[t["id"]]
+
+
+def kind_filter_groups(kinds):
+    """Boutons du filtre par type de la vue Torrents : {"healthy": [(type,
+    nombre), ...], "degraded": [...]}, dans l'ordre de TORRENT_KINDS, types à
+    zéro compris (le bouton est alors désactivé). `kinds` : le type de chaque
+    groupe RENDU (celui de son parent), donc après le filtre par nom."""
+    counts = collections.Counter(kinds)
+    groups = {"healthy": [], "degraded": []}
+    for k in TORRENT_KINDS:
+        groups["healthy" if k in HEALTHY_KINDS else "degraded"].append((k, counts[k]))
+    return groups
 
 
 # --- disponibilité des services derrière les onglets web ---
@@ -1151,8 +1196,10 @@ def _probe_komga():
     page d'erreur servie en 200 ne passe pas pour un Komga vivant."""
     if not DOMAIN:
         return False
-    conn = http.client.HTTPSConnection(*TRAEFIK_HTTPS, timeout=2,
-                                       context=ssl._create_unverified_context())
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    conn = http.client.HTTPSConnection(*TRAEFIK_HTTPS, timeout=2, context=context)
     try:
         conn.request("GET", KOMGA_HEALTH_PATH, headers={"Host": f"komga.{DOMAIN}"})
         resp = conn.getresponse()
@@ -1791,28 +1838,6 @@ def orphans_fingerprint(orphans):
     return digest.hexdigest()
 
 
-def abs_purge_refusal(all_torrents, missing_ids):
-    """Raison de refuser la purge des ABS, ou None.
-
-    ABS veut dire « les fichiers de CE torrent ont disparu ». Si les données
-    Transmission ne sont plus montées (disque absent, montage raté au
-    démarrage), TOUS les torrents le deviennent d'un coup, et la purge viderait
-    Transmission. Deux signaux : le dossier completed/ absent ou vide, ou plus
-    d'un torrent et aucun qui ait encore un fichier sur le disque."""
-    try:
-        completed_empty = not os.listdir(COMPLETED_ROOT)
-    except OSError:
-        completed_empty = True
-    if completed_empty:
-        return (f"{COMPLETED_ROOT} est absent ou vide : les données Transmission ne semblent pas "
-                "montées. Purge refusée — rien n'a été supprimé.")
-    ids = {t["id"] for t in all_torrents}
-    if len(ids) > 1 and ids <= set(missing_ids):
-        return (f"Les {len(ids)} torrents sont tous marqués ABS : c'est un problème de montage "
-                "plutôt que des fichiers disparus. Purge refusée — rien n'a été supprimé.")
-    return None
-
-
 def cleanup_orphan_files(target_path, root=LIBRARY_ROOT, covered=()):
     """Supprime tout fichier restant sous un dossier après le passage de
     bulk_delete_torrents — un fichier sans torrent Transmission correspondant
@@ -1878,7 +1903,7 @@ def execute_delete_series(client, series, matched, all_torrents, cross_seed_grou
     passe par plan_season_deletion() + execute_delete_seasons(), volontairement
     séparées plutôt qu'ajoutées ici en paramètres : les deux ne partagent ni
     l'ordre des écritures Sonarr, ni ce qu'elles balaient, ni ce qu'elles
-    promettent. La TUI et le bouton « Purger » de l'UI web appellent celle-ci."""
+    promettent. Le bouton « Purger » du web appelle celle-ci."""
     host_path = series["path"]  # même mount /data_root que Sonarr, aucune traduction nécessaire
     all_torrents, freed, deleted, failed, failed_entries = bulk_delete_torrents(
         client, matched, all_torrents, linked_ids, missing_ids, cross_seed_groups)
@@ -2056,14 +2081,14 @@ def execute_delete_media_path(client, plan, all_torrents, cross_seed_groups, lin
     return all_torrents, freed + orphan_freed, deleted, failed
 
 
-# Champs de tri disponibles (vue Torrents). BIB/ABS (bibliothèque/absent)
-# lisent des attributs précalculés (_linked/_missing, posés une seule fois au
-# chargement en même temps que linked_ids/missing_ids) plutôt que de refaire
-# un lookup dans ces sets ici : un lambda de SORT_FIELDS ne reçoit que le
-# torrent, pas les sets externes.
+# Champs de tri de la vue Torrents, dans l'ordre des colonnes affichées. Un
+# lambda ne reçoit que le torrent : TYPE lit donc `_kind`, posé par
+# assign_torrent_kinds avant le tri (il dépend des métadonnées et de la file
+# arr, que load_full_state ne charge pas), ABS lit `_missing`, posé au
+# chargement. Plus de colonne BIB (2026-10-07) : le nombre de torrents liés à
+# library/ est dans la ligne de résumé.
 SORT_FIELDS = [
-    ("BIB", lambda t: t["_linked"]),
-    ("ABS", lambda t: t["_missing"]),
+    ("TYPE", lambda t: TORRENT_KINDS.index(t.get("_kind"))),
     ("AGE", lambda t: t["addedDate"]),
     ("TAILLE", lambda t: t["totalSize"]),
     ("RATIO", lambda t: t["uploadRatio"]),
@@ -2091,27 +2116,11 @@ FILMS_SORT_FIELDS = [
     ("TITRE", lambda m: m["title"].lower()),
 ]
 
-# Colonnes de l'onglet BD : SORT_FIELDS sans BIB. Ce marqueur signale un
-# fichier library/ hardlinké au torrent ; sous completed/bd il n'y en a jamais,
-# donc la colonne serait vide en permanence — et vide y voudrait dire tout
-# autre chose qu'ailleurs, où l'absence de BIB signale un grab jamais importé.
-# Une colonne toujours vide qui ment sur sa propre sémantique vaut moins que
-# pas de colonne. Dérivé de SORT_FIELDS plutôt que recopié : un champ ajouté
+# Colonnes de l'onglet BD : ABS à la place de TYPE, qui n'y vaudrait que
+# « BD » ou « absent » — ABS dit la même chose en une coche, seul signal d'une
+# BD disparue. Dérivé de SORT_FIELDS plutôt que recopié : un champ ajouté
 # là-bas arrive ici tout seul.
-BD_SORT_FIELDS = [f for f in SORT_FIELDS if f[0] != "BIB"]
-
-# Vue Torrents du web : TYPE à la place de BIB et ABS (demandé le 2026-10-07 ;
-# le nombre de torrents liés à library/ reste dans la ligne de résumé, ABS est
-# devenu le type "absent"). Liste à part parce que la TUI parcourt SORT_FIELDS
-# par index avec des colonnes écrites en dur — elle garde BIB et ABS — et
-# qu'elle ne calcule pas `_kind` (posé par webapp.render_torrents_tab, qui
-# dispose seul des métadonnées arr). Absent de BD_SORT_FIELDS : la colonne y
-# serait constante, et ABS y reste (seul signal d'une BD disparue).
-WEB_SORT_FIELDS = ([("TYPE", lambda t: TORRENT_KINDS.index(t.get("_kind")))]
-                   + [f for f in SORT_FIELDS if f[0] not in ("BIB", "ABS")])
-
-VIEWS = ["torrents", "series", "films"]
-VIEW_LABELS = {"torrents": "Torrents", "series": "Séries", "films": "Films"}
+BD_SORT_FIELDS = [("ABS", lambda t: t["_missing"])] + [f for f in SORT_FIELDS if f[0] != "TYPE"]
 
 
 def sort_items(items, fields, sort_idx, reverse):
@@ -2266,9 +2275,12 @@ def has_partial_files(torrent):
     downloadDir : Transmission écrit dans incomplete/ (`incomplete-dir-enabled`)
     en suffixant `.part` (`rename-partial-files`), et ne déplace vers
     completed/ qu'à la fin. Sans ce contrôle, tout torrent en cours sortait
-    ABS — et « Purger les ABS » l'aurait supprimé, données comprises.
+    ABS — et le supprimer comme absent aurait emporté ses données.
     Appelé seulement pour un torrent déjà sans fichier sous son downloadDir :
-    aucun stat de plus sur les autres."""
+    aucun stat de plus sur les autres. Copie dans scripts/transmission-stats.py
+    (logique dupliquée, voir .claude/docs/transmission.md) : tout changement
+    du critère ABS s'y reporte — oublié une fois, le dashboard comptait chaque
+    téléchargement en cours « Absent » (2026-10-05)."""
     for f in torrent.get("files", []):
         path = os.path.join(INCOMPLETE_ROOT, f["name"])
         if os.path.lexists(path) or os.path.lexists(path + ".part"):
@@ -2299,8 +2311,8 @@ def build_cross_seed_groups(all_torrents):
     après chaque suppression pour refléter les groupes restants. Renvoie
     (groups, child_ids) : groups = {parent_id: [torrent_enfant, ...]}
     (uniquement les groupes de taille >= 2), child_ids = ids à retirer du
-    niveau racine de l'arbre (déjà représentés sous leur parent, voir
-    build_tree)."""
+    niveau racine (déjà représentés sous leur parent, voir
+    webapp.render_torrents_tab)."""
     parent_of = {t["id"]: t["id"] for t in all_torrents}
 
     def find(x):
@@ -2340,30 +2352,6 @@ def build_cross_seed_groups(all_torrents):
         groups[parent["id"]] = children
         child_ids.update(t["id"] for t in children)
     return groups, child_ids
-
-
-def build_tree(top_level, cross_seed_groups, expanded_ids, filter_str):
-    """Aplatit les groupes cross-seed en lignes affichables/navigables : une
-    ligne racine par torrent parent (depth=0), suivie de ses enfants
-    (depth=1, un par cross-seed) si le groupe est déplié (expanded_ids) — ou
-    si le filtre ne matche qu'un enfant, auquel cas le groupe est forcé
-    ouvert pour révéler ce match plutôt que de le masquer silencieusement.
-    top_level : torrents dont l'id n'est pas dans child_ids de
-    build_cross_seed_groups (déjà filtré par l'appelant, un enfant ne doit
-    apparaître qu'une fois, sous son parent)."""
-    needle = filter_str.lower()
-    rows = []
-    for t in top_level:
-        children = cross_seed_groups.get(t["id"], [])
-        parent_match = needle in t["name"].lower()
-        matching_children = [c for c in children if needle in c["name"].lower()]
-        if needle and not parent_match and not matching_children:
-            continue
-        rows.append({"torrent": t, "depth": 0, "child_count": len(children), "parent_id": None})
-        if children and (t["id"] in expanded_ids or (needle and matching_children and not parent_match)):
-            for c in sorted(children, key=lambda c: c.get("_tracker_name", "")):
-                rows.append({"torrent": c, "depth": 1, "child_count": 0, "parent_id": t["id"]})
-    return rows
 
 
 def prune_empty_dirs(path, root=LIBRARY_ROOT):
@@ -2450,10 +2438,9 @@ def apply_deletion(client, torrent, host_files, lib_matches, arr_plan, all_torre
 
 def load_full_state():
     """Point d'entrée unique utilisé par webapp.py (recalcul complet à chaque
-    requête, voir CLAUDE.md "risque perf") et par tui.py (une seule fois au
-    démarrage) : récupère les torrents Transmission, résout les noms de
-    tracker, indexe library/, calcule les marqueurs BIB/ABS et les groupes
-    cross-seed. Renvoie un dict prêt à consommer par les deux frontends."""
+    requête, voir CLAUDE.md "risque perf") : récupère les torrents
+    Transmission, résout les noms de tracker, indexe library/, calcule les
+    marqueurs `_linked`/`_missing` et les groupes cross-seed."""
     client = TransmissionClient()
     all_torrents = client.list_torrents()
 

@@ -293,21 +293,6 @@ update-all: ## — `update` sur les stacks démarrées, prune les images orpheli
 dashboard-refresh: ## — régénère dashboard/html/ (aussi fait par cron toutes les 5 min)
 	@python3 scripts/generate-dashboard.py
 
-# TUI de nettoyage manuel (même nom que le sous-domaine LAN-only clearr.${DOMAIN},
-# arr/docker-compose.yml) : liste les torrents Transmission, supprime à la
-# demande le torrent (+ fichiers) et les fichiers hardlinkés correspondants
-# dans library/ — voir arr/clearr/app/. Web (service `clearr`, démarré en
-# continu par `make up STACK=arr`) et TUI (ce target, ponctuel) partagent la
-# même image/le même core.py ; ancien script hôte scripts/torrent-cleanup.py
-# retiré (tournait via docker exec, incompatible avec la conteneurisation).
-# `tui` seul, pas `python -m app tui` : l'image a un ENTRYPOINT
-# ["python", "-m", "app"] (arr/clearr/Dockerfile), les arguments donnés à `run`
-# s'y ajoutent — les répéter faisait voir `python` à argparse comme
-# sous-commande (`invalid choice: 'python'`).
-clearr: STACK := arr
-clearr: network ## — TUI de nettoyage torrents/bibliothèque (équivalent console de clearr.<domaine>)
-	@$(compose) run --rm -it clearr tui
-
 # collecte les secrets générés au premier démarrage et les écrit dans arr/.env
 # (clés API Prowlarr/Sonarr/Radarr lues dans leur config.xml, clé cross-seed,
 # clé API Jellyfin créée au besoin) — voir scripts/provision.py. À lancer AVANT

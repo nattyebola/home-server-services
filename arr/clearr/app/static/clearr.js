@@ -5,8 +5,8 @@
 // bootstrap.min.css) plutôt qu'être réimplémentée à la main : focus trap,
 // touche Échap, clic sur le fond, aria-* sont déjà corrects dans son JS,
 // les réécrire ici aurait été strictement moins bien. Recharge toujours le
-// fragment ciblé en entier depuis le serveur — même principe "on relance
-// tout puis on redessine" que la TUI curses.
+// fragment ciblé en entier depuis le serveur ("on relance tout puis on
+// redessine").
 (function () {
   function formParams(form) {
     return new URLSearchParams(new FormData(form)).toString();
@@ -183,6 +183,16 @@
     document.querySelectorAll("[data-kind-filter]").forEach(function (radio) {
       radio.checked = radio.value === kind;
     });
+    syncKindEmpty(kind);
+  }
+
+  // Le CSS masque les lignes mais ne sait pas dire « il n'en reste aucune » :
+  // sans ce message, un type à zéro (ou vidé par le filtre par nom, ou par la
+  // dernière suppression) laissait un tableau vide sans explication.
+  function syncKindEmpty(kind) {
+    document.querySelectorAll("[data-kind-empty]").forEach(function (row) {
+      row.hidden = !kind || !!row.closest("tbody").querySelector('tr[data-kind="' + kind + '"]');
+    });
   }
 
   document.addEventListener("change", function (e) {
@@ -193,6 +203,7 @@
     } else {
       document.documentElement.removeAttribute("data-clearr-kind");
     }
+    syncKindEmpty(radio.value);
   });
 
   // État porté par <html> mais affiché DANS le fragment : à rejouer après

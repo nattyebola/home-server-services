@@ -1,8 +1,7 @@
-# Point d'entrée unique de l'image clearr — trois sous-commandes partageant
+# Point d'entrée unique de l'image clearr — deux sous-commandes partageant
 # le même core.py (voir core.py pour le pourquoi) :
 #   serve            service web (uvicorn), lancé en continu par
 #                     `make up STACK=arr` (arr/docker-compose.yml)
-#   tui              TUI interactive, `make clearr`
 #   delete-by-inode  mode non-interactif (outil manuel, voir cli.py)
 import argparse
 import sys
@@ -13,7 +12,6 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("serve", help="service web (uvicorn)")
-    sub.add_parser("tui", help="TUI interactive")
 
     p_inode = sub.add_parser("delete-by-inode", help="supprime un torrent par (dev, inode), à capturer avant un remplacement")
     p_inode.add_argument("dev", type=int)
@@ -25,9 +23,6 @@ def main():
     if args.command == "serve":
         import uvicorn
         uvicorn.run("app.webapp:app", host="0.0.0.0", port=8000)
-    elif args.command == "tui":
-        from . import tui
-        tui.run()
     elif args.command == "delete-by-inode":
         from . import cli, core
         try:

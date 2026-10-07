@@ -185,8 +185,8 @@ services:
   clearr:
     # 1er service du repo avec un build custom hors nextcloud/ (voir
     # arr/clearr/Dockerfile — python:3-slim + dépendances FastAPI/uvicorn/
-    # Jinja2, pas d'image tierce). Web + TUI + CLI delete-by-inode partagent
-    # tous arr/clearr/app/core.py, voir ce fichier pour le détail du transport
+    # Jinja2, pas d'image tierce). Web et CLI delete-by-inode partagent
+    # arr/clearr/app/core.py, voir ce fichier pour le détail du transport
     # HTTP direct (plus de docker exec — l'ancien scripts/torrent-cleanup.py
     # tournait sur l'hôte et shellait dans les conteneurs, incompatible avec
     # rootless/cap_drop:ALL une fois lui-même conteneurisé).

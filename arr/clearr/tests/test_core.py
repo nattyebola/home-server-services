@@ -332,14 +332,15 @@ class IsBdTorrent(unittest.TestCase):
 
 class BdSortFields(unittest.TestCase):
     """BD_SORT_FIELDS est dérivé de SORT_FIELDS, pas recopié : un champ ajouté
-    à SORT_FIELDS doit arriver dans l'onglet BD tout seul, et seule la colonne
-    BIB doit manquer (elle est vide par construction sous completed/bd)."""
+    à SORT_FIELDS doit arriver dans l'onglet BD tout seul. ABS y remplace TYPE
+    (seul signal d'une BD disparue)."""
 
-    def test_seul_bib_est_retire(self):
+    def test_abs_remplace_type(self):
         noms = [n for n, _ in core.SORT_FIELDS]
         noms_bd = [n for n, _ in core.BD_SORT_FIELDS]
-        self.assertEqual(noms_bd, [n for n in noms if n != "BIB"])
-        self.assertNotIn("BIB", noms_bd)
+        self.assertEqual(noms[0], "TYPE")
+        self.assertEqual(noms_bd, ["ABS"] + [n for n in noms if n != "TYPE"])
+        self.assertNotIn("BIB", noms)
 
 
 class TorrentKind(unittest.TestCase):
@@ -377,11 +378,38 @@ class TorrentKind(unittest.TestCase):
     def done(self, download_dir, hash_="ABC"):
         return dict(self.torrent(download_dir), percentDone=1.0, _linked=False, hashString=hash_)
 
+    def queue(self, state, anime=False, hash_="ABC"):
+        return {hash_: {"state": state, "anime": anime}}
+
+    def test_anime_en_cours_type_par_la_file_sonarr(self):
+        # Pas encore de meta (rien dans library/) : seule la série du grab,
+        # lue dans la file, dit que c'est un anime.
+        t = dict(self.torrent("/data/completed/sonarr"), percentDone=0.4, _linked=False, hashString="abc")
+        self.assertEqual(core.torrent_kind(t, None, {"sonarr": self.queue("downloading", anime=True)}), "anime")
+        self.assertEqual(core.torrent_kind(t, None, {"sonarr": self.queue("downloading")}), "series")
+
+    def test_anime_en_cours_file_injoignable_reste_serie(self):
+        # La catégorie suffit à dire « série » ; on ne devine pas « anime ».
+        t = dict(self.torrent("/data/completed/sonarr"), percentDone=0.4, _linked=False, hashString="abc")
+        self.assertEqual(core.torrent_kind(t, None, {"sonarr": None}), "series")
+        self.assertEqual(core.torrent_kind(t, None, {"sonarr": {}}), "series")
+
+    def test_anime_termine_bloque_reste_bloque(self):
+        # Dégradé prime sur anime : il faut le voir pour le débloquer.
+        t = self.done("/data/completed/sonarr")
+        self.assertEqual(core.torrent_kind(t, None, {"sonarr": self.queue("importBlocked", anime=True)}),
+                         "blocked")
+
     def test_hors_bibliotheque_absent_de_la_file_remplace(self):
         # Release remplacée par une autre : l'arr ne la suit plus.
         queues = {"sonarr": {}, "radarr": {}}
         for d in ("/data/completed/sonarr", "/data/completed/radarr"):
             self.assertEqual(core.torrent_kind(self.done(d), None, queues), "replaced", d)
+
+    def test_hors_bibliotheque_deja_importe_remplace(self):
+        # Encore listé « imported » dans la file : déjà traité, comme absent.
+        t = self.done("/data/completed/radarr")
+        self.assertEqual(core.torrent_kind(t, None, {"radarr": self.queue("imported")}), "replaced")
 
     def test_hors_bibliotheque_bloque_ou_en_cours_selon_la_file(self):
         # downloadId de l'arr en majuscules, hashString de Transmission en
@@ -389,12 +417,12 @@ class TorrentKind(unittest.TestCase):
         t = self.done("/data/completed/sonarr", hash_="abc")
         for state, kind in (("importBlocked", "blocked"), ("failed", "blocked"),
                             ("importPending", "importing"), ("importing", "importing")):
-            self.assertEqual(core.torrent_kind(t, None, {"sonarr": {"ABC": state}}), kind, state)
+            self.assertEqual(core.torrent_kind(t, None, {"sonarr": self.queue(state)}), kind, state)
 
     def test_file_de_l_autre_arr_ignoree(self):
         # Un grab Radarr ne se cherche que dans la file de Radarr.
         t = self.done("/data/completed/radarr")
-        self.assertEqual(core.torrent_kind(t, None, {"sonarr": {"ABC": "importBlocked"}, "radarr": {}}),
+        self.assertEqual(core.torrent_kind(t, None, {"sonarr": self.queue("importBlocked"), "radarr": {}}),
                          "replaced")
 
     def test_file_injoignable_inconnu(self):
@@ -411,7 +439,7 @@ class TorrentKind(unittest.TestCase):
         # Ex-colonne ABS : vaut aussi pour une BD ou un dossier manuel.
         for d in ("/data/completed/bd/Sillage", "/data/completed/sonarr", "/data/completed/kids"):
             t = dict(self.done(d), _missing=True)
-            self.assertEqual(core.torrent_kind(t, None, {"sonarr": {"ABC": "importBlocked"}}), "absent", d)
+            self.assertEqual(core.torrent_kind(t, None, {"sonarr": self.queue("importBlocked")}), "absent", d)
 
     def test_hors_bibliotheque_reserve_aux_categories_arr(self):
         # Un dossier manuel ou une BD ne vont jamais dans library/ : ce n'est
@@ -427,25 +455,45 @@ class TorrentKind(unittest.TestCase):
             self.assertIsNone(core.torrent_kind(self.torrent(d), None), d)
 
 
-class WebSortFields(unittest.TestCase):
-    """TYPE remplace BIB et ABS côté web seulement : la TUI parcourt
-    SORT_FIELDS par index avec des colonnes écrites en dur, elle garde les deux."""
-
-    def test_type_remplace_bib_et_absent_de_la_tui(self):
-        noms = [n for n, _ in core.SORT_FIELDS]
-        noms_web = [n for n, _ in core.WEB_SORT_FIELDS]
-        self.assertNotIn("TYPE", noms)
-        self.assertIn("BIB", noms)
-        self.assertIn("ABS", noms)
-        self.assertEqual(noms_web, ["TYPE"] + [n for n in noms if n not in ("BIB", "ABS")])
-        # L'onglet BD n'a pas de TYPE : ABS y reste le seul signal d'une BD disparue.
-        self.assertIn("ABS", [n for n, _ in core.BD_SORT_FIELDS])
-        self.assertNotIn("TYPE", [n for n, _ in core.BD_SORT_FIELDS])
+class TypeSortField(unittest.TestCase):
 
     def test_tri_sans_type_ne_leve_pas(self):
         # Inconnu (None) doit avoir un rang, sinon .index() lèverait au tri.
-        key = dict(core.WEB_SORT_FIELDS)["TYPE"]
+        key = dict(core.SORT_FIELDS)["TYPE"]
         self.assertEqual(key({}), len(core.TORRENT_KINDS) - 1)
+
+
+class AssignTorrentKinds(unittest.TestCase):
+    """Héritage du type par les cross-seeds (vue Torrents)."""
+
+    def test_cross_seed_sans_type_herite_du_parent(self):
+        parent = {"id": 1, "downloadDir": "/data/completed/sonarr", "percentDone": 1.0,
+                  "_linked": True, "hashString": "aaa"}
+        child = {"id": 2, "downloadDir": "/data/.cross-seed-links/C411"}
+        core.assign_torrent_kinds([parent, child], {1: [child]}, {1: {"kind": "series", "anime": True}}, {})
+        self.assertEqual((parent["_kind"], child["_kind"]), ("anime", "anime"))
+
+    def test_type_propre_de_l_enfant_garde(self):
+        parent = {"id": 1, "downloadDir": "/data/completed/kids"}
+        child = {"id": 2, "downloadDir": "/data/.cross-seed-links/C411", "_missing": True}
+        core.assign_torrent_kinds([parent, child], {1: [child]}, {}, {})
+        self.assertEqual((parent["_kind"], child["_kind"]), (None, "absent"))
+
+    def test_hors_groupe_inchange(self):
+        seul = {"id": 3, "downloadDir": "/data/completed/bd/Sillage"}
+        core.assign_torrent_kinds([seul], {}, {}, None)
+        self.assertEqual(seul["_kind"], "bd")
+
+
+class KindFilterGroups(unittest.TestCase):
+
+    def test_comptes_et_groupes(self):
+        groups = core.kind_filter_groups(["film", "film", "anime", None, "blocked"])
+        self.assertEqual([k for k, _ in groups["healthy"]], list(core.HEALTHY_KINDS))
+        self.assertEqual([k for k, _ in groups["healthy"] + groups["degraded"]], list(core.TORRENT_KINDS))
+        counts = dict(groups["healthy"] + groups["degraded"])
+        self.assertEqual((counts["film"], counts["anime"], counts[None], counts["blocked"], counts["bd"]),
+                         (2, 1, 1, 1, 0))
 
 
 class BuildCrossSeedGroups(unittest.TestCase):
@@ -954,34 +1002,6 @@ class SeriesEpisodeFilesForme(unittest.TestCase):
     def test_liste_vide_est_valide(self):
         core.arr_api = lambda *a, **k: []
         self.assertEqual(core.series_episode_files(1), [])
-
-
-class AbsPurgeRefusal(unittest.TestCase):
-    """Un montage absent rend TOUS les torrents ABS : la purge viderait
-    Transmission. Elle doit refuser dans ce cas, et seulement dans ce cas."""
-
-    def setUp(self):
-        self.marker = touch(Path(core.COMPLETED_ROOT, "anime", "present.mkv"))
-        self.addCleanup(os.remove, self.marker)
-        self.torrents = [{"id": 1}, {"id": 2}, {"id": 3}]
-
-    def test_cas_nominal(self):
-        self.assertIsNone(core.abs_purge_refusal(self.torrents, {2}))
-
-    def test_tous_abs_refuse(self):
-        self.assertIsNotNone(core.abs_purge_refusal(self.torrents, {1, 2, 3}))
-
-    def test_un_seul_torrent_abs_passe(self):
-        """Avec un seul torrent, « tous ABS » ne dit rien d'un montage."""
-        self.assertIsNone(core.abs_purge_refusal([{"id": 1}], {1}))
-
-    def test_completed_absent_refuse(self):
-        """Données non montées : completed/ déplacé le temps du test."""
-        completed = Path(core.COMPLETED_ROOT)
-        moved = completed.with_name("completed.moved")
-        completed.rename(moved)
-        self.addCleanup(moved.rename, completed)
-        self.assertIsNotNone(core.abs_purge_refusal(self.torrents, {2}))
 
 
 class OrphansFingerprint(unittest.TestCase):

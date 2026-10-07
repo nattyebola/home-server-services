@@ -6,7 +6,7 @@
 # AVANT l'import — une fois la nouvelle release importée, Sonarr/Radarr a pu
 # déjà supprimer ce chemin côté library/, un stat a posteriori échouerait.
 # Ne touche PAS au monitoring Sonarr/Radarr (contrairement à une suppression
-# dans la TUI/le web, voir core.plan_sonarr_unmonitor) : l'épisode reste
+# dans le web, voir core.plan_sonarr_unmonitor) : l'épisode reste
 # surveillé, on vient de le remplacer par une meilleure release, pas de le
 # retirer. Affiche un JSON sur stdout pour qu'un appelant scripté parse le
 # résultat sans dépendre du log.

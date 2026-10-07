@@ -11,7 +11,7 @@ ligne chacune, pour ne pas relitiger une décision prise ni répéter un piège.
 **Détail par domaine dans `.claude/docs/*.md`, à lire AVANT d'y toucher**
 (décisions et pièges qui ont coûté cher) :
 
-- **`clearr.md`** — `arr/clearr/` (web, TUI, CLI `delete-by-inode`) et l'addon
+- **`clearr.md`** — `arr/clearr/` (web, CLI `delete-by-inode`) et l'addon
   Kodi `kodi/context.clearr`.
 - **`arr-config.md`** — `scripts/provision.py`, `apply-arr-overrides.py`,
   `search-missing.py`, `arr/profiles/` (profils de qualité), chaîne arr →

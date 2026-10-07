@@ -7,14 +7,16 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
 
 - **Remplace l'ancien `scripts/torrent-cleanup.py` / `make cleanup`**
   (2026-07-31) : web LAN-only (`clearr.${DOMAIN}`, middleware
-  `arr-lan-only`) **et** TUI d'origine (`make clearr`), toutes deux
-  appuyées sur le même `arr/clearr/app/core.py`. `webapp.py` (FastAPI +
-  Jinja2 + Bootstrap) et `tui.py`/`cli.py` (curses / `delete-by-inode`)
-  importent `core.py`, **jamais l'inverse**.
+  `arr-lan-only`), appuyé sur `arr/clearr/app/core.py`. `webapp.py`
+  (FastAPI + Jinja2 + Bootstrap) et `cli.py` (`delete-by-inode`) importent
+  `core.py`, **jamais l'inverse**. **TUI curses (`make clearr`, `tui.py`)
+  supprimée le 2026-10-08, à la demande** — avec elle `core.abs_purge_refusal`,
+  `build_tree`, `VIEWS`, la colonne BIB et la dernière purge en masse des
+  absents (`Maj+P`). Ne pas la réintroduire sans demande.
   Tourne en conteneur et rejoint `vpn-internal` (externe,
   `vpn_vpn-internal`) + le réseau `default` d'arr : HTTP direct vers
   `transmission-vpn:9091`, `sonarr:8989`, `radarr:7878`, `prowlarr:9696`.
-  L'ancienne TUI passait par `docker exec <container> curl` depuis l'hôte —
+  L'ancien script passait par `docker exec <container> curl` depuis l'hôte —
   plus besoin, et surtout pas de socket Docker (voir Socle).
   Monte `${DATA_ROOT}:/data_root` en lecture-écriture, exactement comme
   sonarr/radarr (même mount unique, même raison hardlink) : core.py et arr
@@ -31,8 +33,7 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   autres images de la stack en `:latest` — à réserver aux mises à jour
   voulues, pas à un aller-retour de développement.
   Chaque requête recalcule tout (`core.load_full_state()`), **jamais de
-  cache ni d'état en mémoire entre deux requêtes** — contrairement à la TUI
-  qui ne recharge qu'au démarrage. Mesuré acceptable à l'échelle de cette
+  cache ni d'état en mémoire entre deux requêtes**. Mesuré acceptable à l'échelle de cette
   bibliothèque, à revoir si ça dérive.
 - **Pas de HTMX ni de Popper**, malgré la validation initiale de
   « FastAPI + HTMX » : `static/clearr.js` est un petit JS maison
@@ -96,8 +97,6 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   façon pas. Ce nom vient du client, d'où `arr_tab_name()` qui le ramène à une
   valeur de `ARR_TABS` (un `ARR_TABS[tab]` nu lèverait un KeyError, donc un 500
   nu, sur une valeur inventée).
-  **La TUI n'a pas bougé** (`core.VIEWS` reste à 3), comme les autres ajouts
-  récents.
 - **Onglet BD** (2026-09-23) : les torrents déposés sous `completed/bd`, la
   bibliothèque de `komga/`. Deuxième vue de la liste Transmission, pas une
   source nouvelle — `TORRENT_TABS` joue pour Torrents/BD le rôle que `ARR_TABS`
@@ -131,23 +130,28 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   Le faux avertissement « Aucun fichier bibliothèque correspondant » est masqué
   pour une BD : l'absence de correspondance y est la normale, l'annoncer
   ferait croire à un problème à chaque suppression.
-  **La TUI n'a pas bougé**, comme les autres ajouts récents.
-- **Colonne TYPE de la vue Torrents** (2026-10-07, web seulement) : picto
+- **Colonne TYPE de la vue Torrents** (2026-10-07) : picto
   film / série / anime / BD / inconnu, **à la place de BIB** (demandé : la
-  colonne BIB a disparu du web, le compte des torrents liés à `library/` reste
-  dans la ligne de résumé ; la TUI garde BIB), `core.torrent_kind()`. **Sources sûres uniquement, arbitré** : dossier BD,
+  colonne BIB a disparu, le compte des torrents liés à `library/` reste
+  dans la ligne de résumé), `core.torrent_kind()`. **Sources sûres uniquement, arbitré** : dossier BD,
   puis rattachement arr (`meta["anime"]` posé par `item_meta` via
   `is_anime`, même critère que l'onglet Animés, sinon `meta["kind"]`), puis
   catégorie `completed/{sonarr,radarr}` (`ARR_CATEGORY_KINDS`, suit
-  `ARR_DOWNLOAD_CLIENT` de `provision.py`) — un grab Sonarr en cours y
-  reste « série » même si c'est un anime (catégorie commune).
+  `ARR_DOWNLOAD_CLIENT` de `provision.py`). **Anime pas encore importé**
+  (demandé le 2026-10-08) : la catégorie Sonarr est commune aux deux, donc
+  c'est la file de Sonarr qui tranche — `includeSeries=true`, et
+  `arr_queue_states` rend `{"state", "anime"}` par infoHash (`is_anime` sur la
+  série du grab). File injoignable ou grab pas encore dans la file : « série »
+  (la catégorie le prouve, « anime » ne se devine pas). Un grab terminé
+  bloqué/en import reste bloqué/en import, même anime.
   **Grab arr terminé hors bibliothèque, 3 types** (demandé le 2026-10-07,
   pour retrouver les releases remplacées que BIB montrait) : catégorie arr +
   `percentDone` à 1 + `_linked` faux, départagé par la file de l'arr
   (`core.arr_queue_states()`, `downloadId` = infoHash, comparé en
   majuscules ; un appel par arr à chaque rendu) : dans la file avec un état
   de `QUEUE_BLOCKED_STATES` → `blocked` (signe interdit) ; dans la file sinon
-  → `importing` (sablier) ; absent → `replaced` (recyclage). Sur `_linked`
+  → `importing` (sablier) ; absent, ou listé `imported`
+  (`QUEUE_DONE_STATES`, déjà traité) → `replaced` (recyclage). Sur `_linked`
   (= BIB) et **pas** sur l'absence de meta : un titre retiré de l'arr avec ses
   fichiers restés dans `library/` n'a plus de meta mais reste en
   bibliothèque. **`includeUnknownSeriesItems`/`includeUnknownMovieItems`
@@ -158,17 +162,20 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   devine pas). Un grab lié à `library/` n'est pas concerné, il garde le type
   de sa catégorie. Limite acceptée : une entrée retirée de la file à la main
   sans import sort aussi en recyclage. Un téléchargement en cours garde le
-  type de sa catégorie. Réservé aux catégories arr : un dossier manuel ou une
+  type de sa catégorie (ou « anime », ci-dessus). Réservé aux catégories arr : un dossier manuel ou une
   BD ne vont jamais dans `library/`, ce n'est pas un signal pour eux.
   **Type `absent`, loupe, à la place de la colonne ABS** (2026-10-07, web,
   vue Torrents) : `_missing`, testé **en premier**, avant même la BD — sinon
   une BD disparue redevenait une simple bulle et l'info était perdue. Sans
   fichier il n'y a de toute façon ni inode, ni meta, ni lien `library/`.
-  **L'onglet BD garde la colonne ABS** : il n'a pas de colonne TYPE, ce serait
-  son seul signal d'une BD disparue (`BD_SORT_FIELDS` intact).
-  **« Purger les ABS » retiré du web** (2026-10-07, demandé) : bouton, routes
-  `/torrents/purge-abs*` et `confirm_bulk.html` supprimés. La TUI garde
-  `Maj+P` et `core.abs_purge_refusal`. Ne pas le réintroduire sans demande.
+  **L'onglet BD garde la colonne ABS** à la place de TYPE (`BD_SORT_FIELDS` =
+  ABS + `SORT_FIELDS` sans TYPE) : seul signal d'une BD disparue. Il ne lit
+  pas les files arr (`queue_states=None`), inutiles à ses deux types.
+  **« Purger les ABS » retiré** (web le 2026-10-07, demandé ; `Maj+P` parti
+  avec la TUI le 2026-10-08, confirmé) : plus aucune purge en masse des
+  absents. Ne pas la réintroduire sans demande. Le garde-fou qu'elle portait
+  (montage raté = tous ABS) n'a plus d'objet ligne à ligne ; le symptôme
+  reste documenté dans `docs/clearr.md`.
   **Sains / dégradés** (2026-10-07) : `core.HEALTHY_KINDS` (film, série,
   anime, BD) ; le reste de `TORRENT_KINDS` est dégradé. Le filtre les montre
   en deux `btn-group` distincts, séparés par leur seul espacement (un `.vr`
@@ -187,10 +194,11 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   `--bs-danger-text-emphasis`, bordeaux presque noir en thème clair. Remplace l'ancien
   rouge réservé aux ABS (`abs_danger`, qui ne colore plus que la cellule ABS
   de l'onglet BD).
-  **`core.WEB_SORT_FIELDS` et non `SORT_FIELDS`** : la TUI parcourt ce
-  dernier par index avec des colonnes en dur (BIB et ABS comprises), et ne calcule pas `_kind` (posé
-  dans `render_torrents_tab`, **avant** le tri). Absente de l'onglet BD
-  (colonne constante, même raison que BIB).
+  **`_kind` posé avant le tri** (`core.assign_torrent_kinds`, appelé par
+  `render_torrents_tab`) : TYPE trie dessus. Il porte aussi l'héritage du
+  type par les cross-seeds sans type propre (jamais l'inverse) ; les compteurs
+  du filtre viennent de `core.kind_filter_groups` — tous deux dans `core.py`
+  pour être testés (`webapp.py` n'a pas de tests).
   **Pictos demandés tels quels** (clins d'œil) : fedora d'Indiana Jones
   (film), OVNI de X-Files (série), tête de Shenron (anime), bulle (BD),
   signe interdit (import bloqué, rouge), sablier (import en cours, violet :
@@ -210,7 +218,11 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   (elle ignorait déjà la vue). Radios **hors du
   `<form>`** (sinon sérialisées dans le filtre en direct), comptes calculés sur
   les groupes rendus (donc après le filtre par nom), **non mémorisé** (pas de
-  `localStorage`, comme le filtre par nom). **Jamais de `data-kind` dans
+  `localStorage`, comme le filtre par nom). Bouton à zéro **désactivé** ;
+  type vidé par le filtre par nom ou une suppression → ligne
+  `data-kind-empty` (« Aucun torrent de ce type ») affichée par
+  `syncKindEmpty()`, le CSS ne sachant pas dire « plus aucune ligne ».
+  **Jamais de `data-kind` dans
   l'onglet BD** : sans radios pour le réinitialiser, un filtre « film » resté
   posé sur `<html>` y masquerait tout.
 - **Onglets masqués quand leur service est arrêté** (2026-10-02,
@@ -229,9 +241,8 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
 - **Texte d'exception échappé** (`html.escape`) dans les deux handlers
   d'erreur HTML : le fragment part dans un `innerHTML` (`clearr.js`).
 - **Erreur réseau rendue en bandeau lisible**
-  (`@app.exception_handler(RuntimeError)`) plutôt qu'un 500 brut — la TUI
-  avait déjà ce filet dans `run()`, le web non (chaque route peut lever
-  indépendamment). Le handler teste le préfixe `/api/` et répond en **JSON**
+  (`@app.exception_handler(RuntimeError)`) plutôt qu'un 500 brut (chaque
+  route peut lever indépendamment). Le handler teste le préfixe `/api/` et répond en **JSON**
   dans ce cas : sinon l'addon Kodi recevait le fragment Bootstrap destiné au
   navigateur.
 - **Mise en page réglée au détail près, demandée ainsi — ne pas
@@ -393,7 +404,7 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   modale, comptée comme échec par `execute_arr_plan`) au lieu d'un plan vide
   indiscernable de « aucun arr ne suit ce fichier » ; `apply_deletion` rend
   `(restants, libéré, arr_failed)` ; `_delete_series`/`_delete_movie` rendent
-  `(message, arr_ok)`. `arr_ok=False` = bandeau rouge web/TUI
+  `(message, arr_ok)`. `arr_ok=False` = bandeau rouge web
   (`core.arr_failure_note`), `arr_ok: false` dans la réponse `/api/delete`.
   Avant, `do_delete` jetait le compte d'échecs : un film dont le retrait
   Radarr avait échoué s'affichait « supprimé » en vert, puis revenait par
@@ -415,7 +426,7 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   Les deux chemins sont **deux fonctions séparées** (`execute_delete_seasons`
   vs `execute_delete_series`) et non un paramètre : ils ne partagent ni
   l'ordre des écritures Sonarr, ni ce qu'ils balaient, ni ce qu'ils
-  promettent. La TUI n'appelle que le second, donc n'a pas bougé.
+  promettent.
   **Le plan part des `episodefile`, jamais des dossiers `Season XX` ni des
   torrents.** Pas des dossiers : format configurable, `Specials` pour la
   saison 0, et une série peut n'en avoir aucun. Pas des torrents : mesuré le
@@ -523,7 +534,7 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   **ORDRE IMPOSÉ : appeler AVANT `DELETE /api/v3/series/{id}`.** Sonarr purge
   l'historique d'une série avec elle ; après le retrait le rattachement n'existe
   plus et la liste revient simplement **vide, sans erreur**. Les appelants
-  (`_delete_series` purge, les 2 sites de `tui.py`) le calculent donc avant et
+  (`_delete_series` purge) le calculent donc avant et
   concatènent à `matched` — `execute_delete_series` ne les distingue pas, son
   `still_covered` ne lisant que des `lib_matches` (vides ici, volontairement).
   **Best-effort**, contrairement à `_arr_covered_paths()`/`series_episode_files()`
@@ -555,21 +566,6 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   là-bas seulement le 2026-10-05, le dashboard comptait entre-temps chaque
   téléchargement en cours comme absent. Tout changement du critère ABS se fait
   des deux côtés.
-- TUI seulement : marqueur `'M'` pour un torrent dont le fichier a disparu
-  (cas Transmission « No data found! », jamais nettoyé tout seul) +
-  `Maj+P` pour les purger en masse (seule purge en masse depuis le retrait de
-  « Purger les ABS » du web le 2026-10-07 ; refusée
-  par `core.abs_purge_refusal` quand `completed/` est absent/vide ou que TOUS
-  les torrents sont ABS — un montage raté rend tout ABS et la purge viderait
-  Transmission), et un écran d'aide (`?`) plutôt qu'un
-  footer surchargé. Pas de jaquette (curses ne fait que du texte ; une vraie
-  image demanderait un protocole terminal ou `chafa`). Les ajouts récents
-  sont **web seulement**.
-- **Plus de touche `D` dans la TUI** (retirée le 2026-09-29, à la demande) :
-  elle supprimait sans confirmation dans les 3 vues, jusqu'à purger une série
-  entière (retrait Sonarr + exclusion) sur une seule touche. Toute suppression
-  passe par l'écran de confirmation — ne pas la réintroduire.
-
 ## Addon Kodi « Supprimer avec clearr » (`kodi/context.clearr`)
 
 - `make kodi-install`, ajouté le 2026-08-05 — détail humain dans

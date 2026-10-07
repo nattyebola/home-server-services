@@ -183,4 +183,4 @@ nom du fichier renommé et dans le `.nfo` lu par Jellyfin. Corriger avec
 - Rien ici ne détecte un téléchargement bloqué **avant** la fin (seeding
   arrêté, torrent mort) : ce script ne regarde que ce qui est téléchargé à
   100 % et refusé à l'import. Un torrent qui ne finit pas relève de
-  `make clearr`.
+  clearr (web).
