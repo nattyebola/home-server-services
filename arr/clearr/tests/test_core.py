@@ -363,9 +363,29 @@ class TorrentKind(unittest.TestCase):
         self.assertEqual(core.torrent_kind(t, {"kind": "series", "anime": True}), "anime")
         self.assertEqual(core.torrent_kind(t, {"kind": "series", "anime": False}), "series")
 
-    def test_categorie_arr_sans_import(self):
-        self.assertEqual(core.torrent_kind(self.torrent("/data/completed/sonarr"), None), "series")
-        self.assertEqual(core.torrent_kind(self.torrent("/data/completed/radarr"), None), "film")
+    def test_categorie_arr_en_cours(self):
+        # Pas encore importé, mais pas « hors bibliothèque » pour autant.
+        for d, kind in (("/data/completed/sonarr", "series"), ("/data/completed/radarr", "film")):
+            t = dict(self.torrent(d), percentDone=0.4, _linked=False)
+            self.assertEqual(core.torrent_kind(t, None), kind)
+
+    def test_categorie_arr_termine_dans_la_bibliotheque(self):
+        # Lié à library/ sans meta : titre retiré de l'arr, fichiers restés.
+        t = dict(self.torrent("/data/completed/radarr"), percentDone=1.0, _linked=True)
+        self.assertEqual(core.torrent_kind(t, None), "film")
+
+    def test_grab_termine_hors_bibliotheque(self):
+        # Release remplacée par une autre (ou import bloqué) : recyclage.
+        for d in ("/data/completed/sonarr", "/data/completed/radarr"):
+            t = dict(self.torrent(d), percentDone=1.0, _linked=False)
+            self.assertEqual(core.torrent_kind(t, None), "unlinked", d)
+
+    def test_hors_bibliotheque_reserve_aux_categories_arr(self):
+        # Un dossier manuel ou une BD ne vont jamais dans library/ : ce n'est
+        # pas un signal pour eux.
+        for d, kind in (("/data/completed/kids", None), ("/data/completed/bd/Sillage", "bd")):
+            t = dict(self.torrent(d), percentDone=1.0, _linked=False)
+            self.assertEqual(core.torrent_kind(t, None), kind, d)
 
     def test_dossier_manuel_reste_inconnu(self):
         # Le cas arbitré : completed/kids porte un film, completed/anime des

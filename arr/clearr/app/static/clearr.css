@@ -213,10 +213,12 @@ tr.collapse .kind-icon { opacity: .6; }
 .kind-series { color: #3d5fc4; }  /* OVNI de X-Files */
 .kind-anime  { color: #2b8a3e; }  /* Shenron */
 .kind-bd     { color: #d9480f; }
+.kind-unlinked { color: #0c8599; }  /* recyclage : pas le vert, pris par l'anime */
 [data-bs-theme="dark"] .kind-film   { color: #d0a070; }
 [data-bs-theme="dark"] .kind-series { color: #8ea6ff; }
 [data-bs-theme="dark"] .kind-anime  { color: #69db7c; }
 [data-bs-theme="dark"] .kind-bd     { color: #ff8a50; }
+[data-bs-theme="dark"] .kind-unlinked { color: #3bc9db; }
 
 /* Filtre par type (vue Torrents) : même principe que data-clearr-empty
    ci-dessus — état sur <html>, posé par clearr.js, donc intact après chaque
@@ -226,6 +228,7 @@ tr.collapse .kind-icon { opacity: .6; }
 :root[data-clearr-kind="series"] tr[data-kind]:not([data-kind="series"]),
 :root[data-clearr-kind="anime"] tr[data-kind]:not([data-kind="anime"]),
 :root[data-clearr-kind="bd"] tr[data-kind]:not([data-kind="bd"]),
+:root[data-clearr-kind="unlinked"] tr[data-kind]:not([data-kind="unlinked"]),
 :root[data-clearr-kind="unknown"] tr[data-kind]:not([data-kind="unknown"]) {
   display: none;
 }

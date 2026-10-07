@@ -1041,8 +1041,8 @@ def _download_dir_under(torrent, root):
 ARR_CATEGORY_KINDS = {"sonarr": "series", "radarr": "film"}
 
 # Types de torrent de la colonne TYPE (web), dans leur ordre de tri. None =
-# inconnu.
-TORRENT_KINDS = ("film", "series", "anime", "bd", None)
+# inconnu, "unlinked" = grab arr hors bibliothèque (voir torrent_kind).
+TORRENT_KINDS = ("film", "series", "anime", "bd", "unlinked", None)
 
 
 def torrent_kind(torrent, meta):
@@ -1054,16 +1054,26 @@ def torrent_kind(torrent, meta):
     ou d'un dossier posé à la main (arbitré le 2026-10-07 — completed/kids porte
     un film, completed/anime des séries non-anime) : dossier BD, puis titre arr
     rattaché (`meta`, voir torrent_meta), puis catégorie arr du downloadDir — un
-    grab Sonarr jamais importé reste une série, même si c'est un anime (la
+    grab Sonarr en cours reste une série, même si c'est un anime (la
     catégorie Sonarr est commune aux deux). Purement descriptif, rien ne se
-    décide dessus."""
+    décide dessus.
+
+    "unlinked" (picto recyclage, demandé le 2026-10-07) : grab arr TERMINÉ
+    sans aucun fichier dans library/ — en pratique une release remplacée par
+    une autre, mais aussi un import bloqué ou pas encore fait, ou des données
+    disparues (ABS). Sur `_linked` (la colonne BIB) et non sur `meta` : un
+    titre retiré de l'arr en laissant ses fichiers dans library/ n'a plus de
+    meta, mais il est toujours dans la bibliothèque. Un téléchargement en
+    cours garde le type de sa catégorie : il n'a simplement pas encore été
+    importé."""
     if is_bd_torrent(torrent):
         return "bd"
     if meta:
         return "anime" if meta.get("anime") else meta["kind"]
     for category, kind in ARR_CATEGORY_KINDS.items():
         if _download_dir_under(torrent, os.path.join(COMPLETED_ROOT, category)):
-            return kind
+            done = torrent.get("percentDone", 0) >= 1
+            return "unlinked" if done and not torrent.get("_linked") else kind
     return None
 
 

@@ -139,8 +139,17 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   puis rattachement arr (`meta["anime"]` posé par `item_meta` via
   `is_anime`, même critère que l'onglet Animés, sinon `meta["kind"]`), puis
   catégorie `completed/{sonarr,radarr}` (`ARR_CATEGORY_KINDS`, suit
-  `ARR_DOWNLOAD_CLIENT` de `provision.py`) — un grab Sonarr jamais importé y
-  reste « série » même si c'est un anime (catégorie commune). Ni le nom de
+  `ARR_DOWNLOAD_CLIENT` de `provision.py`) — un grab Sonarr en cours y
+  reste « série » même si c'est un anime (catégorie commune).
+  **Type `unlinked`, picto recyclage** (demandé le 2026-10-07, pour retrouver
+  les releases remplacées que BIB montrait) : catégorie arr + `percentDone`
+  à 1 + `_linked` faux. Sur `_linked` (= BIB) et **pas** sur l'absence de
+  meta : un titre retiré de l'arr avec ses fichiers restés dans `library/` n'a
+  plus de meta mais reste en bibliothèque. Englobe aussi import bloqué,
+  import pas encore fait et ABS — accepté, le picto dit « hors bibliothèque »,
+  pas « remplacé ». Un téléchargement en cours garde le type de sa catégorie.
+  Réservé aux catégories arr : un dossier manuel ou une BD ne vont jamais
+  dans `library/`, ce n'est pas un signal pour eux. Ni le nom de
   release ni les dossiers posés à la main (`completed/kids` porte un film,
   `completed/anime` des séries non-anime) : ils restent « inconnu ». Un
   cross-seed sans type hérite de celui de son parent.
@@ -149,7 +158,8 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   dans `render_torrents_tab`, **avant** le tri). Absente de l'onglet BD
   (colonne constante, même raison que BIB).
   **Pictos demandés tels quels** (clins d'œil) : fedora d'Indiana Jones
-  (film), OVNI de X-Files (série), tête de Shenron (anime), bulle (BD), `?`
+  (film), OVNI de X-Files (série), tête de Shenron (anime), bulle (BD),
+  recyclage (hors bibliothèque, sarcelle : le vert est pris par l'anime), `?`
   (inconnu, Bootstrap Icons). SVG game-icons.net (CC BY 3.0, auteurs cités
   dans `templates/_kind_icon.html` — à garder) en ligne, **pas d'emoji** (même
   raison que la croix ✕). Grands (1,6 em) et une couleur par type, variante
