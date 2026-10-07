@@ -165,23 +165,29 @@ titrées VOSTFR, la règle « VOSTFR minimum » donne d'elle-même la VOF.
 > français pour un `MULTi` de Nyaa** (pistes multiples d'une plateforme).
 > Ces 12 % viennent tous d'un seul groupe, **VARYG** (9 MULTi sur 13 sans
 > français). D'où des profils anime qui ne comptent un `MULTi` comme de la VF
-> que pour une **liste blanche de groupes vérifiés** (Tsundere-Raws,
-> Manostro, BYOR, ToonsHub, KAF, TenmaLand : 58 fichiers, tous avec l'audio
-> français). Un groupe n'y entre qu'après lecture de ses fichiers.
+> que pour une **liste blanche de groupes vérifiés** : Tsundere-Raws,
+> Manostro, BYOR, ToonsHub, KAF, TenmaLand, SUPPLY, BATGirl, FW, GL0P
+> (181 fichiers MULTi en bibliothèque, tous avec l'audio français, au
+> 2026-10-07). Un groupe n'y entre qu'après lecture de ses fichiers : le skill
+> Claude `multi-groupes` propose les ajouts et retraits.
 
 #### Comment les profils les appliquent
 
 Six profils, déclarés dans `arr/profiles/` et appliqués chaque nuit par
-`make arr-overrides` :
+`make arr-overrides`. Chacun traduit les règles ci-dessus pour un public :
 
-| Arr | Profil | Pour | Langue minimum | Résolutions |
-|---|---|---|---|---|
-| Sonarr | `Séries` | séries | VOSTFR | 720p à 2160p |
-| Sonarr | `Séries VF` | séries pour enfants | VF | 720p à 2160p |
-| Sonarr | `Anime` | anime | VOSTFR (`MULTi` seulement d'un groupe vérifié) | 720p à 1080p |
-| Sonarr | `Anime VF` | anime pour enfants | VF explicite | 720p à 1080p |
-| Radarr | `Films` | films | VOSTFR | 720p à 2160p |
-| Radarr | `Films VF` | films pour enfants | VF | 720p à 2160p |
+| Arr | Profil | But | Langue exigée | Langue préférée | Résolutions |
+|---|---|---|---|---|---|
+| Sonarr | `Séries` | séries, défaut | VOSTFR | VF ou MULTi | 2160p > 1080p > 720p |
+| Sonarr | `Séries VF` | séries pour enfants | VF ou MULTi | — | 2160p > 1080p > 720p |
+| Sonarr | `Anime` | anime, défaut | VOSTFR | VF explicite, ou MULTi d'un groupe vérifié | 1080p > 720p |
+| Sonarr | `Anime VF` | anime pour enfants | VF explicite, ou MULTi d'un groupe vérifié | — | 1080p > 720p |
+| Radarr | `Films` | films, défaut | VOSTFR | VF ou MULTi | 2160p > 1080p > 720p |
+| Radarr | `Films VF` | films pour enfants | VF ou MULTi | — | 2160p > 1080p > 720p |
+
+Dans tous les profils, à langue égale : la meilleure résolution, puis le
+meilleur codec (AV1 > x265 > x264), puis le HDR. Une release sous la langue
+exigée, ou qui coche un rejet, n'est jamais grabée.
 
 Toutes les résolutions d'un profil sont dans **un seul groupe de qualités** :
 Sonarr/Radarr classent par qualité *avant* le score, et sans ce groupe une
@@ -191,7 +197,9 @@ avec des ordres de grandeur qui fixent les priorités :
 
 | Ordre | Custom format | Score |
 |---|---|---|
-| 1. langue | `Langue : VF` / `VOSTFR` | 3000 / 2000 (minimum du profil : 2000, ou 3000 en VF) |
+| 1. langue | VF : `Langue : VF` (séries, films ; `MULTi` compris), ou en anime `Langue : VF (hors MULTi)` + `Langue : MULTi (groupe vérifié)` | 3000 |
+| | `Langue : VOSTFR` | 2000 |
+| | *minimum du profil* | 2000, ou 3000 pour un profil `… VF` |
 | 2. résolution | `Résolution : 2160p` / `1080p` | 300 / 200 |
 | 3. codec | `Codec : AV1` / `x265` / `x264` | 30 / 20 / 10 |
 | 4. HDR | `HDR` | 5 |

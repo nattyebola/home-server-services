@@ -226,8 +226,8 @@ ou aux connexions arr → Jellyfin.
   VOF si œuvre française, sinon VOSTFR minimum, VF/MULTi préféré ; profil
   enfants VF obligatoire ; 2160p > 1080p > 720p (anime : 1080p max) ; x264
   minimum, AV1 > x265 > x264 ; HDR préféré ; bornes de débit ; délai et cutoff
-  calés sur les mesures. Données : base d'analyse hors repo
-  (`${DATA_ROOT}/.analyse/`, script `etude.py`), ~15 800 releases de 7
+  calés sur les mesures. Données : base d'analyse hors repo, **supprimée
+  le 2026-10-07** une fois l'étude faite, ~15 800 releases de 7
   indexeurs, 589 fichiers lus par ffprobe.
   **Choix et pourquoi** :
   - **Recyclarr retiré.** Mesuré : tags « Tier » sur 0,6 % des candidats
@@ -270,7 +270,13 @@ ou aux connexions arr → Jellyfin.
     une MULTi VF pour une VOSTFR (737 releases Tsundere-Raws sur Nyaa, dont les
     tags FR entre parenthèses sont ignorés). Spec niée sur la VF explicite pour
     ne pas compter double (221 titres `MULTI.VFF`). Validé : 0 désaccord .NET /
-    Python sur 4 973 titres anime, groupe pris du parse .NET. Les
+    Python sur 4 973 titres anime, groupe pris du parse .NET. Étendue le
+    même soir à SUPPLY, BATGirl, FW, GL0P (seuil du skill : ≥ 5 fichiers FR
+    sur ≥ 2 œuvres, 0 sans FR ; 181 fichiers MULTi, 0 sans FR, pour les 10
+    groupes ; `--verifier` : 0 désaccord sur 101 titres). Liste tenue
+    par le skill `multi-groupes` (preuve = audio des fichiers en
+    bibliothèque ; `EXCLUDED_GROUPS` garde la mémoire des exclusions, la
+    base d'analyse n'existant plus). Les
     lookarounds anti-suffixe entre parenthèses sont gardés (titres de post
     qui listent tous les tags).
   - **Anime 1080p max** : 30 épisodes sur 1 441 (2 %) ont une 2160p avec
