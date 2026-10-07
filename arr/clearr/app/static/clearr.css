@@ -259,3 +259,16 @@ tr.collapse .kind-icon { opacity: .6; }
   width: 1.3em;
   height: 1.3em;
 }
+/* Type à zéro (radio disabled) : Bootstrap coupe pointer-events sur le
+   label, donc plus de survol, donc plus de `title=` natif. Rétabli ici,
+   sans l'effet de survol du bouton ; un clic sur le label d'un radio
+   désactivé ne le coche pas, c'est le navigateur qui le garantit. */
+.kind-filter .btn-check:disabled + .btn {
+  pointer-events: auto;
+  cursor: not-allowed;
+}
+.kind-filter .btn-check:disabled + .btn:hover {
+  color: var(--bs-btn-color);
+  background-color: var(--bs-btn-bg);
+  border-color: var(--bs-btn-border-color);
+}
