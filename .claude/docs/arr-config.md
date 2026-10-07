@@ -262,7 +262,15 @@ ou aux connexions arr → Jellyfin.
   - **Langue sur annonce explicite** : précision mesurée sur fichiers — 0 %
     sans FR quand un tracker français annonce VF/VOSTFR, 2 % pour une VOSTFR
     Nyaa, **12 % pour un `MULTi` Nyaa** (multi de plateforme sans FR), 100 %
-    sans marqueur. D'où `Langue : VF (hors MULTi)` sur les profils anime. Les
+    sans marqueur. D'où `Langue : VF (hors MULTi)` sur les profils anime,
+    complété le 2026-10-07 par `Langue : MULTi (groupe vérifié)` (3000) : les
+    12 % sont tous VARYG (9/13 sans FR), les autres groupes mesurés 58/58 avec
+    audio FR. **Liste blanche** (`ReleaseGroupSpecification`), pas liste noire :
+    un groupe inconnu (T3KASHi…) reste rejeté. Sans elle, 314 épisodes perdaient
+    une MULTi VF pour une VOSTFR (737 releases Tsundere-Raws sur Nyaa, dont les
+    tags FR entre parenthèses sont ignorés). Spec niée sur la VF explicite pour
+    ne pas compter double (221 titres `MULTI.VFF`). Validé : 0 désaccord .NET /
+    Python sur 4 973 titres anime, groupe pris du parse .NET. Les
     lookarounds anti-suffixe entre parenthèses sont gardés (titres de post
     qui listent tous les tags).
   - **Anime 1080p max** : 30 épisodes sur 1 441 (2 %) ont une 2160p avec

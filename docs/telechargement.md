@@ -163,7 +163,11 @@ titrées VOSTFR, la règle « VOSTFR minimum » donne d'elle-même la VOF.
 > `SUBFRENCH`, `FRENCH`, `VFF`, `MULTi`…). Vérifié sur 589 fichiers : 0 %
 > sans français quand un tracker français l'annonce, mais **12 % sans
 > français pour un `MULTi` de Nyaa** (pistes multiples d'une plateforme).
-> D'où des profils anime qui ne comptent pas `MULTi` comme de la VF.
+> Ces 12 % viennent tous d'un seul groupe, **VARYG** (9 MULTi sur 13 sans
+> français). D'où des profils anime qui ne comptent un `MULTi` comme de la VF
+> que pour une **liste blanche de groupes vérifiés** (Tsundere-Raws,
+> Manostro, BYOR, ToonsHub, KAF, TenmaLand : 58 fichiers, tous avec l'audio
+> français). Un groupe n'y entre qu'après lecture de ses fichiers.
 
 #### Comment les profils les appliquent
 
@@ -174,7 +178,7 @@ Six profils, déclarés dans `arr/profiles/` et appliqués chaque nuit par
 |---|---|---|---|---|
 | Sonarr | `Séries` | séries | VOSTFR | 720p à 2160p |
 | Sonarr | `Séries VF` | séries pour enfants | VF | 720p à 2160p |
-| Sonarr | `Anime` | anime | VOSTFR (`MULTi` ne compte pas) | 720p à 1080p |
+| Sonarr | `Anime` | anime | VOSTFR (`MULTi` seulement d'un groupe vérifié) | 720p à 1080p |
 | Sonarr | `Anime VF` | anime pour enfants | VF explicite | 720p à 1080p |
 | Radarr | `Films` | films | VOSTFR | 720p à 2160p |
 | Radarr | `Films VF` | films pour enfants | VF | 720p à 2160p |

@@ -24,6 +24,32 @@
     ]
   },
   {
+    "name": "Langue : MULTi (groupe vérifié)",
+    "specifications": [
+      {
+        "name": "MULTi annoncé",
+        "implementation": "ReleaseTitleSpecification",
+        "negate": false,
+        "required": true,
+        "value": "\\bMULTi(?![ ._-]?Subs?)\\b(?![^()]*\\))(?<!\\([^)]*)"
+      },
+      {
+        "name": "Groupe dont les MULTi ont l'audio FR (ffprobe)",
+        "implementation": "ReleaseGroupSpecification",
+        "negate": false,
+        "required": true,
+        "value": "^(Tsundere-?Raws|Manostro|BYOR|ToonsHub|KAF|TenmaLand)$"
+      },
+      {
+        "name": "Pas déjà compté par Langue : VF (hors MULTi)",
+        "implementation": "ReleaseTitleSpecification",
+        "negate": true,
+        "required": true,
+        "value": "\\b(TRUEFRENCH|FRENCH|VFF|VFQ|VFI|VF2|VOF|VF)\\b(?![^()]*\\))(?<!\\([^)]*)"
+      }
+    ]
+  },
+  {
     "name": "Langue : VOSTFR",
     "specifications": [
       {
