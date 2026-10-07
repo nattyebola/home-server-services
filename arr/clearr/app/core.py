@@ -1041,14 +1041,57 @@ def _download_dir_under(torrent, root):
 ARR_CATEGORY_KINDS = {"sonarr": "series", "radarr": "film"}
 
 # Types de torrent de la colonne TYPE (web), dans leur ordre de tri. None =
-# inconnu, "unlinked" = grab arr hors bibliothèque (voir torrent_kind).
-TORRENT_KINDS = ("film", "series", "anime", "bd", "unlinked", None)
+# inconnu ; "blocked"/"importing"/"replaced" = grab arr terminé hors
+# bibliothèque ; "absent" = ABS (voir torrent_kind).
+TORRENT_KINDS = ("film", "series", "anime", "bd", "blocked", "importing", "replaced", "absent", None)
+
+# Types « sains » ; tous les autres de TORRENT_KINDS sont « dégradés » (le
+# torrent n'est pas, ou plus, dans la bibliothèque). Séparés dans le filtre web
+# (demandé le 2026-10-07).
+HEALTHY_KINDS = ("film", "series", "anime", "bd")
+
+# trackedDownloadState de la file arr qui ne mèneront à aucun import sans
+# intervention. Tout autre état présent dans la file (importPending,
+# importing, downloading tant que l'arr n'a pas vu la fin...) = en cours.
+QUEUE_BLOCKED_STATES = {"importBlocked", "failedPending", "failed", "ignored"}
+
+# Clés : catégories de ARR_CATEGORY_KINDS — un grab Sonarr se cherche dans la
+# file de Sonarr. includeUnknown* : sans lui, un grab que l'arr n'a pas su
+# rattacher à un titre (cas typique d'import bloqué) est absent de la file.
+ARR_QUEUES = {
+    "sonarr": (SONARR_URL, SONARR_API_KEY, "includeUnknownSeriesItems"),
+    "radarr": (RADARR_URL, RADARR_API_KEY, "includeUnknownMovieItems"),
+}
 
 
-def torrent_kind(torrent, meta):
-    """Type du contenu d'un torrent : "bd", "anime", "series", "film" ou None
-    (inconnu). Anime = série Sonarr de `seriesType` anime (is_anime), même
-    critère que l'onglet Animés.
+def arr_queue_states():
+    """{catégorie: {infoHash en majuscules: trackedDownloadState}} lu dans la
+    file de chaque arr — `downloadId` y est l'infoHash, comme dans
+    l'historique (voir series_grabbed_torrents). Une file injoignable vaut
+    None, pas {} : torrent_kind ne doit pas en conclure que tout a été traité
+    (il rend alors « inconnu »)."""
+    states = {}
+    for category, (url, api_key, unknown_param) in ARR_QUEUES.items():
+        data = arr_api(url, api_key, "GET", "/api/v3/queue",
+                       params={"pageSize": 1000, unknown_param: "true"})
+        if not isinstance(data, dict) or "records" not in data:
+            states[category] = None
+            continue
+        states[category] = {str(r.get("downloadId") or "").upper(): r.get("trackedDownloadState")
+                            for r in data["records"] if r.get("downloadId")}
+    return states
+
+
+def torrent_kind(torrent, meta, queue_states=None):
+    """Type du contenu d'un torrent : "absent", "bd", "anime", "series",
+    "film", un des trois états hors bibliothèque ci-dessous, ou None (inconnu).
+    Anime = série Sonarr de `seriesType` anime (is_anime), même critère que
+    l'onglet Animés.
+
+    "absent" (loupe) passe AVANT tout le reste : c'est le marqueur ABS
+    (`_missing`, données disparues du disque), qui a remplacé la colonne ABS
+    côté web (demandé le 2026-10-07). Sans fichier, il n'y a de toute façon ni
+    inode, ni rattachement arr, ni lien library/.
 
     Uniquement des sources sûres, jamais une devinette sur le nom de la release
     ou d'un dossier posé à la main (arbitré le 2026-10-07 — completed/kids porte
@@ -1058,22 +1101,37 @@ def torrent_kind(torrent, meta):
     catégorie Sonarr est commune aux deux). Purement descriptif, rien ne se
     décide dessus.
 
-    "unlinked" (picto recyclage, demandé le 2026-10-07) : grab arr TERMINÉ
-    sans aucun fichier dans library/ — en pratique une release remplacée par
-    une autre, mais aussi un import bloqué ou pas encore fait, ou des données
-    disparues (ABS). Sur `_linked` (la colonne BIB) et non sur `meta` : un
-    titre retiré de l'arr en laissant ses fichiers dans library/ n'a plus de
-    meta, mais il est toujours dans la bibliothèque. Un téléchargement en
-    cours garde le type de sa catégorie : il n'a simplement pas encore été
-    importé."""
+    Grab arr TERMINÉ sans aucun fichier dans library/ (demandé le 2026-10-07),
+    départagé par la file de l'arr (`queue_states`, voir arr_queue_states) :
+    - "blocked" (signe interdit) : dans la file, état QUEUE_BLOCKED_STATES ;
+    - "importing" (sablier) : dans la file, tout autre état ;
+    - "replaced" (recyclage) : absent de la file, donc déjà traité par l'arr —
+      en pratique une release remplacée par une autre (ou une entrée retirée
+      de la file à la main).
+    File de l'arr injoignable : None (inconnu), on ne devine pas (demandé le
+    2026-10-07).
+    Sur `_linked` (la colonne BIB) et non sur `meta` : un titre retiré de l'arr
+    en laissant ses fichiers dans library/ n'a plus de meta, mais il est
+    toujours dans la bibliothèque. Un téléchargement en cours garde le type de
+    sa catégorie : il n'a simplement pas encore été importé."""
+    if torrent.get("_missing"):
+        return "absent"
     if is_bd_torrent(torrent):
         return "bd"
     if meta:
         return "anime" if meta.get("anime") else meta["kind"]
     for category, kind in ARR_CATEGORY_KINDS.items():
-        if _download_dir_under(torrent, os.path.join(COMPLETED_ROOT, category)):
-            done = torrent.get("percentDone", 0) >= 1
-            return "unlinked" if done and not torrent.get("_linked") else kind
+        if not _download_dir_under(torrent, os.path.join(COMPLETED_ROOT, category)):
+            continue
+        if torrent.get("percentDone", 0) < 1 or torrent.get("_linked"):
+            return kind
+        queue = (queue_states or {}).get(category)
+        if queue is None:
+            return None
+        state = queue.get(str(torrent.get("hashString") or "").upper())
+        if state is None:
+            return "replaced"
+        return "blocked" if state in QUEUE_BLOCKED_STATES else "importing"
     return None
 
 
@@ -2042,14 +2100,15 @@ FILMS_SORT_FIELDS = [
 # là-bas arrive ici tout seul.
 BD_SORT_FIELDS = [f for f in SORT_FIELDS if f[0] != "BIB"]
 
-# Vue Torrents du web : TYPE à la place de BIB (demandé le 2026-10-07 ; le
-# nombre de torrents liés à library/ reste dans la ligne de résumé). Liste à
-# part parce que la TUI parcourt SORT_FIELDS par index avec des colonnes
-# écrites en dur — elle garde BIB — et qu'elle ne calcule pas `_kind` (posé par
-# webapp.render_torrents_tab, qui dispose seul des métadonnées arr). Absent de
-# BD_SORT_FIELDS : la colonne y serait constante.
+# Vue Torrents du web : TYPE à la place de BIB et ABS (demandé le 2026-10-07 ;
+# le nombre de torrents liés à library/ reste dans la ligne de résumé, ABS est
+# devenu le type "absent"). Liste à part parce que la TUI parcourt SORT_FIELDS
+# par index avec des colonnes écrites en dur — elle garde BIB et ABS — et
+# qu'elle ne calcule pas `_kind` (posé par webapp.render_torrents_tab, qui
+# dispose seul des métadonnées arr). Absent de BD_SORT_FIELDS : la colonne y
+# serait constante, et ABS y reste (seul signal d'une BD disparue).
 WEB_SORT_FIELDS = ([("TYPE", lambda t: TORRENT_KINDS.index(t.get("_kind")))]
-                   + [f for f in SORT_FIELDS if f[0] != "BIB"])
+                   + [f for f in SORT_FIELDS if f[0] not in ("BIB", "ABS")])
 
 VIEWS = ["torrents", "series", "films"]
 VIEW_LABELS = {"torrents": "Torrents", "series": "Séries", "films": "Films"}

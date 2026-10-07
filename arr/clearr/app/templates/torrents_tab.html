@@ -12,12 +12,21 @@
      propagé dans les routes ni les modales. Pas dans l'onglet BD, où le type
      est constant. #}
   {% if not is_bd %}
-  <div class="btn-group btn-group-sm kind-filter" role="group" aria-label="Filtrer par type">
-    <input type="radio" class="btn-check" name="kind-filter" id="kind-all" value="" data-kind-filter checked>
-    <label class="btn btn-outline-secondary" for="kind-all">Tous</label>
-    {% for f in kind_filters %}
-    <input type="radio" class="btn-check" name="kind-filter" id="kind-{{ f.key }}" value="{{ f.key }}" data-kind-filter>
-    <label class="btn btn-outline-secondary" for="kind-{{ f.key }}">{{ kind_icon(f.kind) }} <span class="small">{{ f.count }}</span></label>
+  {# Trois groupes d'un même jeu de radios (même `name`) : Tous, types sains,
+     types dégradés (core.HEALTHY_KINDS) — séparés par le seul espacement
+     entre groupes, sans trait (retiré à la demande). #}
+  <div class="d-flex flex-wrap gap-2 align-items-center kind-filter" role="radiogroup" aria-label="Filtrer par type">
+    <div class="btn-group btn-group-sm">
+      <input type="radio" class="btn-check" name="kind-filter" id="kind-all" value="" data-kind-filter checked>
+      <label class="btn btn-outline-secondary" for="kind-all" title="Tous les torrents, quel que soit leur type">Tous</label>
+    </div>
+    {% for group, group_label in (("healthy", "Types sains"), ("degraded", "Types dégradés")) %}
+    <div class="btn-group btn-group-sm" role="group" aria-label="{{ group_label }}">
+      {% for f in kind_filters[group] %}
+      <input type="radio" class="btn-check" name="kind-filter" id="kind-{{ f.key }}" value="{{ f.key }}" data-kind-filter>
+      <label class="btn btn-outline-secondary" for="kind-{{ f.key }}" title="{{ kind_descriptions[f.kind] }}">{{ kind_icon(f.kind) }} {{ f.label }} <span class="small">{{ f.count }}</span></label>
+      {% endfor %}
+    </div>
     {% endfor %}
   </div>
   {% endif %}
@@ -28,15 +37,11 @@
            placeholder="Filtrer par nom…" data-live autocomplete="off">
   </form>
   </div>
-  {# Les deux boutons agissent sur TOUS les torrents / tout library/, pas sur
-     la sélection de l'onglet — donc hors sujet dans BD, où ils promettraient
-     une portée qu'ils n'ont pas. #}
+  {# Agit sur tout library/, pas sur la sélection de l'onglet — donc hors sujet
+     dans BD, où il promettrait une portée qu'il n'a pas. La purge en masse des
+     absents (ex-« Purger les ABS ») a été retirée du web le 2026-10-07 : un
+     absent se supprime ligne à ligne, ou en masse par Maj+P dans la TUI. #}
   <div class="d-flex gap-2">
-    {% if missing_count and not is_bd %}
-    <a href="#" class="btn btn-outline-danger btn-sm" data-get="/torrents/purge-abs/confirm?{{ qs }}" data-target="#modal-body">
-      Purger les {{ missing_count }} ABS
-    </a>
-    {% endif %}
     {% if not is_bd %}
     <a href="#" class="btn btn-outline-secondary btn-sm" data-get="/library/orphans/confirm?{{ qs }}" data-target="#modal-body"
        title="Chercher les fichiers de library/ qu'aucun torrent ne couvre et qu'aucun arr ne connaît">
@@ -76,13 +81,15 @@
        masque le groupe entier. Absent dans BD (pas de filtre par type). #}
     {% set kind_attr %}{% if not is_bd %} data-kind="{{ g.parent.kind or 'unknown' }}"{% endif %}{% endset %}
     <tr{{ kind_attr }}>
-      {% if not is_bd %}<td class="text-center">{{ kind_icon(g.parent.kind) }}</td>{% endif %}
-      <td class="{{ 'text-danger-emphasis fw-semibold' if g.parent.abs_danger else '' }}">{{ g.parent.abs }}</td>
+      {# TYPE dans la vue Torrents (ABS y est devenu le type « absent »), ABS
+         dans l'onglet BD, qui n'a pas de colonne TYPE. #}
+      {% if is_bd %}<td class="{{ 'text-danger-emphasis fw-semibold' if g.parent.abs_danger else '' }}">{{ g.parent.abs }}</td>
+      {% else %}<td class="text-center">{{ kind_icon(g.parent.kind) }}</td>{% endif %}
       <td>{{ g.parent.age }}</td>
       <td>{{ g.parent.size }}</td>
       <td class="ratio-{{ g.parent.ratio_class }}">{{ g.parent.ratio }}</td>
       <td class="text-body-secondary"{% if g.parent.tracker_others %} title="{{ g.parent.tracker_others }}"{% endif %}>{{ g.parent.tracker }}</td>
-      <td class="{{ 'text-danger-emphasis' if g.parent.abs_danger else '' }}">
+      <td class="{{ g.parent.title_class }}">
         {{ title_cell(g.parent.name, g.parent.meta, details_url='/torrents/' ~ g.parent.id ~ '/details') }}
         {% if g.children %}
         <button type="button" class="btn btn-sm btn-link p-0 ms-1 align-baseline"
@@ -99,7 +106,7 @@
     </tr>
     {% for c in g.children %}
     <tr class="collapse xseed-{{ g.parent.id }} {{ 'show' if g.force_open else '' }}"{{ kind_attr }}>
-      {% if not is_bd %}<td class="text-center">{{ kind_icon(c.kind) }}</td>{% endif %}<td></td>
+      {% if is_bd %}<td></td>{% else %}<td class="text-center">{{ kind_icon(c.kind) }}</td>{% endif %}
       <td>{{ c.age }}</td>
       <td>{{ c.size }}</td>
       <td class="ratio-{{ c.ratio_class }}">{{ c.ratio }}</td>
@@ -109,7 +116,7 @@
     </tr>
     {% endfor %}
     {% else %}
-    <tr><td colspan="{{ 7 if is_bd else 8 }}" class="text-body-secondary py-3">{{ 'Aucune BD' if is_bd else 'Aucun torrent' }}{% if filter_str %} pour ce filtre{% endif %}.</td></tr>
+    <tr><td colspan="7" class="text-body-secondary py-3">{{ 'Aucune BD' if is_bd else 'Aucun torrent' }}{% if filter_str %} pour ce filtre{% endif %}.</td></tr>
     {% endfor %}
   </tbody>
 </table>

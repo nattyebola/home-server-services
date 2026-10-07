@@ -167,6 +167,42 @@ def ratio_class(ratio):
     return "good"
 
 
+# Libellés du filtre par type (picto + libellé + compte), clés de TORRENT_KINDS.
+KIND_LABELS = {
+    "film": "Film", "series": "Série", "anime": "Anime", "bd": "BD",
+    "blocked": "Bloqué", "importing": "En import", "replaced": "Remplacé",
+    "absent": "Absent", None: "Inconnu",
+}
+
+# Description de chaque type : infobulle (title= natif, pas de Popper) du
+# bouton de filtre ET <title> du picto dans le tableau (_kind_icon.html) — une
+# seule source pour que les deux ne divergent pas. Voir core.torrent_kind.
+KIND_DESCRIPTIONS = {
+    "film": "Film : fichier dans la bibliothèque Radarr, ou téléchargement Radarr en cours",
+    "series": "Série : fichier dans la bibliothèque Sonarr, ou téléchargement Sonarr en cours "
+              "(anime compris, tant qu'il n'est pas importé)",
+    "anime": "Anime : fichier dans la bibliothèque, série Sonarr de type anime",
+    "bd": "BD : déposée sous completed/bd, lue directement par Komga",
+    "blocked": "Import bloqué : téléchargement Sonarr/Radarr terminé, que l'arr refuse "
+               "d'importer (voir sa file d'attente)",
+    "importing": "Import en cours : téléchargement Sonarr/Radarr terminé, encore dans la file de l'arr",
+    "replaced": "Remplacé : téléchargement Sonarr/Radarr sans fichier dans la bibliothèque et sorti "
+                "de la file de l'arr (une autre release a pris sa place)",
+    "absent": "Absent : plus aucun fichier de ce torrent sur le disque",
+    None: "Inconnu : ni BD, ni rattaché à Sonarr/Radarr (dossier posé à la main, "
+          "ou arr injoignable)",
+}
+templates.env.globals["kind_descriptions"] = KIND_DESCRIPTIONS
+
+# Couleur du titre d'une ligne selon son type (classes de clearr.css) : rouge
+# pour ce qui demande une action, orange pour le remplacé, gris pour
+# l'inconnu ; rien pour les types sains ni pour un import en cours.
+KIND_TITLE_CLASSES = {
+    "absent": "title-danger", "blocked": "title-danger",
+    "replaced": "title-warning", None: "title-unknown",
+}
+
+
 def torrent_view(t, child=False, meta=None):
     return {
         "id": t["id"],
@@ -175,6 +211,7 @@ def torrent_view(t, child=False, meta=None):
         "meta": meta,
         # Clé de KIND_ICONS (_kind_icon.html) ; None = inconnu.
         "kind": t.get("_kind"),
+        "title_class": KIND_TITLE_CLASSES.get(t.get("_kind"), ""),
         "name": t["name"],
         "abs": "" if child else ("✓" if t.get("_missing") else ""),
         "abs_danger": (not child) and bool(t.get("_missing")),
@@ -259,7 +296,8 @@ def render_torrents_tab(sort, reverse, filter_str, message=None, message_kind="s
     meta_index = core.build_arr_meta_index()
     metas = {t["id"]: core.torrent_meta(t, state["library_index"], meta_index)
              for t in state["all_torrents"]}
-    kinds = {t["id"]: core.torrent_kind(t, metas[t["id"]]) for t in state["all_torrents"]}
+    queue_states = core.arr_queue_states()
+    kinds = {t["id"]: core.torrent_kind(t, metas[t["id"]], queue_states) for t in state["all_torrents"]}
     # Un cross-seed est le même contenu que son parent : il hérite de son type
     # quand il n'en a pas (son downloadDir est .cross-seed-links/<tracker>, et
     # il n'est pas toujours hardlinké à library/).
@@ -295,7 +333,11 @@ def render_torrents_tab(sort, reverse, filter_str, message=None, message_kind="s
     # filtre par nom. Le masquage lui-même est fait en CSS (voir
     # torrents_tab.html), pas ici.
     kind_counts = collections.Counter(g["parent"]["kind"] for g in groups)
-    kind_filters = [{"kind": k, "key": k or "unknown", "count": kind_counts[k]} for k in core.TORRENT_KINDS]
+    kind_filters = {"healthy": [], "degraded": []}
+    for k in core.TORRENT_KINDS:
+        group = "healthy" if k in core.HEALTHY_KINDS else "degraded"
+        kind_filters[group].append({"kind": k, "key": k or "unknown", "label": KIND_LABELS[k],
+                                    "count": kind_counts[k]})
 
     return render(
         "torrents_tab.html",
@@ -436,69 +478,6 @@ def tab_animes(sort: str = DEFAULT_SORT["animes"], reverse: str = "0", filter: s
 @app.get("/tab/films", response_class=HTMLResponse)
 def tab_films(sort: str = DEFAULT_SORT["films"], reverse: str = "0", filter: str = ""):
     return HTMLResponse(render_arr_tab("films", sort, reverse == "1", filter))
-
-
-# --- purge groupée des torrents marqués ABS — routes STATIQUES, doivent être
-# déclarées avant /torrents/{tid}/... : Starlette résout les routes dans
-# l'ordre de déclaration, donc /torrents/{tid}/confirm capturerait sinon
-# "purge-abs" comme une valeur de tid (404/422 au lieu d'atteindre cette
-# route, piège rencontré en écrivant le smoke test). ---
-
-@app.get("/torrents/purge-abs/confirm", response_class=HTMLResponse)
-def purge_confirm(sort: str = DEFAULT_SORT["torrents"], reverse: str = "0", filter: str = ""):
-    state = core.load_full_state()
-    missing_torrents = [t for t in state["all_torrents"] if t["id"] in state["missing_ids"]]
-    return HTMLResponse(render(
-        "confirm_bulk.html",
-        torrents=[t["name"] for t in missing_torrents],
-        refusal=core.abs_purge_refusal(state["all_torrents"], state["missing_ids"]),
-        sort=sort, reverse=reverse == "1", filter_str=filter,
-    ))
-
-
-@app.post("/torrents/purge-abs", response_class=HTMLResponse)
-def purge_execute(sort: str = Form(DEFAULT_SORT["torrents"]), reverse: str = Form("0"), filter: str = Form("")):
-    state = core.load_full_state()
-    client = state["client"]
-    all_torrents = state["all_torrents"]
-    library_index = state["library_index"]
-    linked_ids = state["linked_ids"]
-    missing_ids = state["missing_ids"]
-    cross_seed_groups = state["cross_seed_groups"]
-    # Revérifié ici et pas seulement dans la modale : le montage peut tomber
-    # entre l'affichage et le clic.
-    refusal = core.abs_purge_refusal(all_torrents, missing_ids)
-    if refusal:
-        core.logger.error("purge ABS refusée : %s", refusal)
-        return HTMLResponse(render_torrents_tab(sort, reverse == "1", filter, message=refusal,
-                                                message_kind="danger"))
-    missing_torrents = [t for t in all_torrents if t["id"] in missing_ids]
-    deleted, failed, skipped = 0, 0, 0
-    for torrent in missing_torrents:
-        current_ids = {t["id"] for t in all_torrents}
-        if torrent["id"] not in current_ids:
-            skipped += 1
-            continue
-        try:
-            host_files = core.torrent_host_files(torrent)
-            lib_matches = core.find_library_matches(host_files, library_index)
-            arr_plan = core.plan_arr_actions(lib_matches)
-            # lib_matches vide pour un ABS (aucun fichier sur disque), donc plan
-            # arr vide et aucun échec arr possible.
-            all_torrents, _freed, _arr_failed = core.apply_deletion(
-                client, torrent, host_files, lib_matches, arr_plan,
-                all_torrents, linked_ids, missing_ids, cross_seed_groups)
-            deleted += 1
-        except Exception as e:
-            core.logger.error("échec de la purge de %r (id=%s) : %s", torrent["name"], torrent["id"], e)
-            failed += 1
-    message = f"Purge : {deleted} supprimé(s)"
-    if skipped:
-        message += f", {skipped} déjà supprimé(s) en cascade"
-    if failed:
-        message += f", {failed} échec(s) (voir {core.LOG_PATH})"
-    kind = "danger" if failed else "success"
-    return HTMLResponse(render_torrents_tab(sort, reverse == "1", filter, message=message, message_kind=kind))
 
 
 # --- balayage des orphelins de library/ (fichiers qu'aucun torrent ne couvre

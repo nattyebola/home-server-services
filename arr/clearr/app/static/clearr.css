@@ -213,12 +213,30 @@ tr.collapse .kind-icon { opacity: .6; }
 .kind-series { color: #3d5fc4; }  /* OVNI de X-Files */
 .kind-anime  { color: #2b8a3e; }  /* Shenron */
 .kind-bd     { color: #d9480f; }
-.kind-unlinked { color: #0c8599; }  /* recyclage : pas le vert, pris par l'anime */
+.kind-blocked   { color: #c92a2a; }  /* signe interdit */
+.kind-importing { color: #6741d9; }  /* sablier ; pas l'orange, pris par la BD */
+.kind-replaced  { color: #0c8599; }  /* recyclage ; pas le vert, pris par l'anime */
+.kind-absent    { color: #c2255c; }  /* loupe (ex-colonne ABS) */
 [data-bs-theme="dark"] .kind-film   { color: #d0a070; }
 [data-bs-theme="dark"] .kind-series { color: #8ea6ff; }
 [data-bs-theme="dark"] .kind-anime  { color: #69db7c; }
 [data-bs-theme="dark"] .kind-bd     { color: #ff8a50; }
-[data-bs-theme="dark"] .kind-unlinked { color: #3bc9db; }
+[data-bs-theme="dark"] .kind-blocked   { color: #ff6b6b; }
+[data-bs-theme="dark"] .kind-importing { color: #b197fc; }
+[data-bs-theme="dark"] .kind-replaced  { color: #3bc9db; }
+[data-bs-theme="dark"] .kind-absent    { color: #f783ac; }
+
+/* Titre des lignes de type dégradé (webapp.KIND_TITLE_CLASSES) : rouge =
+   absent ou import bloqué, orange = remplacé, gris = inconnu. Préfixe
+   `.table` obligatoire : Bootstrap colore chaque cellule par
+   `.table > :not(caption) > * > *`, plus spécifique qu'une classe seule — la
+   couleur était silencieusement ignorée. */
+.table .title-danger  { color: #c92a2a; }  /* = picto « bloqué » ; le
+   --bs-danger-text-emphasis de Bootstrap est un bordeaux presque noir */
+.table .title-warning { color: #d9480f; }
+.table .title-unknown { color: var(--bs-secondary-color); }
+[data-bs-theme="dark"] .table .title-danger  { color: #ff6b6b; }
+[data-bs-theme="dark"] .table .title-warning { color: #ffa94d; }
 
 /* Filtre par type (vue Torrents) : même principe que data-clearr-empty
    ci-dessus — état sur <html>, posé par clearr.js, donc intact après chaque
@@ -228,7 +246,10 @@ tr.collapse .kind-icon { opacity: .6; }
 :root[data-clearr-kind="series"] tr[data-kind]:not([data-kind="series"]),
 :root[data-clearr-kind="anime"] tr[data-kind]:not([data-kind="anime"]),
 :root[data-clearr-kind="bd"] tr[data-kind]:not([data-kind="bd"]),
-:root[data-clearr-kind="unlinked"] tr[data-kind]:not([data-kind="unlinked"]),
+:root[data-clearr-kind="blocked"] tr[data-kind]:not([data-kind="blocked"]),
+:root[data-clearr-kind="importing"] tr[data-kind]:not([data-kind="importing"]),
+:root[data-clearr-kind="replaced"] tr[data-kind]:not([data-kind="replaced"]),
+:root[data-clearr-kind="absent"] tr[data-kind]:not([data-kind="absent"]),
 :root[data-clearr-kind="unknown"] tr[data-kind]:not([data-kind="unknown"]) {
   display: none;
 }

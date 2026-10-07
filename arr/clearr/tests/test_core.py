@@ -374,18 +374,50 @@ class TorrentKind(unittest.TestCase):
         t = dict(self.torrent("/data/completed/radarr"), percentDone=1.0, _linked=True)
         self.assertEqual(core.torrent_kind(t, None), "film")
 
-    def test_grab_termine_hors_bibliotheque(self):
-        # Release remplacée par une autre (ou import bloqué) : recyclage.
+    def done(self, download_dir, hash_="ABC"):
+        return dict(self.torrent(download_dir), percentDone=1.0, _linked=False, hashString=hash_)
+
+    def test_hors_bibliotheque_absent_de_la_file_remplace(self):
+        # Release remplacée par une autre : l'arr ne la suit plus.
+        queues = {"sonarr": {}, "radarr": {}}
         for d in ("/data/completed/sonarr", "/data/completed/radarr"):
-            t = dict(self.torrent(d), percentDone=1.0, _linked=False)
-            self.assertEqual(core.torrent_kind(t, None), "unlinked", d)
+            self.assertEqual(core.torrent_kind(self.done(d), None, queues), "replaced", d)
+
+    def test_hors_bibliotheque_bloque_ou_en_cours_selon_la_file(self):
+        # downloadId de l'arr en majuscules, hashString de Transmission en
+        # minuscules : comparé sans casse.
+        t = self.done("/data/completed/sonarr", hash_="abc")
+        for state, kind in (("importBlocked", "blocked"), ("failed", "blocked"),
+                            ("importPending", "importing"), ("importing", "importing")):
+            self.assertEqual(core.torrent_kind(t, None, {"sonarr": {"ABC": state}}), kind, state)
+
+    def test_file_de_l_autre_arr_ignoree(self):
+        # Un grab Radarr ne se cherche que dans la file de Radarr.
+        t = self.done("/data/completed/radarr")
+        self.assertEqual(core.torrent_kind(t, None, {"sonarr": {"ABC": "importBlocked"}, "radarr": {}}),
+                         "replaced")
+
+    def test_file_injoignable_inconnu(self):
+        # Non vérifiable : on ne devine pas « remplacé ».
+        t = self.done("/data/completed/sonarr")
+        self.assertIsNone(core.torrent_kind(t, None, {"sonarr": None, "radarr": {}}))
+        self.assertIsNone(core.torrent_kind(t, None))
+
+    def test_file_injoignable_n_affecte_pas_un_grab_en_bibliotheque(self):
+        t = dict(self.done("/data/completed/sonarr"), _linked=True)
+        self.assertEqual(core.torrent_kind(t, None, {"sonarr": None}), "series")
+
+    def test_absent_prime_sur_tout(self):
+        # Ex-colonne ABS : vaut aussi pour une BD ou un dossier manuel.
+        for d in ("/data/completed/bd/Sillage", "/data/completed/sonarr", "/data/completed/kids"):
+            t = dict(self.done(d), _missing=True)
+            self.assertEqual(core.torrent_kind(t, None, {"sonarr": {"ABC": "importBlocked"}}), "absent", d)
 
     def test_hors_bibliotheque_reserve_aux_categories_arr(self):
         # Un dossier manuel ou une BD ne vont jamais dans library/ : ce n'est
         # pas un signal pour eux.
         for d, kind in (("/data/completed/kids", None), ("/data/completed/bd/Sillage", "bd")):
-            t = dict(self.torrent(d), percentDone=1.0, _linked=False)
-            self.assertEqual(core.torrent_kind(t, None), kind, d)
+            self.assertEqual(core.torrent_kind(self.done(d), None, {}), kind, d)
 
     def test_dossier_manuel_reste_inconnu(self):
         # Le cas arbitré : completed/kids porte un film, completed/anime des
@@ -396,15 +428,18 @@ class TorrentKind(unittest.TestCase):
 
 
 class WebSortFields(unittest.TestCase):
-    """TYPE remplace BIB côté web seulement : la TUI parcourt SORT_FIELDS par
-    index avec des colonnes écrites en dur, elle garde BIB."""
+    """TYPE remplace BIB et ABS côté web seulement : la TUI parcourt
+    SORT_FIELDS par index avec des colonnes écrites en dur, elle garde les deux."""
 
     def test_type_remplace_bib_et_absent_de_la_tui(self):
         noms = [n for n, _ in core.SORT_FIELDS]
         noms_web = [n for n, _ in core.WEB_SORT_FIELDS]
         self.assertNotIn("TYPE", noms)
         self.assertIn("BIB", noms)
-        self.assertEqual(noms_web, ["TYPE"] + [n for n in noms if n != "BIB"])
+        self.assertIn("ABS", noms)
+        self.assertEqual(noms_web, ["TYPE"] + [n for n in noms if n not in ("BIB", "ABS")])
+        # L'onglet BD n'a pas de TYPE : ABS y reste le seul signal d'une BD disparue.
+        self.assertIn("ABS", [n for n, _ in core.BD_SORT_FIELDS])
         self.assertNotIn("TYPE", [n for n, _ in core.BD_SORT_FIELDS])
 
     def test_tri_sans_type_ne_leve_pas(self):

@@ -117,9 +117,9 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   non recopié) : sous `completed/bd` il n'y a jamais de hardlink `library/`,
   la colonne serait vide en permanence — et vide y voudrait dire autre chose
   qu'ailleurs, où l'absence de BIB signale un grab jamais importé.
-  **Boutons « Purger les ABS » et « Orphelins library/ » masqués** : tous deux
-  agissent sur l'ensemble des torrents ou sur tout `library/`, pas sur la
-  sélection de l'onglet — les afficher promettrait une portée qu'ils n'ont pas.
+  **Bouton « Orphelins library/ » masqué** : il agit sur tout `library/`, pas
+  sur la sélection de l'onglet — l'afficher promettrait une portée qu'il n'a
+  pas (« Purger les ABS » l'était pour la même raison, avant son retrait).
   `group_count` est en revanche recompté sur les groupes **rendus**, sinon
   l'onglet annoncerait les groupes cross-seed des autres.
   **`is_bd` de la modale de confirmation vient du TORRENT, pas de l'onglet**
@@ -141,26 +141,62 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   catégorie `completed/{sonarr,radarr}` (`ARR_CATEGORY_KINDS`, suit
   `ARR_DOWNLOAD_CLIENT` de `provision.py`) — un grab Sonarr en cours y
   reste « série » même si c'est un anime (catégorie commune).
-  **Type `unlinked`, picto recyclage** (demandé le 2026-10-07, pour retrouver
-  les releases remplacées que BIB montrait) : catégorie arr + `percentDone`
-  à 1 + `_linked` faux. Sur `_linked` (= BIB) et **pas** sur l'absence de
-  meta : un titre retiré de l'arr avec ses fichiers restés dans `library/` n'a
-  plus de meta mais reste en bibliothèque. Englobe aussi import bloqué,
-  import pas encore fait et ABS — accepté, le picto dit « hors bibliothèque »,
-  pas « remplacé ». Un téléchargement en cours garde le type de sa catégorie.
-  Réservé aux catégories arr : un dossier manuel ou une BD ne vont jamais
-  dans `library/`, ce n'est pas un signal pour eux. Ni le nom de
-  release ni les dossiers posés à la main (`completed/kids` porte un film,
-  `completed/anime` des séries non-anime) : ils restent « inconnu ». Un
-  cross-seed sans type hérite de celui de son parent.
+  **Grab arr terminé hors bibliothèque, 3 types** (demandé le 2026-10-07,
+  pour retrouver les releases remplacées que BIB montrait) : catégorie arr +
+  `percentDone` à 1 + `_linked` faux, départagé par la file de l'arr
+  (`core.arr_queue_states()`, `downloadId` = infoHash, comparé en
+  majuscules ; un appel par arr à chaque rendu) : dans la file avec un état
+  de `QUEUE_BLOCKED_STATES` → `blocked` (signe interdit) ; dans la file sinon
+  → `importing` (sablier) ; absent → `replaced` (recyclage). Sur `_linked`
+  (= BIB) et **pas** sur l'absence de meta : un titre retiré de l'arr avec ses
+  fichiers restés dans `library/` n'a plus de meta mais reste en
+  bibliothèque. **`includeUnknownSeriesItems`/`includeUnknownMovieItems`
+  obligatoires** : sans eux, un grab que l'arr n'a pas su rattacher à un
+  titre — l'import bloqué typique — manque à la file et passerait pour
+  remplacé. **File injoignable = `None`, pas `{}`** dans `arr_queue_states`,
+  et le torrent sort **inconnu** (arbitré : un type non vérifiable ne se
+  devine pas). Un grab lié à `library/` n'est pas concerné, il garde le type
+  de sa catégorie. Limite acceptée : une entrée retirée de la file à la main
+  sans import sort aussi en recyclage. Un téléchargement en cours garde le
+  type de sa catégorie. Réservé aux catégories arr : un dossier manuel ou une
+  BD ne vont jamais dans `library/`, ce n'est pas un signal pour eux.
+  **Type `absent`, loupe, à la place de la colonne ABS** (2026-10-07, web,
+  vue Torrents) : `_missing`, testé **en premier**, avant même la BD — sinon
+  une BD disparue redevenait une simple bulle et l'info était perdue. Sans
+  fichier il n'y a de toute façon ni inode, ni meta, ni lien `library/`.
+  **L'onglet BD garde la colonne ABS** : il n'a pas de colonne TYPE, ce serait
+  son seul signal d'une BD disparue (`BD_SORT_FIELDS` intact).
+  **« Purger les ABS » retiré du web** (2026-10-07, demandé) : bouton, routes
+  `/torrents/purge-abs*` et `confirm_bulk.html` supprimés. La TUI garde
+  `Maj+P` et `core.abs_purge_refusal`. Ne pas le réintroduire sans demande.
+  **Sains / dégradés** (2026-10-07) : `core.HEALTHY_KINDS` (film, série,
+  anime, BD) ; le reste de `TORRENT_KINDS` est dégradé. Le filtre les montre
+  en deux `btn-group` distincts, séparés par leur seul espacement (un `.vr`
+  entre eux a été jugé de trop ; un seul jeu de radios, même `name`), chaque bouton = picto + libellé (`webapp.KIND_LABELS`) + compte,
+  et une infobulle (`title=` sur le `<label>` entier) tirée de
+  `webapp.KIND_DESCRIPTIONS`, global Jinja — **même source que le `<title>`
+  des pictos du tableau** (`_kind_icon.html`) : une description changée l'est
+  partout.
+  Couleur du titre de ligne par type (`webapp.KIND_TITLE_CLASSES`, classes
+  `.title-*` de `clearr.css`) : rouge = absent ou bloqué, orange = remplacé,
+  gris = inconnu, rien pour les sains ni pour « en import ». **Piège** :
+  `.table .title-*` et pas `.title-*` seul — Bootstrap colore chaque cellule
+  par `.table > :not(caption) > * > *`, plus spécifique : une classe seule
+  est ignorée **sans aucun signe**, constaté seulement sur capture d'écran.
+  Rouge = `#c92a2a` (celui du picto « bloqué »), pas
+  `--bs-danger-text-emphasis`, bordeaux presque noir en thème clair. Remplace l'ancien
+  rouge réservé aux ABS (`abs_danger`, qui ne colore plus que la cellule ABS
+  de l'onglet BD).
   **`core.WEB_SORT_FIELDS` et non `SORT_FIELDS`** : la TUI parcourt ce
-  dernier par index avec des colonnes en dur (BIB comprise), et ne calcule pas `_kind` (posé
+  dernier par index avec des colonnes en dur (BIB et ABS comprises), et ne calcule pas `_kind` (posé
   dans `render_torrents_tab`, **avant** le tri). Absente de l'onglet BD
   (colonne constante, même raison que BIB).
   **Pictos demandés tels quels** (clins d'œil) : fedora d'Indiana Jones
   (film), OVNI de X-Files (série), tête de Shenron (anime), bulle (BD),
-  recyclage (hors bibliothèque, sarcelle : le vert est pris par l'anime), `?`
-  (inconnu, Bootstrap Icons). SVG game-icons.net (CC BY 3.0, auteurs cités
+  signe interdit (import bloqué, rouge), sablier (import en cours, violet :
+  l'orange est pris par la BD), recyclage (remplacé, sarcelle : le vert est
+  pris par l'anime), loupe (absent, framboise), `?`
+  (inconnu, sbed/help) ; signe interdit en Bootstrap Icons. SVG game-icons.net (CC BY 3.0, auteurs cités
   dans `templates/_kind_icon.html` — à garder) en ligne, **pas d'emoji** (même
   raison que la croix ✕). Grands (1,6 em) et une couleur par type, variante
   sombre sous `[data-bs-theme="dark"]` dans `clearr.css`.
@@ -170,8 +206,8 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   cross-seeds, le groupe reste entier), radios resynchronisées par
   `syncKindFilters()`. Choisi plutôt qu'un paramètre serveur : le filtre par
   nom traverse 6 routes et 3 modales (`qs`, champs cachés), un 4e paramètre
-  aurait dû suivre partout. Corollaire : la ligne de résumé et « Purger les
-  ABS » ignorent le type (ils ignoraient déjà la vue). Radios **hors du
+  aurait dû suivre partout. Corollaire : la ligne de résumé ignore le type
+  (elle ignorait déjà la vue). Radios **hors du
   `<form>`** (sinon sérialisées dans le filtre en direct), comptes calculés sur
   les groupes rendus (donc après le filtre par nom), **non mémorisé** (pas de
   `localStorage`, comme le filtre par nom). **Jamais de `data-kind` dans
@@ -521,7 +557,8 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   des deux côtés.
 - TUI seulement : marqueur `'M'` pour un torrent dont le fichier a disparu
   (cas Transmission « No data found! », jamais nettoyé tout seul) +
-  `Maj+P` pour les purger en masse (refusé, comme « Purger les ABS » du web,
+  `Maj+P` pour les purger en masse (seule purge en masse depuis le retrait de
+  « Purger les ABS » du web le 2026-10-07 ; refusée
   par `core.abs_purge_refusal` quand `completed/` est absent/vide ou que TOUS
   les torrents sont ABS — un montage raté rend tout ABS et la purge viderait
   Transmission), et un écran d'aide (`?`) plutôt qu'un
