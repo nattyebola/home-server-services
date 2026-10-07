@@ -6,8 +6,8 @@
    release). Loupe : données disparues du disque (ABS).
    Icônes game-icons.net, CC BY 3.0 (https://game-icons.net) : fedora,
    dragon-head, sands-of-time, recycle et magnifying-glass par Lorc, ufo et
-   chat-bubble par Delapouite, help par Sbed ; ban de Bootstrap Icons 1.11.3
-   (MIT). Recopiées en ligne. SVG plutôt qu'emoji : un
+   chat-bubble par Delapouite, help par Sbed. Recopiées en ligne. Le signe
+   interdit est dessiné ici. SVG plutôt qu'emoji : un
    emoji est rendu par la police couleur du système, différent d'un appareil à
    l'autre (même raison que la croix ✕ de .btn-delete). Couleurs dans
    clearr.css (.kind-*), avec leur variante sombre. <title> =
@@ -22,9 +22,10 @@
   {%- elif kind == "bd" -%}
   <svg class="kind-icon kind-bd" role="img" aria-label="BD" viewBox="0 0 512 512" fill="currentColor"><title>{{ kind_descriptions[kind] }}</title><path fill="currentColor" d="M229.7 22.66A155.2 235.6 80.24 0 0 23.81 215.6A155.2 235.6 80.24 0 0 236.7 333.4c23.8 55.6-17.1 109.3-83.6 161.1c86.2-28.3 176.2-94.4 179.7-178.7a155.2 235.6 80.24 0 0 155.4-180.1A155.2 235.6 80.24 0 0 229.7 22.66"/></svg>
   {%- elif kind == "blocked" -%}
-  {#- viewBox élargi : sans marge, ce picto Bootstrap paraîtrait plus gros que
-      ceux de game-icons, qui en ont une. -#}
-  <svg class="kind-icon kind-blocked" role="img" aria-label="Import bloqué" viewBox="-2 -2 20 20" fill="currentColor"><title>{{ kind_descriptions[kind] }}</title><path d="M15 8a6.97 6.97 0 0 0-1.71-4.584l-9.874 9.875A7 7 0 0 0 15 8M2.71 12.584l9.874-9.875a7 7 0 0 0-9.874 9.874ZM16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0"/></svg>
+  {#- Dessiné ici : pas de signe interdit chez game-icons (sa croix cerclée se
+      confondrait avec le ✕ de suppression). Anneau + barre de 60 dans le
+      cadre 512 de game-icons, même épaisseur et même marge que ses pictos. -#}
+  <svg class="kind-icon kind-blocked" role="img" aria-label="Import bloqué" viewBox="0 0 512 512" fill="none" stroke="currentColor" stroke-width="60"><title>{{ kind_descriptions[kind] }}</title><circle cx="256" cy="256" r="194"/><path d="M119 119L393 393"/></svg>
   {%- elif kind == "importing" -%}
   <svg class="kind-icon kind-importing" role="img" aria-label="Import en cours" viewBox="0 0 512 512" fill="currentColor"><title>{{ kind_descriptions[kind] }}</title><path fill="currentColor" d="M115.063 21.97v9.343c0 101.953 38.158 189.648 96.343 222.093v6.094c-58.186 32.445-96.344 120.14-96.344 222.094v9.344H401.81v-9.344c0-102.552-38.804-190.274-97.53-222.188V253.5c58.722-31.917 97.53-119.64 97.53-222.188V21.97H115.06zM134 40.655h248.875c-2.477 96.445-42.742 175.523-91.938 198.906l-5.343 2.532V270.844l5.344 2.53c49.193 23.383 89.456 102.438 91.937 198.876H134c2.456-95.898 42.125-175.078 90.875-198.938l5.25-2.562v-28.594l-5.25-2.562c-48.748-23.86-88.42-103.04-90.875-198.938zm213.656 86.125c-57.607 27.81-124.526 27.84-177.562 4.095C184.748 181.78 213.91 218.012 248.22 224c-1.54 2.047-2.47 4.585-2.47 7.344 0 6.76 5.488 12.25 12.25 12.25s12.25-5.49 12.25-12.25c0-2.72-.907-5.218-2.406-7.25 35.426-5.88 65.488-44.07 79.812-97.313zM258 258.626c-6.762 0-12.25 5.488-12.25 12.25s5.488 12.25 12.25 12.25 12.25-5.488 12.25-12.25-5.488-12.25-12.25-12.25zm0 39.28c-6.762 0-12.25 5.49-12.25 12.25 0 6.763 5.488 12.25 12.25 12.25s12.25-5.487 12.25-12.25c0-6.76-5.488-12.25-12.25-12.25zm0 39.533c-6.762 0-12.25 5.488-12.25 12.25 0 6.76 5.488 12.25 12.25 12.25s12.25-5.49 12.25-12.25c0-6.762-5.488-12.25-12.25-12.25zm.125 39.906c-23.21.28-46.19 25.77-75.813 75.656h153c-30.523-51.003-53.977-75.936-77.187-75.656z"/></svg>
   {%- elif kind == "replaced" -%}

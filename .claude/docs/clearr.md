@@ -196,7 +196,7 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   signe interdit (import bloqué, rouge), sablier (import en cours, violet :
   l'orange est pris par la BD), recyclage (remplacé, sarcelle : le vert est
   pris par l'anime), loupe (absent, framboise), `?`
-  (inconnu, sbed/help) ; signe interdit en Bootstrap Icons. SVG game-icons.net (CC BY 3.0, auteurs cités
+  (inconnu, sbed/help) ; signe interdit dessiné à la main (anneau + barre épais, rien de tel chez game-icons). SVG game-icons.net (CC BY 3.0, auteurs cités
   dans `templates/_kind_icon.html` — à garder) en ligne, **pas d'emoji** (même
   raison que la croix ✕). Grands (1,6 em) et une couleur par type, variante
   sombre sous `[data-bs-theme="dark"]` dans `clearr.css`.
