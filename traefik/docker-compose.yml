@@ -44,8 +44,9 @@ services:
         max-file: "3"
 
   traefik:
-    # `v3` et pas `latest` (exception assumée, voir CLAUDE.md) : un majeur de Traefik casse la configuration (v2 -> v3 a
-    # renommé ipWhiteList, changé la syntaxe des règles...). Tenir le majeur
+    # `v3` et pas `latest` (exception assumée, voir CLAUDE.md) : un majeur de
+    # Traefik casse la configuration (v2 -> v3 a renommé ipWhiteList, changé
+    # la syntaxe des règles...). Tenir le majeur
     # suffit ; l'ancien `v3.7`, figé depuis le scaffold, aurait cessé de
     # recevoir les correctifs de sécurité à la fin de vie de la 3.7. Le bump
     # vers v4 est manuel et rien ne le signalera.

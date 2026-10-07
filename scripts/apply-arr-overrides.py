@@ -470,7 +470,8 @@ def apply_quality_sizes(label, container, base_url, api_key, overrides):
 # format : Sonarr a grabé `Tomb Raider King S01E12 REPACK … H.264` (CF 5) sur un
 # fichier x265 déjà en place (CF 10), puis en a refusé l'import (« Not a Custom
 # Format upgrade ») — téléchargement pour rien, bloqué dans la file sans limite.
-# Le CF `Repack/Proper` des profils garde la préférence, mais dans le score.
+# Depuis le 2026-10-07 (upgradeAllowed: false partout), un repack ne remplace
+# de toute façon jamais un fichier en place ; le réglage reste comme garde.
 MEDIA_MANAGEMENT_OVERRIDES = {"copyUsingHardlinks": True,
                               "downloadPropersAndRepacks": "doNotPrefer"}
 
@@ -495,9 +496,10 @@ MEDIA_MANAGEMENT_OVERRIDES = {"copyUsingHardlinks": True,
 #     `ReleaseTitleSpecification` est réévalué APRÈS import sur `sceneName`
 #     s'il existe, sinon sur le nom de fichier : les renommer au format en
 #     place, qui ne porte aucun token de langue, leur retirerait
-#     `FRENCH`/`VOSTFR`/`MULTi`. 16 passeraient sous le `cutoffFormatScore` de
-#     leur profil, donc remis en recherche au prochain RSS sync — du quota
-#     indexeur brûlé pour des fichiers inchangés. Le cas One Piece a donc été
+#     `FRENCH`/`VOSTFR`/`MULTi`. 16 passaient alors sous le `cutoffFormatScore`
+#     de leur profil, donc remis en recherche au prochain RSS sync (sans
+#     upgrade depuis le 2026-10-07, plus de regrab, mais le score affiché
+#     resterait faux). Le cas One Piece a donc été
 #     corrigé à la main, en gardant `VOSTFR` dans le nouveau nom (score
 #     inchangé, 50).
 #
