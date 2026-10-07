@@ -5,12 +5,6 @@
 
 <div class="d-flex flex-wrap gap-3 align-items-center justify-content-between mb-2">
   <div class="d-flex flex-wrap gap-2 align-items-center">
-  <form class="d-flex" style="max-width:340px" data-live-get="/tab/{{ tab }}" data-live-target="#tab-content" onsubmit="return false">
-    <input type="hidden" name="sort" value="{{ sort }}">
-    <input type="hidden" name="reverse" value="{{ '1' if reverse else '0' }}">
-    <input type="search" class="form-control form-control-sm" name="filter" value="{{ filter_str }}"
-           placeholder="Filtrer par nom…" data-live autocomplete="off">
-  </form>
   {# Filtre par type : HORS du <form> (il y serait sérialisé dans les
      paramètres du filtre en direct, comme le switch « sans fichier »).
      Masquage 100 % CSS depuis data-clearr-kind sur <html> (clearr.css) : l'état
@@ -27,6 +21,12 @@
     {% endfor %}
   </div>
   {% endif %}
+  <form class="d-flex" style="max-width:340px" data-live-get="/tab/{{ tab }}" data-live-target="#tab-content" onsubmit="return false">
+    <input type="hidden" name="sort" value="{{ sort }}">
+    <input type="hidden" name="reverse" value="{{ '1' if reverse else '0' }}">
+    <input type="search" class="form-control form-control-sm" name="filter" value="{{ filter_str }}"
+           placeholder="Filtrer par nom…" data-live autocomplete="off">
+  </form>
   </div>
   {# Les deux boutons agissent sur TOUS les torrents / tout library/, pas sur
      la sélection de l'onglet — donc hors sujet dans BD, où ils promettraient

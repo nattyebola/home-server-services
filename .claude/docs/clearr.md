@@ -154,7 +154,7 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   dans `templates/_kind_icon.html` — à garder) en ligne, **pas d'emoji** (même
   raison que la croix ✕). Grands (1,6 em) et une couleur par type, variante
   sombre sous `[data-bs-theme="dark"]` dans `clearr.css`.
-  **Filtre par type** (radios à côté du filtre par nom, 2026-10-07) : **100 %
+  **Filtre par type** (radios avant le filtre par nom, 2026-10-07) : **100 %
   CSS**, même mécanique que le switch « sans fichier » — `data-clearr-kind` sur
   `<html>`, `data-kind` sur chaque `<tr>` (celui du **parent** jusque sur ses
   cross-seeds, le groupe reste entier), radios resynchronisées par
