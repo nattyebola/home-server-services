@@ -56,7 +56,7 @@
     clearAlert();
     el.innerHTML = body;
     showModalIfTarget(target);
-    syncEmptySwitches();
+    syncFragmentState();
   }
 
   // Désactive le déclencheur le temps de la requête et affiche un spinner
@@ -173,6 +173,35 @@
     }
   });
 
+  // --- Filtre par type (vue Torrents) ----------------------------------------
+  // Même mécanique que le switch ci-dessus : masquage CSS depuis
+  // data-clearr-kind sur <html>, radios resynchronisées après chaque swap.
+  // Volontairement NON mémorisé (pas de localStorage) : il se comporte comme
+  // le filtre par nom, qui repart vide à chaque chargement.
+  function syncKindFilters() {
+    var kind = document.documentElement.getAttribute("data-clearr-kind") || "";
+    document.querySelectorAll("[data-kind-filter]").forEach(function (radio) {
+      radio.checked = radio.value === kind;
+    });
+  }
+
+  document.addEventListener("change", function (e) {
+    var radio = e.target.closest("[data-kind-filter]");
+    if (!radio) return;
+    if (radio.value) {
+      document.documentElement.setAttribute("data-clearr-kind", radio.value);
+    } else {
+      document.documentElement.removeAttribute("data-clearr-kind");
+    }
+  });
+
+  // État porté par <html> mais affiché DANS le fragment : à rejouer après
+  // chaque remplacement de #tab-content.
+  function syncFragmentState() {
+    syncEmptySwitches();
+    syncKindFilters();
+  }
+
   document.addEventListener("click", function (e) {
     // Les liens IMDb/TVDB/TMDB/Sonarr/Radarr sont de vrais liens externes
     // (target=_blank) : ils ne doivent pas être interceptés par le handler
@@ -268,7 +297,7 @@
         clearAlert();
         el.innerHTML = html;
         showModalIfTarget(target);
-        syncEmptySwitches();
+        syncFragmentState();
         var newInput = el.querySelector('[name="' + name + '"]');
         if (newInput) {
           newInput.focus();
@@ -281,5 +310,5 @@
     }, 300);
   });
 
-  syncEmptySwitches();   // rendu initial : #tab-content vient de page.html
+  syncFragmentState();   // rendu initial : #tab-content vient de page.html
 })();

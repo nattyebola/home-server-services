@@ -132,6 +132,41 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   pour une BD : l'absence de correspondance y est la normale, l'annoncer
   ferait croire à un problème à chaque suppression.
   **La TUI n'a pas bougé**, comme les autres ajouts récents.
+- **Colonne TYPE de la vue Torrents** (2026-10-07, web seulement) : picto
+  film / série / anime / BD / inconnu, **à la place de BIB** (demandé : la
+  colonne BIB a disparu du web, le compte des torrents liés à `library/` reste
+  dans la ligne de résumé ; la TUI garde BIB), `core.torrent_kind()`. **Sources sûres uniquement, arbitré** : dossier BD,
+  puis rattachement arr (`meta["anime"]` posé par `item_meta` via
+  `is_anime`, même critère que l'onglet Animés, sinon `meta["kind"]`), puis
+  catégorie `completed/{sonarr,radarr}` (`ARR_CATEGORY_KINDS`, suit
+  `ARR_DOWNLOAD_CLIENT` de `provision.py`) — un grab Sonarr jamais importé y
+  reste « série » même si c'est un anime (catégorie commune). Ni le nom de
+  release ni les dossiers posés à la main (`completed/kids` porte un film,
+  `completed/anime` des séries non-anime) : ils restent « inconnu ». Un
+  cross-seed sans type hérite de celui de son parent.
+  **`core.WEB_SORT_FIELDS` et non `SORT_FIELDS`** : la TUI parcourt ce
+  dernier par index avec des colonnes en dur (BIB comprise), et ne calcule pas `_kind` (posé
+  dans `render_torrents_tab`, **avant** le tri). Absente de l'onglet BD
+  (colonne constante, même raison que BIB).
+  **Pictos demandés tels quels** (clins d'œil) : fedora d'Indiana Jones
+  (film), OVNI de X-Files (série), tête de Shenron (anime), bulle (BD), `?`
+  (inconnu, Bootstrap Icons). SVG game-icons.net (CC BY 3.0, auteurs cités
+  dans `templates/_kind_icon.html` — à garder) en ligne, **pas d'emoji** (même
+  raison que la croix ✕). Grands (1,6 em) et une couleur par type, variante
+  sombre sous `[data-bs-theme="dark"]` dans `clearr.css`.
+  **Filtre par type** (radios à côté du filtre par nom, 2026-10-07) : **100 %
+  CSS**, même mécanique que le switch « sans fichier » — `data-clearr-kind` sur
+  `<html>`, `data-kind` sur chaque `<tr>` (celui du **parent** jusque sur ses
+  cross-seeds, le groupe reste entier), radios resynchronisées par
+  `syncKindFilters()`. Choisi plutôt qu'un paramètre serveur : le filtre par
+  nom traverse 6 routes et 3 modales (`qs`, champs cachés), un 4e paramètre
+  aurait dû suivre partout. Corollaire : la ligne de résumé et « Purger les
+  ABS » ignorent le type (ils ignoraient déjà la vue). Radios **hors du
+  `<form>`** (sinon sérialisées dans le filtre en direct), comptes calculés sur
+  les groupes rendus (donc après le filtre par nom), **non mémorisé** (pas de
+  `localStorage`, comme le filtre par nom). **Jamais de `data-kind` dans
+  l'onglet BD** : sans radios pour le réinitialiser, un filtre « film » resté
+  posé sur `<html>` y masquerait tout.
 - **Onglets masqués quand leur service est arrêté** (2026-10-02,
   `webapp.TAB_SERVICES` + `core.service_running`, global Jinja `tab_visible`
   dans `_tabs.html`) : BD → Komga, Séries/Animés → Sonarr, Films → Radarr.
@@ -210,7 +245,8 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   réécrire le texte en JS après chaque swap aurait fait clignoter le mauvais
   chiffre. Seul l'état *coché* de la case ne peut pas venir du CSS, d'où
   `syncEmptySwitches()` appelé aux 3 points d'entrée (les 2 chemins de swap +
-  le rendu initial, qui vient de `page.html` et ne passe pas par `swapInto`).
+  le rendu initial, qui vient de `page.html` et ne passe pas par `swapInto`),
+  via `syncFragmentState()` depuis le filtre par type.
   Le switch vit **hors du `<form>` de filtre** : dedans, il serait sérialisé
   dans les paramètres du filtre en direct.
   Sa présence tient à `empty_total` (tout l'onglet) et non `empty_count` (la

@@ -829,6 +829,9 @@ def item_meta(kind, item):
         links.append(arr)
     return {
         "kind": kind,
+        # Colonne TYPE de la vue Torrents (torrent_kind) : un anime reste un
+        # `kind` "series" pour la jaquette et les liens, seul le picto change.
+        "anime": kind == "series" and is_anime(item),
         "id": item["id"],
         "title": item["title"],
         "poster": f"/poster/{kind}/{item['id']}" if poster_file(kind, item["id"]) else None,
@@ -1016,13 +1019,52 @@ def is_bd_torrent(torrent):
     le torrent lui-même et reste juste même quand aucun fichier n'existe plus
     sur disque (cas ABS, où torrent_host_files() ne rendrait rien).
     """
+    return _download_dir_under(torrent, BD_ROOT)
+
+
+def _download_dir_under(torrent, root):
+    """Le downloadDir du torrent est-il `root` ou un de ses sous-dossiers ?
+    Séparateur inclus dans la comparaison : un startswith nu ferait passer
+    completed/bdrip pour completed/bd."""
     try:
         host_dir = container_path_to_host(torrent.get("downloadDir") or "")
     except ValueError:
         # Torrent déplacé à la main hors de /data — même traitement que dans
         # torrent_host_files() : on l'ignore plutôt que de lever.
         return False
-    return host_dir == BD_ROOT or host_dir.startswith(BD_ROOT + os.sep)
+    return host_dir == root or host_dir.startswith(root + os.sep)
+
+
+# Catégories du client de téléchargement posées par provision.py
+# (ARR_DOWNLOAD_CLIENT) : Transmission dépose les grabs de Sonarr/Radarr sous
+# completed/<catégorie>. À changer ensemble.
+ARR_CATEGORY_KINDS = {"sonarr": "series", "radarr": "film"}
+
+# Types de torrent de la colonne TYPE (web), dans leur ordre de tri. None =
+# inconnu.
+TORRENT_KINDS = ("film", "series", "anime", "bd", None)
+
+
+def torrent_kind(torrent, meta):
+    """Type du contenu d'un torrent : "bd", "anime", "series", "film" ou None
+    (inconnu). Anime = série Sonarr de `seriesType` anime (is_anime), même
+    critère que l'onglet Animés.
+
+    Uniquement des sources sûres, jamais une devinette sur le nom de la release
+    ou d'un dossier posé à la main (arbitré le 2026-10-07 — completed/kids porte
+    un film, completed/anime des séries non-anime) : dossier BD, puis titre arr
+    rattaché (`meta`, voir torrent_meta), puis catégorie arr du downloadDir — un
+    grab Sonarr jamais importé reste une série, même si c'est un anime (la
+    catégorie Sonarr est commune aux deux). Purement descriptif, rien ne se
+    décide dessus."""
+    if is_bd_torrent(torrent):
+        return "bd"
+    if meta:
+        return "anime" if meta.get("anime") else meta["kind"]
+    for category, kind in ARR_CATEGORY_KINDS.items():
+        if _download_dir_under(torrent, os.path.join(COMPLETED_ROOT, category)):
+            return kind
+    return None
 
 
 # --- disponibilité des services derrière les onglets web ---
@@ -1989,6 +2031,15 @@ FILMS_SORT_FIELDS = [
 # pas de colonne. Dérivé de SORT_FIELDS plutôt que recopié : un champ ajouté
 # là-bas arrive ici tout seul.
 BD_SORT_FIELDS = [f for f in SORT_FIELDS if f[0] != "BIB"]
+
+# Vue Torrents du web : TYPE à la place de BIB (demandé le 2026-10-07 ; le
+# nombre de torrents liés à library/ reste dans la ligne de résumé). Liste à
+# part parce que la TUI parcourt SORT_FIELDS par index avec des colonnes
+# écrites en dur — elle garde BIB — et qu'elle ne calcule pas `_kind` (posé par
+# webapp.render_torrents_tab, qui dispose seul des métadonnées arr). Absent de
+# BD_SORT_FIELDS : la colonne y serait constante.
+WEB_SORT_FIELDS = ([("TYPE", lambda t: TORRENT_KINDS.index(t.get("_kind")))]
+                   + [f for f in SORT_FIELDS if f[0] != "BIB"])
 
 VIEWS = ["torrents", "series", "films"]
 VIEW_LABELS = {"torrents": "Torrents", "series": "Séries", "films": "Films"}

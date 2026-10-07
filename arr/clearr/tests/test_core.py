@@ -342,6 +342,57 @@ class BdSortFields(unittest.TestCase):
         self.assertNotIn("BIB", noms_bd)
 
 
+class TorrentKind(unittest.TestCase):
+    """Colonne TYPE de la vue Torrents : uniquement des sources sûres, jamais
+    une devinette sur un nom de dossier posé à la main."""
+
+    def torrent(self, download_dir):
+        return {"downloadDir": download_dir}
+
+    def test_bd_par_dossier(self):
+        self.assertEqual(core.torrent_kind(self.torrent("/data/completed/bd/Sillage"), None), "bd")
+
+    def test_meta_arr_prime_sur_le_dossier(self):
+        # Un cross-seed vit sous .cross-seed-links : seul son rattachement arr
+        # dit ce qu'il contient.
+        t = self.torrent("/data/.cross-seed-links/C411")
+        self.assertEqual(core.torrent_kind(t, {"kind": "film"}), "film")
+
+    def test_anime_vient_du_meta_arr(self):
+        t = self.torrent("/data/completed/sonarr")
+        self.assertEqual(core.torrent_kind(t, {"kind": "series", "anime": True}), "anime")
+        self.assertEqual(core.torrent_kind(t, {"kind": "series", "anime": False}), "series")
+
+    def test_categorie_arr_sans_import(self):
+        self.assertEqual(core.torrent_kind(self.torrent("/data/completed/sonarr"), None), "series")
+        self.assertEqual(core.torrent_kind(self.torrent("/data/completed/radarr"), None), "film")
+
+    def test_dossier_manuel_reste_inconnu(self):
+        # Le cas arbitré : completed/kids porte un film, completed/anime des
+        # séries non-anime — le nom du dossier ne prouve rien.
+        for d in ("/data/completed/film", "/data/completed/anime", "/data/completed/kids",
+                  "/data/completed/sonarr-old", "/ailleurs/sonarr"):
+            self.assertIsNone(core.torrent_kind(self.torrent(d), None), d)
+
+
+class WebSortFields(unittest.TestCase):
+    """TYPE remplace BIB côté web seulement : la TUI parcourt SORT_FIELDS par
+    index avec des colonnes écrites en dur, elle garde BIB."""
+
+    def test_type_remplace_bib_et_absent_de_la_tui(self):
+        noms = [n for n, _ in core.SORT_FIELDS]
+        noms_web = [n for n, _ in core.WEB_SORT_FIELDS]
+        self.assertNotIn("TYPE", noms)
+        self.assertIn("BIB", noms)
+        self.assertEqual(noms_web, ["TYPE"] + [n for n in noms if n != "BIB"])
+        self.assertNotIn("TYPE", [n for n, _ in core.BD_SORT_FIELDS])
+
+    def test_tri_sans_type_ne_leve_pas(self):
+        # Inconnu (None) doit avoir un rang, sinon .index() lèverait au tri.
+        key = dict(core.WEB_SORT_FIELDS)["TYPE"]
+        self.assertEqual(key({}), len(core.TORRENT_KINDS) - 1)
+
+
 class BuildCrossSeedGroups(unittest.TestCase):
     """Le parent choisi détermine ce que la cascade supprime : une inversion
     supprimerait le téléchargement d'origine en croyant nettoyer un cross-seed."""

@@ -4,6 +4,7 @@
 # de garder un état en mémoire entre requêtes (contrairement à la TUI, qui ne
 # recharge qu'une fois au démarrage) — voir CLAUDE.md "risque perf" : mesuré
 # acceptable (<1s) à l'échelle de cette bibliothèque, à revoir si ça dérive.
+import collections
 import hashlib
 import html
 import os
@@ -172,8 +173,9 @@ def torrent_view(t, child=False, meta=None):
         # Série/film Sonarr/Radarr auquel ce torrent appartient (None si jamais
         # importé) — porte la jaquette et les liens, voir core.torrent_meta.
         "meta": meta,
+        # Clé de KIND_ICONS (_kind_icon.html) ; None = inconnu.
+        "kind": t.get("_kind"),
         "name": t["name"],
-        "bib": "" if child else ("✓" if t.get("_linked") else ""),
         "abs": "" if child else ("✓" if t.get("_missing") else ""),
         "abs_danger": (not child) and bool(t.get("_missing")),
         "age": core.human_age(t["addedDate"]),
@@ -226,7 +228,7 @@ def query_string(sort, reverse, filter_str):
 # les colonnes changent. Même logique que ARR_TABS pour Séries/Animés : deux
 # vues d'une liste, pas deux gabarits.
 TORRENT_TABS = {
-    "torrents": {"select": None, "fields": core.SORT_FIELDS},
+    "torrents": {"select": None, "fields": core.WEB_SORT_FIELDS},
     "bd": {"select": core.is_bd_torrent, "fields": core.BD_SORT_FIELDS},
 }
 
@@ -251,13 +253,27 @@ def render_torrents_tab(sort, reverse, filter_str, message=None, message_kind="s
     linked_ids = state["linked_ids"] & selected_ids
     missing_ids = state["missing_ids"] & selected_ids
 
+    # Métadonnées et type calculés AVANT le tri (la colonne TYPE trie sur
+    # `_kind`), sur la liste complète : les enfants cross-seed d'un onglet
+    # filtré n'y sont pas, mais sont rendus quand même sous leur parent.
+    meta_index = core.build_arr_meta_index()
+    metas = {t["id"]: core.torrent_meta(t, state["library_index"], meta_index)
+             for t in state["all_torrents"]}
+    kinds = {t["id"]: core.torrent_kind(t, metas[t["id"]]) for t in state["all_torrents"]}
+    # Un cross-seed est le même contenu que son parent : il hérite de son type
+    # quand il n'en a pas (son downloadDir est .cross-seed-links/<tracker>, et
+    # il n'est pas toujours hardlinké à library/).
+    for parent_id, children in cross_seed_groups.items():
+        for c in children:
+            kinds[c["id"]] = kinds.get(c["id"]) or kinds.get(parent_id)
+    for t in state["all_torrents"]:
+        t["_kind"] = kinds[t["id"]]
+
     fields = spec["fields"]
     core.sort_items(all_torrents, fields, field_index(fields, sort), reverse)
 
-    meta_index = core.build_arr_meta_index()
-
     def meta_of(torrent):
-        return core.torrent_meta(torrent, state["library_index"], meta_index)
+        return metas[torrent["id"]]
 
     top_level = [t for t in all_torrents if t["id"] not in cross_seed_child_ids]
     needle = filter_str.lower()
@@ -275,6 +291,12 @@ def render_torrents_tab(sort, reverse, filter_str, message=None, message_kind="s
             "force_open": bool(needle and matching_children and not parent_match),
         })
 
+    # Boutons du filtre par type : compté sur les groupes RENDUS, donc après le
+    # filtre par nom. Le masquage lui-même est fait en CSS (voir
+    # torrents_tab.html), pas ici.
+    kind_counts = collections.Counter(g["parent"]["kind"] for g in groups)
+    kind_filters = [{"kind": k, "key": k or "unknown", "count": kind_counts[k]} for k in core.TORRENT_KINDS]
+
     return render(
         "torrents_tab.html",
         active=tab,  # consommé par _tabs.html ; sans lui aucun onglet n'est marqué
@@ -282,7 +304,7 @@ def render_torrents_tab(sort, reverse, filter_str, message=None, message_kind="s
         sort=sort, reverse=reverse, filter_str=filter_str,
         qs=query_string(sort, reverse, filter_str),
         columns=build_columns(tab, fields, sort, reverse, filter_str),
-        groups=groups,
+        groups=groups, kind_filters=kind_filters,
         total=len(all_torrents), linked_count=len(linked_ids), missing_count=len(missing_ids),
         # Compté sur les groupes RENDUS et non sur cross_seed_groups entier :
         # celui-ci est global, il annoncerait les groupes des autres onglets.

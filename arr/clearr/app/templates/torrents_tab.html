@@ -1,14 +1,33 @@
 {% from "_meta.html" import title_cell %}
+{% from "_kind_icon.html" import kind_icon %}
 {% include "_tabs.html" %}
 {% if message %}<div class="alert alert-{{ message_kind }} py-2">{{ message }}</div>{% endif %}
 
 <div class="d-flex flex-wrap gap-3 align-items-center justify-content-between mb-2">
+  <div class="d-flex flex-wrap gap-2 align-items-center">
   <form class="d-flex" style="max-width:340px" data-live-get="/tab/{{ tab }}" data-live-target="#tab-content" onsubmit="return false">
     <input type="hidden" name="sort" value="{{ sort }}">
     <input type="hidden" name="reverse" value="{{ '1' if reverse else '0' }}">
     <input type="search" class="form-control form-control-sm" name="filter" value="{{ filter_str }}"
            placeholder="Filtrer par nom…" data-live autocomplete="off">
   </form>
+  {# Filtre par type : HORS du <form> (il y serait sérialisé dans les
+     paramètres du filtre en direct, comme le switch « sans fichier »).
+     Masquage 100 % CSS depuis data-clearr-kind sur <html> (clearr.css) : l'état
+     survit aux swaps de #tab-content (tri, frappe, suppression) sans être
+     propagé dans les routes ni les modales. Pas dans l'onglet BD, où le type
+     est constant. #}
+  {% if not is_bd %}
+  <div class="btn-group btn-group-sm kind-filter" role="group" aria-label="Filtrer par type">
+    <input type="radio" class="btn-check" name="kind-filter" id="kind-all" value="" data-kind-filter checked>
+    <label class="btn btn-outline-secondary" for="kind-all">Tous</label>
+    {% for f in kind_filters %}
+    <input type="radio" class="btn-check" name="kind-filter" id="kind-{{ f.key }}" value="{{ f.key }}" data-kind-filter>
+    <label class="btn btn-outline-secondary" for="kind-{{ f.key }}">{{ kind_icon(f.kind) }} <span class="small">{{ f.count }}</span></label>
+    {% endfor %}
+  </div>
+  {% endif %}
+  </div>
   {# Les deux boutons agissent sur TOUS les torrents / tout library/, pas sur
      la sélection de l'onglet — donc hors sujet dans BD, où ils promettraient
      une portée qu'ils n'ont pas. #}
@@ -53,8 +72,11 @@
   </thead>
   <tbody>
     {% for g in groups %}
-    <tr>
-      {% if not is_bd %}<td class="text-success-emphasis">{{ g.parent.bib }}</td>{% endif %}
+    {# data-kind du PARENT jusque sur ses cross-seeds : le filtre garde ou
+       masque le groupe entier. Absent dans BD (pas de filtre par type). #}
+    {% set kind_attr %}{% if not is_bd %} data-kind="{{ g.parent.kind or 'unknown' }}"{% endif %}{% endset %}
+    <tr{{ kind_attr }}>
+      {% if not is_bd %}<td class="text-center">{{ kind_icon(g.parent.kind) }}</td>{% endif %}
       <td class="{{ 'text-danger-emphasis fw-semibold' if g.parent.abs_danger else '' }}">{{ g.parent.abs }}</td>
       <td>{{ g.parent.age }}</td>
       <td>{{ g.parent.size }}</td>
@@ -76,8 +98,8 @@
       </td>
     </tr>
     {% for c in g.children %}
-    <tr class="collapse xseed-{{ g.parent.id }} {{ 'show' if g.force_open else '' }}">
-      {% if not is_bd %}<td></td>{% endif %}<td></td>
+    <tr class="collapse xseed-{{ g.parent.id }} {{ 'show' if g.force_open else '' }}"{{ kind_attr }}>
+      {% if not is_bd %}<td class="text-center">{{ kind_icon(c.kind) }}</td>{% endif %}<td></td>
       <td>{{ c.age }}</td>
       <td>{{ c.size }}</td>
       <td class="ratio-{{ c.ratio_class }}">{{ c.ratio }}</td>
