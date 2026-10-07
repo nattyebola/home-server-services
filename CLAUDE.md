@@ -14,7 +14,7 @@ ligne chacune, pour ne pas relitiger une décision prise ni répéter un piège.
 - **`clearr.md`** — `arr/clearr/` (web, TUI, CLI `delete-by-inode`) et l'addon
   Kodi `kodi/context.clearr`.
 - **`arr-config.md`** — `scripts/provision.py`, `apply-arr-overrides.py`,
-  `search-missing.py`, `arr/profiles/`, `arr/recyclarr/`, chaîne arr →
+  `search-missing.py`, `arr/profiles/` (profils de qualité), chaîne arr →
   Jellyfin → Kodi (`.nfo`, renommage, tags, ratio des indexeurs publics).
 - **`arr-pieges.md`** — diagnostiquer un grab, un import bloqué, un regrab en
   boucle, un custom format, un score de profil, cross-seed, Seerr.
@@ -51,12 +51,10 @@ Ne pas proposer d'y revenir sans demande explicite de l'utilisateur.
 - **Jamais de socket Docker monté dans un conteneur** (root-équivalent sur
   l'hôte). C'est ce qui a décidé le transport HTTP de clearr et de l'addon Kodi.
 - **Images en `:latest`**, jamais de tag figé ; la reproductibilité passe par
-  le manifeste de digests de `make backup`. **Exception subie : `recyclarr:8`**
-  (plus de tag `latest` upstream, `edge` = build de dev). Ne pas y remettre
-  `:latest`, le pull échouerait. Le bump vers `:9` est manuel et rien ne le
-  signalera. **Majeur tenu, par choix (2026-09-29) : `traefik:v3`** (un
-  majeur casse la config) **et `postgres:15-alpine`** (un majeur ne relit pas
-  le répertoire de données : dump + réimport à la main, fin de vie 11/2027).
+  le manifeste de digests de `make backup`. **Majeur tenu, par choix
+  (2026-09-29) : `traefik:v3`** (un majeur casse la config) **et
+  `postgres:15-alpine`** (un majeur ne relit pas le répertoire de données :
+  dump + réimport à la main, fin de vie 11/2027).
 - **Arr : `authenticationRequired: enabled`** (2026-09-29), login même depuis
   le LAN. `disabledForLocalAddresses` laissait les conteneurs WAN de
   `traefik-public` lire la clé API (`/initialize.json`). Sonde du dashboard
@@ -74,8 +72,8 @@ Ne pas proposer d'y revenir sans demande explicite de l'utilisateur.
 - **Healthcheck sur tout service** : HTTP réel si un endpoint non authentifié
   existe, sinon connexion TCP. `traefik` a un entrypoint dédié `healthcheck`
   sur `127.0.0.1:8082` (jamais publié), pour échapper à la redirection
-  http→https. `recyclarr` (mode manuel, `profiles: [manual]`) n'en a pas.
-  **Aucune auto-remédiation** (pas d'`autoheal`, il exigerait le socket).
+  http→https. **Aucune auto-remédiation** (pas d'`autoheal`, il exigerait le
+  socket).
 - **`dns: ${DNS_PRIMARY}/${DNS_SECONDARY}`** sur `jellyfin`, `arr/*`, `vpn/*`
   (DNS du FAI qui ment sur les trackers).
 - **Hôte Linux natif requis, pas de WSL2** (évalué le 2026-07-23, détail dans
@@ -83,6 +81,14 @@ Ne pas proposer d'y revenir sans demande explicite de l'utilisateur.
 - **Nextcloud : image communautaire**, pas AIO (socket Docker, UI propre).
 - **Seerr (`ghcr.io/seerr-team/seerr`)**, pas Jellyseerr/Overseerr, fusionnés
   et dépréciés.
+- **Profils de qualité arr : page blanche du 2026-10-07**, écrits à partir des
+  règles de `docs/telechargement.md` (« Règles de sélection ») et d'une étude
+  des releases réelles. **Plus de recyclarr** (les CF TRaSH ne changeaient le
+  choix que dans 3 % des cas, toujours en pire sur nos trackers FR). **Jamais
+  d'upgrade** (`upgradeAllowed: false`, regrab minimum) + **délai unique de
+  24 h**. Langue > résolution > codec > HDR (un seul groupe de qualités).
+  **Anime plafonné à 1080p** (2 % des épisodes ont une 2160p FR). Plafond
+  2160p tenu à 100 Mo/min (disque). Détail : `.claude/docs/arr-config.md`.
 - **Komga lit directement `completed/bd`, en `:ro`** : pas d'arr, pas de
   hardlink, pas d'import (arbitré le 2026-09-22 : « pouvoir lire, pas une
   bibliothèque bien rangée »). Le `:ro` n'est pas négociable (données
@@ -114,9 +120,8 @@ connus » de chaque page.
 Trois bugs silencieux, invisibles à la main. Se méfier dès qu'un comportement
 dépend d'un ordonnanceur, d'une file d'attente ou d'un échappement.
 
-- **Écritures de config Servarr asynchrones** : un `202 Accepted` (ex.
-  `PUT /api/v3/qualitydefinition/update`, celui de recyclarr) s'applique
-  *après* la réponse (0,5 s à 53 s observés). Un « lire → comparer → écrire »
+- **Écritures de config Servarr asynchrones** : un `202 Accepted` (ex. `PUT`
+  d'une taille de palier) s'applique *après* la réponse (0,5 s à 53 s observés). Un « lire → comparer → écrire »
   enchaîné derrière voit l'ancienne valeur et se déclare satisfait. Fix :
   `settle()` dans `apply-arr-overrides.py`. **Ne pas « corriger » par un
   `sleep` dans `scripts/crontab`** (latence inconnue).
@@ -157,8 +162,7 @@ dépend d'un ordonnanceur, d'une file d'attente ou d'un échappement.
   quand le fichier doit changer à chaud. Vérifier ça avant de conclure qu'une
   config « n'a pas pris ».
 - **`.env` modifié = `make up`, pas `make restart`** (qui ne recrée pas) :
-  sinon la commande compose suivante recrée le service, souvent le cron
-  recyclarr de minuit pour Sonarr/Radarr.
+  sinon la commande compose suivante recrée le service, à un moment inattendu.
 - **`cap_drop: ALL` retire `CAP_DAC_OVERRIDE`** : secret `600` illisible
   (« introuvable »). Fix : `user: "${PUID}:${PGID}"`, jamais élargir les
   permissions ni le `cap_drop`.
@@ -183,7 +187,7 @@ server/
 │                           transmission-stats.py, lan-only-middleware.sh,
 │                           require-running.sh, vpn-bench.py, image-versions.py
 ├── traefik/ jellyfin/ nextcloud/ vpn/ arr/ seerr/ komga/   une stack par dossier
-│   └── arr/{clearr,profiles,recyclarr,cross-seed,scripts}/
+│   └── arr/{clearr,profiles,cross-seed,scripts}/
 ├── dashboard/              templates/ + assets/ ; html/ généré
 ├── kodi/, gnome/           postes clients (addon Kodi, extension GNOME Govee)
 └── sauvegarde/             non versionné — dépôt restic

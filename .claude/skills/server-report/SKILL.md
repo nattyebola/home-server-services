@@ -80,7 +80,7 @@ distinctes, pas une seule :
    `&& date +%s > .../marqueur` alors que le fichier `scripts/crontab`
    actuel les contient = le crontab live n'avait pas encore été réinstallé
    à ce moment précis. C'est comme ça qu'on a expliqué, le 2026-07-30, une
-   carte "Recyclarr + overrides arr" rouge qui n'était pas une panne mais
+   carte "Config arr (overrides)" (alors "Recyclarr + overrides arr") rouge qui n'était pas une panne mais
    simplement un job qui n'avait pas encore eu sa première occasion de
    tourner sous le nouveau format guardé.
    `last reboot` permet d'écarter/confirmer un redémarrage hôte comme

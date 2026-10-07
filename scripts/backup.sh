@@ -174,13 +174,11 @@ excludes=(
 	# d'audit disparaît avec le disque).
 	--exclude "$DATA_ROOT/.nextcloud/nexcloud/data/nextcloud.log*"
 	--exclude "$DATA_ROOT/.nextcloud/nexcloud/data/audit.log*"
-	# Logs des arr (Servarr, recyclarr, cross-seed) — restent sur le disque.
+	# Logs des arr (Servarr, cross-seed) — restent sur le disque.
 	--exclude "$DATA_ROOT/.arr/*/config/logs"
 	--exclude "$DATA_ROOT/.arr/*/config/logs.db*"
 	# Affiches des arr, retéléchargées au rafraîchissement suivant.
 	--exclude "$DATA_ROOT/.arr/*/config/MediaCover"
-	# Clone git des guides TRaSH, recloné à la synchro suivante.
-	--exclude "$DATA_ROOT/.arr/recyclarr/config/resources"
 	--exclude "$DATA_ROOT/.transmission/config/transmission-home/transmission.log*"
 	# Images téléchargées par Jellyfin (3,2 Gio). Accepté : un rafraîchissement
 	# complet des métadonnées après restauration, et perte des images choisies

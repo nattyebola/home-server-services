@@ -54,7 +54,6 @@ SOURCES = {
     "arr/radarr": {"repo": "Radarr/Radarr", "tier": "app"},
     "arr/prowlarr": {"repo": "Prowlarr/Prowlarr", "tier": "app"},
     "arr/cross-seed": {"repo": "cross-seed/cross-seed", "tier": "app"},
-    "arr/recyclarr": {"repo": "recyclarr/recyclarr", "tier": "app"},
     "arr/clearr": {"version": "env:PYTHON_VERSION", "repo": "python/cpython", "tier": "infra"},
     "seerr/seerr": {"repo": "seerr-team/seerr", "tier": "app"},
     "komga/komga": {"version": "jar:/app/application.jar", "repo": "gotson/komga", "tier": "app"},
@@ -151,7 +150,7 @@ def local_image(ref):
 def snapshot(compose_config):
     """{"<projet>/<service>": {"image", "id", "version"}} pour chaque service
     de la stack. Image du conteneur qui tourne s'il y en a un (c'est elle qui
-    a servi), sinon l'image locale (recyclarr, lancé seulement par cron)."""
+    a servi), sinon l'image locale (service lancé à la demande)."""
     project = compose_config["name"]
     result = {}
     for service, spec in compose_config.get("services", {}).items():

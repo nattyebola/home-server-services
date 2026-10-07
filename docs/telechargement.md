@@ -13,7 +13,6 @@ dans la bibliothèque, sans jamais sortir hors du tunnel VPN.
 | Prowlarr | `arr/` | gère les indexeurs (trackers) et les partage aux autres |
 | Sonarr / Radarr | `arr/` | suivent séries / films, grabent, importent dans `library/` |
 | cross-seed | `arr/` | re-partage un fichier déjà téléchargé sur d'autres trackers |
-| recyclarr | `arr/` | applique les profils qualité des guides TRaSH (à la demande) |
 | clearr | `arr/` | suppression propre torrent + bibliothèque → [page dédiée](clearr.md) |
 
 Toutes les interfaces sont **LAN uniquement** (`transmission.`, `prowlarr.`,
@@ -140,24 +139,103 @@ Si `library/` est sur un autre disque que le reste de `DATA_ROOT`
 (vérifiable avec `df`), les imports deviennent des copies : ça marche, en plus
 lent et en plus gros.
 
+### Règles de sélection
+
+Ce que les profils Sonarr/Radarr doivent obtenir, pour les films, les séries
+et les anime (règles fixées le 2026-10-07, appliquées le jour même).
+
+| Critère | Règle |
+|---|---|
+| **Regrab** | Le **minimum** : un seul téléchargement par épisode ou film. Moins de bande passante, moins de ratio consommé, moins de pollution. |
+| **Langue** | Œuvre d'origine française : **VOF obligatoire**. Sinon **VOSTFR minimum**, VF ou MULTi (avec le français) **préféré**. |
+| **Profil enfants** | **VF obligatoire** (VOF ou VF), quelle que soit l'origine. |
+| **Résolution** | **2160p** préféré, sinon **1080p**, sinon **720p** en dernier recours. **Anime : 1080p maximum.** |
+| **Codec** | **x264 minimum** ; plus le codec est récent, plus il est préféré : AV1 > x265 > x264. |
+| **Colorimétrie** | **HDR** préféré. |
+| **Débit** | Bornes min/max par résolution (voir plus bas). |
+| **Délai et cutoff** | **24 h** d'attente avant de grabber, puis **plus jamais de remplacement** : on attend la bonne release au lieu de remplacer la première venue. |
+
+Une œuvre française n'a pas de profil à part : ses releases ne sont jamais
+titrées VOSTFR, la règle « VOSTFR minimum » donne d'elle-même la VOF.
+
+> [!NOTE]
+> La langue se juge sur une **annonce explicite** du titre (`VOSTFR`,
+> `SUBFRENCH`, `FRENCH`, `VFF`, `MULTi`…). Vérifié sur 589 fichiers : 0 %
+> sans français quand un tracker français l'annonce, mais **12 % sans
+> français pour un `MULTi` de Nyaa** (pistes multiples d'une plateforme).
+> D'où des profils anime qui ne comptent pas `MULTi` comme de la VF.
+
+#### Comment les profils les appliquent
+
+Six profils, déclarés dans `arr/profiles/` et appliqués chaque nuit par
+`make arr-overrides` :
+
+| Arr | Profil | Pour | Langue minimum | Résolutions |
+|---|---|---|---|---|
+| Sonarr | `Séries` | séries | VOSTFR | 720p à 2160p |
+| Sonarr | `Séries VF` | séries pour enfants | VF | 720p à 2160p |
+| Sonarr | `Anime` | anime | VOSTFR (`MULTi` ne compte pas) | 720p à 1080p |
+| Sonarr | `Anime VF` | anime pour enfants | VF explicite | 720p à 1080p |
+| Radarr | `Films` | films | VOSTFR | 720p à 2160p |
+| Radarr | `Films VF` | films pour enfants | VF | 720p à 2160p |
+
+Toutes les résolutions d'un profil sont dans **un seul groupe de qualités** :
+Sonarr/Radarr classent par qualité *avant* le score, et sans ce groupe une
+VOSTFR 2160p battrait toujours une MULTi 1080p. Dans le groupe, c'est le
+score des custom formats (`arr/profiles/custom-formats.json`) qui décide,
+avec des ordres de grandeur qui fixent les priorités :
+
+| Ordre | Custom format | Score |
+|---|---|---|
+| 1. langue | `Langue : VF` / `VOSTFR` | 3000 / 2000 (minimum du profil : 2000, ou 3000 en VF) |
+| 2. résolution | `Résolution : 2160p` / `1080p` | 300 / 200 |
+| 3. codec | `Codec : AV1` / `x265` / `x264` | 30 / 20 / 10 |
+| 4. HDR | `HDR` | 5 |
+| rejet | `Rejet : codec ancien`, `3D`, `bonus`, `upscale` (+ `pack NN of NN`, `sous-titres non FR` en anime) | -10000 |
+
+**Jamais d'upgrade** (`upgradeAllowed: false`) : le premier grab est
+définitif. Pour qu'il soit le bon, un **délai unique de 24 h** (profil de
+délai par défaut, aucun profil de délai à tag) laisse arriver les meilleures
+releases avant de choisir. Mesuré le 2026-10-07 : la release minimale sort en
+moins de 24 h dans 90 % des cas (anime) à 100 % (séries, films), et la
+meilleure est déjà là à 24 h pour 65 % des anime et 73 % des séries.
+
+**Tailles** (Mo/min, globales à chaque arr : elles valent pour tous ses
+profils) :
+
+| Résolution | Min | Max | Pourquoi |
+|---|---|---|---|
+| 720p | 5 | 40 | |
+| 1080p | 7 | 80 | 7 laisse passer les AV1/x265 bien compressés (anime ~8-16) ; 80 garde les WEB-DL non réencodés (~55-60) et coupe les remux |
+| 2160p | 20 | 100 (films BluRay : 120) | plafond tenu pour le disque : un WEB 2160p non réencodé dépasse souvent 100 |
+
+**Profils enfants** : le tag `pour-les-enfants`, posé depuis Seerr à la
+requête, fait basculer la série ou le film sur la variante `VF` de son profil
+(`Séries` → `Séries VF`, `Anime` → `Anime VF`, `Films` → `Films VF`). Sens
+unique : retirer le tag ne repasse pas en VOSTFR.
+
+> [!WARNING]
+> La bascule par tag se fait **la nuit suivante**. Une requête Seerr d'un
+> contenu déjà sorti part tout de suite, avec le profil par défaut. Pour un
+> enfant, choisir directement le profil `… VF` dans les options de la
+> requête Seerr.
+
 ### Ce que le dépôt configure
 
 | Réglage | Porté par | Effet |
 |---|---|---|
-| Custom formats + profils des guides TRaSH | `recyclarr` (`arr/recyclarr/`) | profils `WEB-2160p (Combined)` (Sonarr) et `[SQP] SQP-1 WEB (2160p)` (Radarr) |
-| Profils anime `Anime (Fansub) VF` / `VOSTFR` | `arr/profiles/sonarr-anime.json` | choix de la langue **par série** (profil à changer à la main dans Sonarr) |
-| Ce que recyclarr écrase ou ne couvre pas | `apply-arr-overrides.py` | tailles de palier, langue, connexions Jellyfin, `.nfo`, renommage, ratio des indexeurs publics… réappliqué chaque nuit |
-| Délai de 3 h sur l'anime VOSTFR | tag `anime-vostfr-delai` | laisse arriver une release VOSTFR plutôt que grabber la première puis la remplacer 5 fois ; une release déjà ≥ 50 part tout de suite |
+| Profils, custom formats, tailles, délai | `arr/profiles/` + `apply-arr-overrides.py` | les règles ci-dessus, réappliquées chaque nuit |
 | Ratio 1.5 sur les indexeurs publics | `PUBLIC_INDEXER_SEED_RATIO` | un tracker public ne compte pas le ratio ; les privés ne sont pas touchés |
-| Repacks départagés par le score | `downloadPropersAndRepacks: doNotPrefer` | un REPACK n'est plus grabé s'il score moins que le fichier en place (le CF `Repack/Proper` garde la préférence) |
+| Repacks | `downloadPropersAndRepacks: doNotPrefer` | un REPACK ne passe pas devant le score (et sans upgrade, ne remplace jamais un fichier) |
 | Rejet des archives/exécutables | `failDownloads` | une « release » `.exe`/`.zipx` est marquée en échec et remplacée automatiquement |
 | Recherche des manquants | `search-missing.py`, lundi 5 h | Sonarr/Radarr **ne re-cherchent jamais** seuls un manquant raté au RSS ; plafonné à 12 recherches, rotation par ancienneté ; tâche en rouge si l'arr fait échouer la commande de recherche |
 | Marqueurs de fin de saison | `mark-finale.sh`, hook + cron 2 h | `†` fin de saison, `‡` fin de série, `½` mi-saison devant le titre d'épisode (visible dans Kodi) |
 
-> [!IMPORTANT]
-> **L'ordre compte** : `make recyclarr-sync` **puis** `make arr-overrides`.
-> Les overrides désignent par leur nom des custom formats que recyclarr crée.
-> Le cron de minuit les enchaîne sur une seule ligne.
+Pas de recyclarr (retiré le 2026-10-07) : sur nos trackers français, les
+custom formats des guides TRaSH ne changeaient le choix que dans 3 % des cas,
+**toujours en pire** (une VOSTFR préférée à une MULTi), et leurs rejets
+écartaient de bonnes releases françaises. Détail dans
+`.claude/docs/arr-config.md`.
 
 **Déclaratif ou additif ?** `apply-arr-overrides.py` **fait autorité** : une
 modification faite à la main dans l'UI sur son périmètre est annulée la nuit
@@ -199,14 +277,16 @@ folders, tags…) peut être ajusté librement dans les UI.
   fichier à copier) : relancer une fois corrigé. `erreur:` (exit 1) = service
   injoignable ou réponse HTTP en erreur. Un élément ignoré n'empêche plus de
   traiter les autres (indexeurs, serveurs Seerr).
-- **Un custom format géré par recyclarr est réécrit au sync suivant** : ne pas
-  le modifier par l'API, créer un CF distinct (c'est l'origine de
-  `VOSTFR (hors suffixe)`).
-- **Boucle de regrab infinie** : un CF qui matche un suffixe présent dans le
-  titre du post mais **absent du nom du fichier** fait scorer la release plus
-  haut que le fichier importé. La même release a alors l'air d'un upgrade
-  d'elle-même, et le même magnet a été grabé 3 à 5 fois. Tout
-  `cutoffFormatScore` doit être atteignable par un *fichier*.
+- **Un fichier déjà en place n'est jamais remplacé**, même s'il ne respecte
+  pas les règles (importé avant le 2026-10-07, ou à la main) : sans upgrade,
+  rien ne le rattrape. Le remplacer à la main (supprimer le fichier puis
+  lancer une recherche, ou grab manuel dans l'UI).
+- **Boucle de regrab** (avant le 2026-10-07) : un custom format qui matche le
+  titre du post mais pas le nom du fichier (`MULTI` dans le titre, `FRENCH`
+  dans le fichier) fait scorer la release plus haut que le fichier importé ;
+  la même release a l'air d'un upgrade d'elle-même (12 grabs de *Coyote vs.
+  Acme* le 29/09). Impossible sans upgrade ; à garder en tête si on les
+  réactive.
 - **Les arr demandent un login, même depuis le LAN** (`authenticationRequired:
   enabled`, posé par `make arr-overrides`). Avec `disabledForLocalAddresses`,
   toute IP Docker comptait comme locale : jellyfin, seerr ou nextcloud-web,

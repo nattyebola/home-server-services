@@ -1,0 +1,189 @@
+[
+  {
+    "name": "Langue : VF",
+    "specifications": [
+      {
+        "name": "Audio français annoncé (MULTi compris)",
+        "implementation": "ReleaseTitleSpecification",
+        "negate": false,
+        "required": true,
+        "value": "\\b(MULTi(?![ ._-]?Subs?)|TRUEFRENCH|FRENCH|VFF|VFQ|VFI|VF2|VOF|VF)\\b(?![^()]*\\))(?<!\\([^)]*)"
+      }
+    ]
+  },
+  {
+    "name": "Langue : VF (hors MULTi)",
+    "specifications": [
+      {
+        "name": "Audio français annoncé explicitement",
+        "implementation": "ReleaseTitleSpecification",
+        "negate": false,
+        "required": true,
+        "value": "\\b(TRUEFRENCH|FRENCH|VFF|VFQ|VFI|VF2|VOF|VF)\\b(?![^()]*\\))(?<!\\([^)]*)"
+      }
+    ]
+  },
+  {
+    "name": "Langue : VOSTFR",
+    "specifications": [
+      {
+        "name": "Sous-titres français annoncés",
+        "implementation": "ReleaseTitleSpecification",
+        "negate": false,
+        "required": true,
+        "value": "\\b(VOST(?:[ ._-]?FR(?:E|A)?)?|SUBFR(?:A|ENCH)?|SUB[ ._-]?FRENCH)\\b(?![^()]*\\))(?<!\\([^)]*)"
+      }
+    ]
+  },
+  {
+    "name": "Résolution : 2160p",
+    "specifications": [
+      {
+        "name": "2160p",
+        "implementation": "ResolutionSpecification",
+        "negate": false,
+        "required": true,
+        "value": 2160
+      }
+    ]
+  },
+  {
+    "name": "Résolution : 1080p",
+    "specifications": [
+      {
+        "name": "1080p",
+        "implementation": "ResolutionSpecification",
+        "negate": false,
+        "required": true,
+        "value": 1080
+      }
+    ]
+  },
+  {
+    "name": "Codec : AV1",
+    "specifications": [
+      {
+        "name": "AV1",
+        "implementation": "ReleaseTitleSpecification",
+        "negate": false,
+        "required": true,
+        "value": "\\bAV1\\b"
+      }
+    ]
+  },
+  {
+    "name": "Codec : x265",
+    "specifications": [
+      {
+        "name": "x265 / HEVC",
+        "implementation": "ReleaseTitleSpecification",
+        "negate": false,
+        "required": true,
+        "value": "\\b(x265|HEVC|H[ .]?265)\\b"
+      }
+    ]
+  },
+  {
+    "name": "Codec : x264",
+    "specifications": [
+      {
+        "name": "x264 / AVC",
+        "implementation": "ReleaseTitleSpecification",
+        "negate": false,
+        "required": true,
+        "value": "\\b(x264|AVC|H[ .]?264)\\b"
+      }
+    ]
+  },
+  {
+    "name": "HDR",
+    "specifications": [
+      {
+        "name": "HDR / Dolby Vision",
+        "implementation": "ReleaseTitleSpecification",
+        "negate": false,
+        "required": true,
+        "value": "\\b(HDR10\\+?|HDR10Plus|HDR|DV|DoVi|Dolby[ .]?Vision)\\b"
+      }
+    ]
+  },
+  {
+    "name": "Rejet : codec ancien",
+    "specifications": [
+      {
+        "name": "XviD / DivX / MPEG-2",
+        "implementation": "ReleaseTitleSpecification",
+        "negate": false,
+        "required": true,
+        "value": "\\b(XviD|DivX|MPEG-?2)\\b"
+      }
+    ]
+  },
+  {
+    "name": "Rejet : 3D",
+    "specifications": [
+      {
+        "name": "3D",
+        "implementation": "ReleaseTitleSpecification",
+        "negate": false,
+        "required": true,
+        "value": "\\b(3D|H?SBS)\\b"
+      }
+    ]
+  },
+  {
+    "name": "Rejet : bonus",
+    "specifications": [
+      {
+        "name": "Bonus, making-of",
+        "implementation": "ReleaseTitleSpecification",
+        "negate": false,
+        "required": true,
+        "value": "\\b(Extras|Bonus|Featurettes?|Making[ ._-]Of)\\b"
+      }
+    ]
+  },
+  {
+    "name": "Rejet : upscale",
+    "specifications": [
+      {
+        "name": "Upscale / regrade",
+        "implementation": "ReleaseTitleSpecification",
+        "negate": false,
+        "required": true,
+        "value": "\\b(Upscaled?|AI[ ._-]?Upscal(e|ed)|Regrade)\\b"
+      }
+    ]
+  },
+  {
+    "name": "Rejet : pack NN of NN",
+    "specifications": [
+      {
+        "name": "NN of NN",
+        "implementation": "ReleaseTitleSpecification",
+        "negate": false,
+        "required": true,
+        "value": "\\[\\s*\\d{1,3}\\s+(of|из)\\s+\\d{1,3}\\s*\\]"
+      }
+    ]
+  },
+  {
+    "name": "Rejet : sous-titres non FR",
+    "specifications": [
+      {
+        "name": "Marqueur de sous-titres",
+        "implementation": "ReleaseTitleSpecification",
+        "negate": false,
+        "required": true,
+        "value": "\\b(?:Japanese|English)[-\\s]Subs?\\b|\\b[EJ]-?Subs?\\b"
+      },
+      {
+        "name": "Aucun marqueur FR",
+        "implementation": "ReleaseTitleSpecification",
+        "negate": true,
+        "required": true,
+        "value": "\\b(?:MULTi|Multi-Subs?|Multi-Audio|VOST.*?FR(?:E|A)?|SUBFR(?:A|ENCH)?|TRUEFRENCH|FRENCH|VFF|VFQ|VF)\\b"
+      }
+    ]
+  }
+]

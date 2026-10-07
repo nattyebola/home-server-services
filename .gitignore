@@ -42,8 +42,6 @@ dashboard/refresh.log.*
 # rotation laissait 6 fichiers non suivis en permanence dans `git status`.
 arr/apply-overrides.log
 arr/apply-overrides.log.*
-arr/recyclarr-sync.log
-arr/recyclarr-sync.log.*
 arr/search-missing.log
 arr/search-missing.log.*
 arr/mark-finales.log

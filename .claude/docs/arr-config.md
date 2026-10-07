@@ -2,7 +2,7 @@
 
 Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
 `scripts/provision.py`, `scripts/apply-arr-overrides.py`,
-`scripts/search-missing.py`, `arr/profiles/`, `arr/recyclarr/`,
+`scripts/search-missing.py`, `arr/profiles/` (profils de qualité),
 ou aux connexions arr → Jellyfin.
 
 ## Chaîne arr → Jellyfin → Kodi
@@ -138,6 +138,8 @@ ou aux connexions arr → Jellyfin.
     ces fichiers perdraient `FRENCH`/`VOSTFR`/`MULTi` : **16 passeraient sous
     le `cutoffFormatScore`** de leur profil, donc remis en recherche au
     prochain RSS sync — du quota indexeur brûlé pour des fichiers inchangés.
+    (Mesuré avant le 2026-10-07 ; sans upgrade, un score qui baisse ne
+    relance plus rien, mais le score affiché reste faux.)
     Corollaire : ne pas versionner le format de nommage dans les overrides sans
     y reporter d'abord la langue (`{MediaInfo AudioLanguages}` ou
     `{Custom Formats}`). Pour les imports à venir la question ne se pose pas,
@@ -187,8 +189,8 @@ ou aux connexions arr → Jellyfin.
   `jellyfin_signature()`, sinon chaque passage réécrirait pour rien).
   `POST /api/v3/notification/testall` est le seul moyen de vérifier qu'une clé
   stockée fonctionne encore.
-  Ce n'est pas recyclarr qui fait dériver ces champs (il ne touche pas aux
-  notifications) : le réalignement quotidien ne sert qu'à rattraper une
+  Rien ne fait dériver ces champs automatiquement : le réalignement
+  quotidien ne sert qu'à rattraper une
   modification par mégarde dans l'UI, la reproductibilité sur une installation
   neuve étant l'objectif principal.
   **Ces déclencheurs ne raccourcissent PAS le délai de Jellyfin** (affirmé à
@@ -218,22 +220,74 @@ ou aux connexions arr → Jellyfin.
   refuse `pour_les_enfants`, là où Sonarr l'accepte — divergence de validation
   entre les deux, à ne pas re-découvrir. Le même libellé des deux côtés est ce
   qui permet de n'écrire qu'un seul filtre en aval.
-  Trou connu, non traité : le tag **`fr-priority`** (Sonarr) est la cible d'un
-  **delay profile** qui ne vit que dans la base Sonarr — ni le tag ni le profil
-  ne sont reproductibles depuis le repo.
-- **Délai de grab de 3 h sur les anime VOSTFR, sauf si le score est ≥ 50**
-  (2026-09-25, `apply_anime_delay()` dans `scripts/apply-arr-overrides.py`).
-  Sur Nyaa, les releases sans français sortent avant les VOSTFR : Sonarr
-  grabait la première puis la remplaçait par chaque meilleure release, et les
-  perdants restaient en `importPending`. Mesuré : 38 des 39 remplacements par
-  une release ≥ 50 arrivent en moins de 2 h 20. L'exception à partir de 50
-  (le score de `VOSTFR (hors suffixe)`) laisse partir une release VOSTFR tout
-  de suite. **Le tag est piloté par le profil qualité** : posé sur toute série
-  en `Anime (Fansub) VOSTFR`, retiré des autres chaque nuit. Le poser ou
-  l'enlever à la main ne tient pas. Alternative écartée : monter `minFormatScore`, qui
-  couperait les ToonsHub MSubs à score 0 (`arr-pieges.md`). Une série qui
-  porte aussi `fr-priority` (*The Ghost in the Shell*) garde les 6 h de ce
-  dernier, dont l'`order` est plus bas.
+- **Profils de qualité : page blanche du 2026-10-07** (`arr/profiles/`, appliqués
+  par `apply-arr-overrides.py`). Règles fixées par l'utilisateur, inscrites
+  dans `docs/telechargement.md` (« Règles de sélection ») : regrab minimum ;
+  VOF si œuvre française, sinon VOSTFR minimum, VF/MULTi préféré ; profil
+  enfants VF obligatoire ; 2160p > 1080p > 720p (anime : 1080p max) ; x264
+  minimum, AV1 > x265 > x264 ; HDR préféré ; bornes de débit ; délai et cutoff
+  calés sur les mesures. Données : base d'analyse hors repo
+  (`${DATA_ROOT}/.analyse/`, script `etude.py`), ~15 800 releases de 7
+  indexeurs, 589 fichiers lus par ffprobe.
+  **Choix et pourquoi** :
+  - **Recyclarr retiré.** Mesuré : tags « Tier » sur 0,6 % des candidats
+    (16 grabs Sonarr sur 326, 0 Radarr sur 57) ; à barème réduit aux règles,
+    le choix est identique dans 98 % des cas, **jamais meilleur avec les CF
+    TRaSH, pire dans 3 %** (VOSTFR préférée à une MULTi : tags de plateforme
+    et HDR10+ > bonus MULTi). Ses rejets écartaient des releases françaises
+    valables : `LQ`/`No-RlsGroup` sur les encodages BluRay d'AZAZE (*Dead
+    Man*, *Down by Law*, *Underground* importés à la main), `Bad Dual Groups`
+    sur les MULTi VF2 de ZiGZaG. Et ~380 lignes de contournements
+    (`recyclarr.yml`) + une part d'`apply-arr-overrides.py` pour défaire
+    ce qu'il réécrivait (tailles, langue Radarr forcée à « Original »), image
+    figée en `:8`. Ne pas le réintroduire sans nouvelle mesure.
+  - **Un seul groupe de qualités par profil** : Sonarr/Radarr classent par
+    qualité AVANT le score ; sans groupe, une VOSTFR 2160p bat toujours une
+    MULTi 1080p. Choix utilisateur : langue d'abord. Les scores portent
+    l'ordre par ordres de grandeur (langue 3000/2000, résolution 300/200,
+    codec 30/20/10, HDR 5) ; `minFormatScore` = 2000 (VOSTFR) ou 3000 (VF).
+  - **`upgradeAllowed: false`** (cutoff A de l'étude, choix utilisateur) :
+    1 grab par item, garanti. Simulé : un upgrade « langue/résolution »
+    coûtait 1,05 grab/épisode en série live, 1,19 en anime (la VF d'un anime
+    sort ~23 j après la VOSTFR). Corollaire : un fichier non conforme déjà
+    en place n'est jamais rattrapé — à la main.
+  - **Délai unique de 24 h** (profil de délai par défaut ; tout profil de
+    délai à tag est supprimé chaque nuit). Mesuré : release minimale ≤ 24 h
+    dans 90 % (anime) à 100 % des cas ; meilleure release du 1er coup à 24 h :
+    65 % anime, 73 % séries live. `bypassIfHighestQuality` à **false**
+    obligatoire : avec un seul groupe, toute release est « la meilleure
+    qualité » et partirait sans attendre. Remplace le délai anime de 3 h
+    (tag `anime-vostfr-delai`) et le délai manuel `fr-priority` (6 h), tags
+    supprimés.
+  - **Langue sur annonce explicite** : précision mesurée sur fichiers — 0 %
+    sans FR quand un tracker français annonce VF/VOSTFR, 2 % pour une VOSTFR
+    Nyaa, **12 % pour un `MULTi` Nyaa** (multi de plateforme sans FR), 100 %
+    sans marqueur. D'où `Langue : VF (hors MULTi)` sur les profils anime. Les
+    lookarounds anti-suffixe entre parenthèses sont gardés (titres de post
+    qui listent tous les tags).
+  - **Anime 1080p max** : 30 épisodes sur 1 441 (2 %) ont une 2160p avec
+    langue acceptable.
+  - **Tailles** (Mo/min, globales par arr) : 720p 5-40, 1080p 7-80, 2160p
+    20-100 (BluRay Radarr 120). Mesuré (médianes proposées, Mo/min) : x265 ≈
+    ⅓ de x264 (anime 1080p 16 vs 57, série live 26 vs 53), animation 30-40 %
+    sous le live. 7 laisse passer les KAF AV1/x265 (rejetées à 15 avant) ; 80
+    garde les WEB-DL Crunchyroll non réencodés (~55-60) ; plafond 2160p tenu à
+    100 pour le disque (bibliothèque ~730 Go pour 1 To de budget) même s'il
+    coupe plus de la moitié des WEB 2160p non réencodés. Un plafond par codec
+    ou par type de média n'existe pas dans Sonarr/Radarr (tailles par
+    qualité) ; possible seulement par CF `Size`, en Go absolus.
+  - **Profils enfants pilotés par le tag `pour-les-enfants`** (sens unique,
+    `kids_profiles` dans le JSON) : la bascule est nocturne, une requête Seerr
+    partie avant a déjà grabé — choisir le profil VF dans Seerr à la requête.
+  Migration du 2026-10-07 (script ponctuel hors repo) : séries/films et
+  collections Radarr basculés, Seerr repointé (`activeProfileId`/`Name`,
+  `activeAnime…`), profils par défaut et 73 CF TRaSH supprimés par arr.
+  **Piège Seerr** : `PUT /api/v1/settings/{sonarr,radarr}/{id}` répond 400
+  si le corps contient `id` (lecture seule). **Piège Radarr** : un profil
+  référencé par une **collection** est « in use » même sans aucun film dessus.
+  Validation des regex (méthode `arr-pieges.md`) : 0 désaccord .NET
+  (`/parse`) / Python `regex` sur 11 982 titres rattachés ; rejet « bonus »
+  amputé de `Trailer`/`Teaser` (faux positif *Trailer Park Boys*).
 - **Seerr parle à Jellyfin en direct (`jellyfin:8096`)**, pas par le domaine
   public (2026-08-24) : il était réglé sur `https://jellyfin.${DOMAIN}:443`,
   donc chaque requête traversait Traefik et son middleware `rate-limit` — que
@@ -261,8 +315,7 @@ ou aux connexions arr → Jellyfin.
   Prowlarr, client de téléchargement, root folders, remote path mapping,
   Connection cross-seed, tags, config Seerr complète.
   **Deux targets et pas un** parce que l'ordre est contraint dans les deux
-  sens : `api-keys` doit précéder `recyclarr-sync`/`arr-overrides` (qui ont
-  besoin des clés), et la config Seerr de `provision` doit les suivre (elle
+  sens : `api-keys` doit précéder `arr-overrides` (qui a besoin des clés), et la config Seerr de `provision` doit les suivre (elle
   désigne les profils qualité **par nom**).
   **Créé-si-absent, jamais réécrit** — l'inverse d'`apply-arr-overrides.py`.
   Volontaire : ce sont des objets d'infrastructure que l'utilisateur peut
@@ -331,41 +384,32 @@ ou aux connexions arr → Jellyfin.
   côté Jellyfin) — elle arrive désactivée côté Seerr. Corollaire voulu : une
   bibliothèque personnelle (ex. « Kids ») n'est pas activée dans Seerr par le
   script, `JELLYFIN_LIBRARIES` seul l'est.
-- **`scripts/apply-arr-overrides.py` (`make arr-overrides`)**, enchaîné par
-  cron quotidien juste après `make recyclarr-sync` : **déclaratif et faisant
-  autorité**, il réapplique tout ce que recyclarr écrase ou ne couvre pas.
-  Périmètre : tailles de palier « Quality Definition » et champ `language` des
-  deux profils principaux (Sonarr `WEB-2160p (Combined)`, Radarr `[SQP] SQP-1
-  WEB (2160p)`), config anime (`arr/profiles/sonarr-anime.json`), connexions
-  Jellyfin, metadata writer, ratio des indexeurs publics, renommage des
-  fichiers à l'import (`renameEpisodes`/`renameMovies`), rejet des
-  téléchargements non-média (`failDownloads`), catégorie Anime de Nyaa.si,
-  délai de grab des anime VOSTFR (tag `anime-vostfr-delai`, voir ci-dessous),
-  section `host` des trois arr (`trustedNetworks`/`allowedHosts`, voir
-  ci-dessous).
-  Résout les profils **par nom, jamais par id** (propres à chaque instance —
-  c'est précisément pourquoi un dump d'API brut ne serait pas reproductible).
-  Idempotent et best-effort par arr.
-  `arr/profiles/sonarr-anime.json` couvre les 3 custom formats qui nous
-  appartiennent (`FRENCH`, `VOSTFR (hors suffixe)`, `Pack NN of NN`) et les profils
-  `Anime (Fansub)*` : aucun `trash_id` ne les couvrait, donc rien ne les
-  recréait sur une installation neuve et rien ne rattrapait leur dérive.
-  **Le JSON fait autorité** : tout custom format absent de `scores` est remis
-  à 0 sur le profil concerné. Un profil absent est créé depuis
-  `/api/v3/qualityprofile/schema` plutôt qu'en versionnant tout l'arbre des
-  paliers.
-  **Ordre imposé** : custom formats d'abord, profils ensuite (qui les
-  référencent par nom) — et surtout `make recyclarr-sync` AVANT tout le
-  script, sinon les CF du guide scorés par les profils anime (`MULTi`, `LQ`,
-  `Upscaled`...) n'existent pas encore ; ce cas lève une erreur explicite
-  plutôt que de créer un profil silencieusement dépourvu de la moitié de ses
-  scores.
+- **`scripts/apply-arr-overrides.py` (`make arr-overrides`)**, cron
+  quotidien : **déclaratif et faisant autorité**. Périmètre : profils de
+  qualité, custom formats, tailles de palier, profil de délai et bascule des
+  profils enfants (`arr/profiles/`, voir l'entrée « Profils de qualité »),
+  connexions Jellyfin, metadata writer, ratio des indexeurs publics,
+  renommage des fichiers à l'import (`renameEpisodes`/`renameMovies`), rejet
+  des téléchargements non-média (`failDownloads`), catégorie Anime de
+  Nyaa.si, section `host` des trois arr (`trustedNetworks`/`allowedHosts`,
+  voir ci-dessous).
+  Résout profils, qualités et custom formats **par nom, jamais par id**
+  (propres à chaque instance — c'est précisément pourquoi un dump d'API brut
+  ne serait pas reproductible). Idempotent et best-effort par arr.
+  `custom-formats.json` est commun aux deux arr ; `sonarr.json`/`radarr.json`
+  portent tailles, délai, tag enfants et profils. **Le JSON fait autorité** :
+  tout custom format absent de `scores` est à 0 sur le profil. Un profil
+  absent est créé depuis `/api/v3/qualityprofile/schema` ; ses qualités sont
+  dépliées puis regroupées dans le seul groupe déclaré (id 1000, réservé aux
+  groupes), le reste désactivé. Ne crée ni ne supprime rien d'autre : un
+  profil ou un CF ajouté à la main dans l'UI reste (mais à 0 dans nos
+  profils).
   `api_put` passe par un `api_write` commun qui **vérifie la réponse** :
   `curl -s` sort 0 même sur un 400, sans ça une écriture refusée par la
   validation Sonarr était comptée comme réussie.
   **`settle()` : relecture jusqu'à 60 s de calme continu** (7 passes propres
-  consécutives à 10 s d'écart, `SETTLE_STABLE_SECONDS`), appliqué aux seules
-  étapes que recyclarr fait dériver. Nécessaire à cause des écritures Servarr
+  consécutives à 10 s d'écart, `SETTLE_STABLE_SECONDS`), appliqué aux tailles
+  de palier. Nécessaire à cause des écritures Servarr
   asynchrones — voir le piège des écritures Servarr asynchrones dans
   `CLAUDE.md`. **La fenêtre doit couvrir la latence max mesurée (53 s)**, pas
   une latence typique : l'ancien réglage (2 passes à 5 s) concluait après
@@ -460,18 +504,6 @@ ou aux connexions arr → Jellyfin.
   une recherche de 12 items dure souvent plus, et attendre la fin bloquerait
   cron pour un échec tardif rare. La file Sonarr est lue avec
   `includeUnknownSeriesItems` (le script passait la variante Radarr, ignorée).
-- **Le scheduler interne de recyclarr est désactivé**, le service passe en
-  mode manuel pur (`arr/docker-compose.yml` : plus de `restart:`/healthcheck,
-  `profiles: [manual]` pour rester absent de `make up STACK=arr`), déclenché
-  uniquement par `make recyclarr-sync` (`docker compose run --rm recyclarr
-  sync` — passer un argument à l'entrypoint bascule du mode cron au mode CLI
-  one-shot). Aucune valeur de `CRON_SCHEDULE` ne le désactive proprement, et
-  son `@daily` créait une fenêtre pendant laquelle les overrides étaient dans
-  l'état par défaut du guide TRaSH. `scripts/crontab` enchaîne donc
-  `recyclarr-sync && apply-arr-overrides.py` sur une seule ligne.
-  Recyclarr est gardé pour sa vraie valeur — les MAJ communautaires des ~120
-  regex, listes LQ, groupes de release, tags de plateformes — mais **toute la
-  config custom doit vivre dans le repo**.
 - **Limite de ratio 1.5 sur les indexeurs marqués publics**
   (`PUBLIC_INDEXER_SEED_RATIO`) : `seedCriteria.seedRatio` posé sur tout
   indexeur dont
@@ -505,22 +537,13 @@ ou aux connexions arr → Jellyfin.
   masse). Refaire ce rattrapage si un indexeur public est ajouté avec des
   torrents déjà en place. Un torrent annonçant **aussi** à un tracker privé
   est exclu : lui couper le seed coûterait du ratio là où il compte.
-- **Deux profils anime plutôt qu'un scoring global** : `Anime (Fansub) VF`
-  (audio français préféré) et `Anime (Fansub) VOSTFR` (japonais + sous-titres).
-  La bascule par série fait elle-même office de sélection explicite — un
-  premier essai avait modifié un profil partagé en place, corrigé après retour
-  de l'utilisateur. Custom Format `FRENCH` (`\b(TRUEFRENCH|FRENCH|VFF|VFQ)\b`,
-  résoudre son id **par nom**, ne pas le supposer fixe) scoré 200 sur le profil
-  VF. `VOSTFR` veut dire japonais + sous-titres français, **pas** de l'audio
-  français — à ne pas confondre.
-  Profils Sonarr existants : les 6 par défaut (aucun utilisé),
-  `WEB-2160p (Combined)`, `Anime (Fansub) VF`, `Anime (Fansub) VOSTFR`.
-  Passer une série en VF se fait **à la main dans Sonarr** (skill `anime-vf`
-  retiré le 2026-09-29, à la demande) : profil `Anime (Fansub) VF`, puis
-  recherche de la série. Le remplacement du fichier est automatique
-  (`upgradeAllowed: true`) ; l'ancien torrent reste chez Transmission, à
-  retirer depuis clearr. Ne marche que si une release FRENCH/VFF/VFQ/TRUEFRENCH
-  existe réellement chez les indexeurs au moment de la recherche.
+- **Passer une série ou un film en VF** : poser le tag `pour-les-enfants`
+  (bascule la nuit suivante) ou choisir à la main le profil `Séries VF` /
+  `Anime VF` / `Films VF`. **Les fichiers déjà en place ne sont pas
+  remplacés** (aucun upgrade) : supprimer ceux à refaire, puis lancer une
+  recherche. L'ancien torrent reste chez Transmission, à retirer depuis
+  clearr. Ne marche que si une release VF existe chez les indexeurs.
+  `VOSTFR` veut dire VO + sous-titres français, **pas** de l'audio français.
 - **`scripts/vpn-bench.py` (skill `vpn-bench`)** compare latence/débit entre
   le serveur AirVPN configuré (`vpn/custom/default.ovpn`) et d'autres pays.
   Marche parce que le certificat client AirVPN est lié au **compte**, pas au

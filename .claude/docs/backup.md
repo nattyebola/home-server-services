@@ -45,7 +45,7 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   `admin_audit` est d'ailleurs désactivée depuis le 2026-09-24 : elle suit le
   `loglevel` global, à 2, et jetait donc ses événements INFO depuis juin 2024 —
   ne pas la réactiver sans un `log.condition` dédié), logs et
-  `MediaCover` des arr, `resources/` de recyclarr, `transmission.log`,
+  `MediaCover` des arr, `transmission.log`,
   `metadata/` de Jellyfin (rafraîchissement complet accepté après
   restauration). **Gardés exprès**, ne pas les proposer à nouveau : le code
   Nextcloud (l'entrypoint arbitre install/upgrade sur `version.php`,

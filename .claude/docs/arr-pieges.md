@@ -6,11 +6,11 @@ score de profil, cross-seed ou Seerr.
 
 ## Sonarr / Radarr / Prowlarr
 
-- **Sonarr/Radarr recréés à `00:00:01`** (vu le 2026-10-04 et le 2026-10-06) :
-  pas une panne. `arr/.env` modifié dans la journée + `make restart` (qui ne
-  recrée pas) → le `compose run recyclarr` de minuit, qui démarre ses
-  dépendances depuis `4822794`, recrée les deux. Preuve : `Recreate` dans
-  `arr/recyclarr-sync.log`. Ne pas comparer `docker compose config --hash` au
+- **Sonarr/Radarr recréés « tout seuls »** (vu à `00:00:01` le 2026-10-04 et
+  le 2026-10-06) : pas une panne. `arr/.env` modifié dans la journée + `make
+  restart` (qui ne recrée pas) → la commande compose suivante recrée les deux
+  (à l'époque le `compose run recyclarr` de minuit, retiré le 2026-10-07 ;
+  désormais un `make update`/`rebuild`/`up` ultérieur). Ne pas comparer `docker compose config --hash` au
   label `com.docker.compose.config-hash` pour prédire une recréation : les
   deux ne se calculent pas pareil (faux positif le 2026-10-06) ; utiliser
   `up --dry-run`. Depuis le 2026-10-06, Sonarr/Radarr n'ont plus
@@ -68,10 +68,10 @@ score de profil, cross-seed ou Seerr.
   **Ce n'est PAS la boucle de regrab par `cutoffFormatScore`** (documentée plus
   bas) : aucun upgrade n'est en jeu, les fichiers en place satisfont le cutoff.
   Toucher à un score de cutoff n'y changerait rien.
-  Fix : custom format **`Pack NN of NN`** (`ReleaseTitleSpecification`,
-  `\[\s*\d{1,3}\s+(of|из)\s+\d{1,3}\s*\]`) scoré **-10000** sur les deux
-  profils anime — leur `minFormatScore: 0` transforme ça en rejet au grab, même
-  mécanique que `LQ`/`BR-DISK`/`Upscaled`.
+  Fix : custom format **`Rejet : pack NN of NN`** (`ReleaseTitleSpecification`,
+  `\[\s*\d{1,3}\s+(of|из)\s+\d{1,3}\s*\]`, `arr/profiles/custom-formats.json`)
+  scoré **-10000** sur les profils anime : sous le `minFormatScore`, donc rejet
+  au grab.
   **Cible le schéma de titre, pas la langue**, et c'est délibéré : le défaut est
   que le parseur ne sait pas lire ce format, donc une release ainsi nommée n'est
   de toute façon jamais grabable correctement, quelle que soit son origine. Un
@@ -86,9 +86,8 @@ score de profil, cross-seed ou Seerr.
   entre .NET (`/api/v3/parse` + CF jetable) et Python `re` sur les 411 titres à
   risque (ceux contenant `of` ou `[…chiffre…]`).
   Portée volontairement limitée aux profils anime : ce schéma de nommage vient
-  de Nyaa.si, qui n'est interrogé que pour les anime. À étendre à
-  `WEB-2160p (Combined)` (donc via `recyclarr.yml`, pas ce JSON) s'il y
-  apparaissait.
+  de Nyaa.si, qui n'est interrogé que pour les anime. À étendre aux profils
+  `Séries` (score dans `arr/profiles/sonarr.json`) s'il y apparaissait.
   La blocklist ne suffisait pas comme parade : la même release y était **déjà**
   depuis le 2026-08-29 et a quand même été regrabée le 03-09 — Sonarr y matche
   le titre de release + l'indexeur, un renommage ou un autre indexeur passe à
@@ -105,9 +104,11 @@ score de profil, cross-seed ou Seerr.
   le titre : `(… Japanese Sub …)`, `(English-Sub)`, et le token `ESub` du nom
   de fichier (`MSubs` = multi, à ne pas confondre — `\b[EJ]-?Subs?\b` ne le
   matche pas, il n'y a pas de frontière de mot dans `MSubs`).
-  D'où le custom format **`Subs non-FR (JSub/ESub)`** dans
-  `arr/profiles/sonarr-anime.json`, scoré **-10000** sur les deux profils anime
-  (`minFormatScore: 0` ⇒ rejet au grab, même mécanique que `Pack NN of NN`).
+  D'où le custom format **`Rejet : sous-titres non FR`** dans
+  `arr/profiles/custom-formats.json`, scoré **-10000** sur les profils anime
+  (rejet au grab, même mécanique que le pack NN of NN). Depuis le 2026-10-07,
+  le minimum VOSTFR des profils rejette déjà toute release sans marqueur FR :
+  ce CF reste comme garde pour un titre qui annoncerait les deux.
   **Deux specs `required: true`, pas une** : le marqueur de sous-titres, ET une
   garde `negate: true` sur les marqueurs FR — sans elle un hypothétique
   `(Multi-Subs, English-Sub)` serait rejeté à tort.
@@ -217,29 +218,27 @@ score de profil, cross-seed ou Seerr.
   croisé avec les `formatItems` du profil cible), ou vérifier au cas par cas
   avec `GET /api/v3/release`, dont les `rejections` mentionnent explicitement
   `Existing file meets cutoff`.
-- **Avant tout changement d'un custom format par l'API, vérifier qu'il n'est
-  pas géré par recyclarr** : recyclarr resynchronise la **définition** du CF,
-  pas seulement son score, donc un `PUT` est appliqué puis réécrit au sync
-  suivant. Repéré uniquement parce que `recyclarr sync --preview` a été
-  relancé *après* le PUT. Réflexe : `grep` le `trash_id` dans
-  `recyclarr.yml`, et relancer `--preview` après coup.
-  Solution retenue dans ce cas plutôt que de sortir le CF de `recyclarr.yml`
-  (ce qui aurait fait perdre sa création automatique sur un déploiement neuf,
-  donc un recul de reproductibilité) : **un CF distinct que nous possédons**
-  (`VOSTFR (hors suffixe)`), le CF du guide restant intact et scoré **0** sur
-  les profils concernés, le nôtre reprenant son score.
+- **Les custom formats vivent dans `arr/profiles/custom-formats.json`** : un
+  changement fait dans l'UI ou par l'API est écrasé la nuit suivante par
+  `apply-arr-overrides.py`. Modifier le JSON, valider la regex (méthode de la
+  section regex ci-dessous : 0 désaccord .NET / Python `regex`), puis
+  `make arr-overrides`. (Avant le 2026-10-07, le même piège venait de
+  recyclarr, qui réécrivait les CF du guide TRaSH.)
 
 - **`downloadPropersAndRepacks: doNotPrefer`** (2026-10-01, tenu par
   `MEDIA_MANAGEMENT_OVERRIDES`). Avec le défaut `preferAndUpgrade`, un REPACK
   prime sur le score CF : `Tomb Raider King S01E12 REPACK … H.264` (CF 5) grabé
   sur un WEBRip x265 en place (CF 10), puis refusé à l'import et resté en
-  `importBlocked`. Ne pas revenir à `preferAndUpgrade` : la préférence repack
-  passe par le CF `Repack/Proper` (+5 dans les profils anime, TRaSH ailleurs).
+  `importBlocked`. Ne pas revenir à `preferAndUpgrade`. Depuis le 2026-10-07
+  (aucun upgrade), un repack ne remplace de toute façon jamais un fichier.
 
 ## La boucle de regrab infini (`cutoffFormatScore` + regex)
 
-Le piège le plus coûteux du repo, diagnostiqué en trois passes. À lire en
-entier avant de toucher à un score ou à une regex de custom format.
+Le piège le plus coûteux du repo, diagnostiqué en trois passes. **Impossible
+depuis le 2026-10-07** (`upgradeAllowed: false` sur tous les profils) ; reste
+la référence si les upgrades sont un jour réactivés, et pour toute regex de
+custom format. Récidive côté Radarr le 2026-09-29 : *Coyote vs. Acme* grabé
+12 fois, titre `MULTI` (+300) contre fichier `FRENCH` (sans le bonus).
 
 - **Mécanisme** : les CF `VOSTFR`/`SUBFRENCH`/`FRENCH`
   (`ReleaseTitleSpecification`) matchaient le suffixe entre parenthèses que
@@ -265,13 +264,8 @@ entier avant de toucher à un score ou à une regex de custom format.
   tag de groupe « Tier » (+1600 à 1700), largement absent des trackers FR :
   viser le maximum théorique maintiendrait des recherches perpétuelles (donc
   du quota indexeur) pour la majorité des titres.
-  Pour un profil géré par recyclarr, passer par `upgrade.until_score` dans
-  `recyclarr.yml`, pas par l'API — un appel API serait écrasé au sync.
-  **Piège** : dès qu'un profil fournit une liste `qualities:` explicite,
-  recyclarr **exige** `until_quality` en plus de `until_score`, sinon le sync
-  échoue en validation.
 - **Exclure un terme situé dans un groupe parenthésé demande DEUX assertions**,
-  et c'est le cœur du correctif dans `arr/profiles/sonarr-anime.json` :
+  et c'est le cœur des CF de langue de `arr/profiles/custom-formats.json` :
   - lookahead `(?![^()]*\))` — attrape le terme placé **après** un groupe
     imbriqué ;
   - lookbehind `(?<!\([^)]*)` — attrape le terme placé **avant**, le cas
@@ -291,9 +285,6 @@ entier avant de toucher à un score ou à une regex de custom format.
   des **deux** côtés dans les mêmes parenthèses passe encore (aucun schéma de
   nommage réel ne fait ça), et un titre à parenthèses non appariées ne matche
   pas (déjà vrai avant).
-- Trou connu, délibéré : `WEB-2160p (Combined)` a `VOSTFR` à +100 et est géré
-  par recyclarr, mais le suffixe est une pratique de groupes d'anime 1080p qui
-  ne croise pas ce profil 2160p — à revoir si un regrab en boucle y apparaît.
 
 ## cross-seed
 

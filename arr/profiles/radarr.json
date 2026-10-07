@@ -1,0 +1,80 @@
+{
+  "quality_definitions": {
+    "HDTV-720p": {"minSize": 5, "preferredSize": 25, "maxSize": 40},
+    "WEBRip-720p": {"minSize": 5, "preferredSize": 25, "maxSize": 40},
+    "WEBDL-720p": {"minSize": 5, "preferredSize": 25, "maxSize": 40},
+    "Bluray-720p": {"minSize": 5, "preferredSize": 25, "maxSize": 40},
+    "HDTV-1080p": {"minSize": 7, "preferredSize": 40, "maxSize": 80},
+    "WEBRip-1080p": {"minSize": 7, "preferredSize": 40, "maxSize": 80},
+    "WEBDL-1080p": {"minSize": 7, "preferredSize": 40, "maxSize": 80},
+    "Bluray-1080p": {"minSize": 7, "preferredSize": 40, "maxSize": 80},
+    "HDTV-2160p": {"minSize": 20, "preferredSize": 85, "maxSize": 100},
+    "WEBRip-2160p": {"minSize": 20, "preferredSize": 85, "maxSize": 100},
+    "WEBDL-2160p": {"minSize": 20, "preferredSize": 85, "maxSize": 100},
+    "Bluray-2160p": {"minSize": 20, "preferredSize": 85, "maxSize": 120}
+  },
+  "delay_profile": {
+    "enableUsenet": true,
+    "enableTorrent": true,
+    "preferredProtocol": "torrent",
+    "usenetDelay": 1440,
+    "torrentDelay": 1440,
+    "bypassIfHighestQuality": false,
+    "bypassIfAboveCustomFormatScore": false,
+    "minimumCustomFormatScore": 0
+  },
+  "kids_tag": "pour-les-enfants",
+  "kids_profiles": {"Films": "Films VF"},
+  "quality_profiles": [
+    {
+      "name": "Films",
+      "minFormatScore": 2000,
+      "language": "Any",
+      "group": {
+        "name": "720p à 2160p",
+        "qualities": ["HDTV-720p", "WEBRip-720p", "WEBDL-720p", "Bluray-720p",
+                      "HDTV-1080p", "WEBRip-1080p", "WEBDL-1080p", "Bluray-1080p",
+                      "HDTV-2160p", "WEBRip-2160p", "WEBDL-2160p", "Bluray-2160p"]
+      },
+      "scores": {
+        "Langue : VF": 3000,
+        "Langue : VOSTFR": 2000,
+        "Résolution : 2160p": 300,
+        "Résolution : 1080p": 200,
+        "Codec : AV1": 30,
+        "Codec : x265": 20,
+        "Codec : x264": 10,
+        "HDR": 5,
+        "Rejet : codec ancien": -10000,
+        "Rejet : 3D": -10000,
+        "Rejet : bonus": -10000,
+        "Rejet : upscale": -10000
+      }
+    },
+    {
+      "name": "Films VF",
+      "minFormatScore": 3000,
+      "language": "Any",
+      "group": {
+        "name": "720p à 2160p",
+        "qualities": ["HDTV-720p", "WEBRip-720p", "WEBDL-720p", "Bluray-720p",
+                      "HDTV-1080p", "WEBRip-1080p", "WEBDL-1080p", "Bluray-1080p",
+                      "HDTV-2160p", "WEBRip-2160p", "WEBDL-2160p", "Bluray-2160p"]
+      },
+      "scores": {
+        "Langue : VF": 3000,
+        "Langue : VOSTFR": 2000,
+        "Résolution : 2160p": 300,
+        "Résolution : 1080p": 200,
+        "Codec : AV1": 30,
+        "Codec : x265": 20,
+        "Codec : x264": 10,
+        "HDR": 5,
+        "Rejet : codec ancien": -10000,
+        "Rejet : 3D": -10000,
+        "Rejet : bonus": -10000,
+        "Rejet : upscale": -10000
+      }
+    }
+  ]
+}

@@ -44,7 +44,7 @@ flowchart LR
 | 🤖 | [Prowlarr, Sonarr, Radarr](docs/telechargement.md#prowlarr-sonarr-radarr) | indexeurs, suivi et import séries/films | `prowlarr.` `sonarr.` `radarr.DOMAIN` | LAN |
 | 🧹 | [clearr](docs/clearr.md) | supprimer torrent + bibliothèque sans re-téléchargement | `clearr.DOMAIN` | LAN |
 
-Sans interface : cross-seed, recyclarr, la sauvegarde restic et les tâches
+Sans interface : cross-seed, la sauvegarde restic et les tâches
 cron. Le parcours complet d'une demande, de Seerr jusqu'à Kodi, est décrit
 dans [Téléchargement](docs/telechargement.md#le-parcours-dun-téléchargement).
 

@@ -13,9 +13,9 @@
 #                              puis la configuration complète de Seerr.
 #
 # Pourquoi deux commandes et pas une : `keys` doit tourner AVANT
-# `recyclarr-sync`/`arr-overrides` (qui ont besoin des clés), alors que la
-# configuration Seerr de `services` doit tourner APRÈS (elle référence par nom
-# les profils qualité que ces deux-là créent). Une seule commande aurait dû être
+# `arr-overrides` (qui a besoin des clés), alors que la configuration Seerr de
+# `services` doit tourner APRÈS (elle référence par nom les profils qualité
+# qu'arr-overrides crée). Une seule commande aurait dû être
 # lancée deux fois de part et d'autre ; deux commandes rendent l'ordre explicite
 # dans le README.
 #
@@ -191,10 +191,12 @@ LEGACY_SCRIPT_PATHS = {
 
 # 14c — profils qualité et dossiers que Seerr doit utiliser, désignés par NOM :
 # les ids sont propres à l'instance. Ces profils sont créés par
-# `make recyclarr-sync` + `make arr-overrides`, qui doivent donc tourner avant.
-SEERR_RADARR_PROFILE = "[SQP] SQP-1 WEB (2160p)"
-SEERR_SONARR_PROFILE = "WEB-2160p (Combined)"
-SEERR_SONARR_ANIME_PROFILE = "Anime (Fansub) VOSTFR"
+# `make arr-overrides` (arr/profiles/), qui doit donc tourner avant. Les
+# variantes « VF » (enfants) ne sont pas des défauts : le tag pour-les-enfants
+# posé à la requête y fait basculer la série ou le film.
+SEERR_RADARR_PROFILE = "Films"
+SEERR_SONARR_PROFILE = "Séries"
+SEERR_SONARR_ANIME_PROFILE = "Anime"
 # Fournisseur des saisons affichées par Seerr (voir provision_seerr).
 SEERR_METADATA = {"tv": "tmdb", "anime": "tvdb"}
 
@@ -782,7 +784,7 @@ def arr_profile_id(name, api_key, profile_name):
     match = next((p for p in profiles if p["name"] == profile_name), None)
     if match is None:
         raise Skipped(f"profil {profile_name!r} absent de {name} — "
-                      "`make recyclarr-sync` puis `make arr-overrides` d'abord")
+                      "`make arr-overrides` d'abord")
     return match["id"]
 
 

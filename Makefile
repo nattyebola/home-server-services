@@ -13,7 +13,7 @@ STACKS := traefik jellyfin nextcloud vpn arr seerr komga
 # reflète donc l'état d'après redémarrage.
 UPDATE_STACKS := nextcloud vpn jellyfin arr seerr komga traefik
 
-.PHONY: help require-env-shared network up down restart restart-all config logs update rebuild update-all backup restore cron-install dashboard-refresh clearr arr-overrides search-missing mark-finales recyclarr-sync kodi-install gnome-install api-keys provision switch-lan-only-middleware test
+.PHONY: help require-env-shared network up down restart restart-all config logs update rebuild update-all backup restore cron-install dashboard-refresh clearr arr-overrides search-missing mark-finales kodi-install gnome-install api-keys provision switch-lan-only-middleware test
 
 # `make` sans argument affiche l'aide plutôt que de lancer la première cible
 # (c'était `network`, qui ne dit rien de ce que le reste sait faire).
@@ -103,8 +103,8 @@ compose = docker compose --env-file .env.shared $(if $(wildcard $(STACK)/.env),-
 
 # Crée les dossiers de données d'une stack avant que Docker ne le fasse en root
 # (voir le commentaire de `up` et scripts/ensure-bind-dirs.py). `--profile '*'` :
-# sans lui, `config` ignore les services sous `profiles: [manual]` — recyclarr,
-# dont le dossier naissait alors en root et qui plantait sur /config/state.
+# sans lui, `config` ignore les services sous `profiles:` — leur dossier
+# naissait alors en root (cas de recyclarr, retiré le 2026-10-07).
 ensure_data_dirs = root=$$(grep '^DATA_ROOT=' .env.shared | cut -d= -f2-); \
 	test -n "$$root" || (echo "DATA_ROOT not set in .env.shared" >&2 && exit 1); \
 	if [ "$(STACK)" = "arr" ]; then touch "$$root/.clearr.log"; fi; \
@@ -170,11 +170,11 @@ logs: ## STACK=<nom> — suit les logs de la stack (Ctrl-C pour sortir)
 # additionally needs its post-upgrade occ maintenance run every time app:
 # gets a new image.
 # `--profile manual` sur le PULL seulement : sans lui docker compose ignore les
-# services profilés, et recyclarr n'était donc JAMAIS mis à jour — son image
-# avait six mois quand on s'en est aperçu (2026-08-29). Surtout pas sur le
-# `up -d` en dessous, qui le démarrerait comme service permanent, exactement ce
-# que son mode manuel évite (voir arr/docker-compose.yml). Sans effet ailleurs :
-# arr est la seule stack à déclarer un `profiles:`.
+# services profilés, qui ne seraient alors JAMAIS mis à jour (cas de recyclarr,
+# image de six mois constatée le 2026-08-29). Surtout pas sur le `up -d` en
+# dessous, qui les démarrerait comme services permanents. Aucun service n'est
+# profilé depuis le retrait de recyclarr (2026-10-07) : l'option est gardée pour
+# qu'un futur service manuel ne soit pas oublié.
 update: require-env-shared network ## STACK=<nom> — pull/rebuild puis recrée la stack
 	@test -n "$(STACK)" || (echo "usage: make update STACK=<$(STACKS)>" >&2 && exit 1)
 	@# Versions notées avant le pull, comparées après le up : journal lu par le
@@ -205,7 +205,7 @@ update: require-env-shared network ## STACK=<nom> — pull/rebuild puis recrée 
 # leur code est cuit dans l'image, donc `make up` ne le rafraîchit pas, et
 # `make update` — le seul chemin qui rebuildait — pulle aussi toutes les autres
 # images de la stack. Reconstruire clearr après un changement d'une ligne
-# emportait donc au passage Prowlarr, Sonarr, Radarr et recyclarr en :latest,
+# emportait donc au passage Prowlarr, Sonarr et Radarr en :latest,
 # soit du changement non demandé au milieu d'une modif ciblée (2026-09-23).
 #
 # Pas de `pull` ici, c'est tout l'intérêt : on ne veut QUE reconstruire depuis
@@ -226,7 +226,7 @@ rebuild: require-env-shared network ## STACK=<nom> SERVICE=<nom> — recrée UN 
 		echo "$(SERVICE) n'est pas un service de la stack $(STACK)." >&2; \
 		echo "  disponibles : $$($(compose) --profile '*' config --services 2>/dev/null | sort | tr '\n' ' ')" >&2; \
 		exit 1; }
-	@# `--profile '*'` partout : sans lui un service profilé (arr/recyclarr) est
+	@# `--profile '*'` partout : sans lui un service profilé est
 	@# invisible de `config --services`, donc refusé par le test ci-dessus alors
 	@# qu'il existe. Ça ne peut rien démarrer d'autre au passage, le service
 	@# étant toujours nommé explicitement — c'est `up` SANS cible qui ignore les
@@ -311,7 +311,7 @@ clearr: network ## — TUI de nettoyage torrents/bibliothèque (équivalent cons
 # collecte les secrets générés au premier démarrage et les écrit dans arr/.env
 # (clés API Prowlarr/Sonarr/Radarr lues dans leur config.xml, clé cross-seed,
 # clé API Jellyfin créée au besoin) — voir scripts/provision.py. À lancer AVANT
-# recyclarr-sync/arr-overrides, qui ont besoin de ces clés.
+# arr-overrides, qui en a besoin.
 api-keys: ## — collecte les clés API générées au 1er démarrage dans arr/.env (avant arr-overrides)
 	@python3 scripts/provision.py keys
 
@@ -324,12 +324,11 @@ api-keys: ## — collecte les clés API générées au 1er démarrage dans arr/.
 provision: ## — crée les objets de config des UI (biblios Jellyfin, objets arr, Seerr) — après arr-overrides
 	@python3 scripts/provision.py services
 
-# réapplique les tailles de quality definition + le champ language Radarr
-# que recyclarr ne gère pas et resynchronise à leurs défauts à chaque
-# `recyclarr sync` — voir arr/recyclarr/recyclarr.yml et
-# scripts/apply-arr-overrides.py. Aussi enchaîné par cron juste après
-# `recyclarr-sync`, voir scripts/crontab.
-arr-overrides: ## — réapplique les réglages arr que recyclarr écrase (aussi enchaîné par cron)
+# applique la config arr versionnée : profils de qualité, custom formats, tailles
+# et délai (arr/profiles/), connexion Jellyfin, .nfo, ratio des indexeurs
+# publics… — voir scripts/apply-arr-overrides.py. Déclaratif et faisant
+# autorité, aussi lancé par cron chaque nuit (scripts/crontab).
+arr-overrides: ## — applique la config arr du dépôt (profils, tailles, délai, Jellyfin…) ; aussi lancé par cron
 	@python3 scripts/apply-arr-overrides.py
 
 # repose les marqueurs de fin de saison / fin de série / mi-saison dans le
@@ -349,16 +348,6 @@ mark-finales: ## — repose les marqueurs de fin de saison/série dans les .nfo 
 # envoyer aux indexeurs.
 search-missing: ## ARGS=<options> — recherche les manquants déjà sortis (aussi lancé par cron)
 	@python3 scripts/search-missing.py $(ARGS)
-
-# lance `recyclarr sync` en one-shot — le service recyclarr (arr/docker-compose.yml)
-# n'a plus de scheduler interne et est sous `profiles: [manual]`, donc
-# absent de `make up STACK=arr` ; seul ce target le démarre. Enchaîné par
-# cron avec `arr-overrides` juste après, voir scripts/crontab.
-recyclarr-sync: STACK := arr
-recyclarr-sync: network ## — lance `recyclarr sync` en one-shot (aussi enchaîné par cron)
-	@# Pas de `make up` sur ce chemin : même création de dossiers qu'`up`.
-	@$(ensure_data_dirs)
-	@$(compose) run --rm recyclarr sync
 
 # ouvre/referme au WAN les services normalement restreints au LAN
 # (transmission + prowlarr/sonarr/radarr/clearr) en réécrivant la plage

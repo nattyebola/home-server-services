@@ -87,7 +87,7 @@ services:
     # Seule variable d'arr/.env dont Sonarr a besoin (scripts/cross-seed-notify.sh),
     # pas d'`env_file` : il exposerait toutes les passkeys de trackers au
     # conteneur, et toute édition d'arr/.env ferait recréer Sonarr à la
-    # prochaine commande compose (le `run recyclarr` de minuit), voir CLAUDE.md.
+    # prochaine commande compose, voir CLAUDE.md.
     environment:
       CROSSSEED_API_KEY: ${CROSSSEED_API_KEY}
     networks:
@@ -329,58 +329,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    logging:
-      driver: json-file
-      options:
-        max-size: 1m
-        max-file: "3"
-
-  recyclarr:
-    # SEULE image du repo qui n'est pas en `:latest` — recyclarr ne publie plus
-    # ce tag : « The `latest` Docker tag is not available on Docker Hub or GHCR.
-    # Use a major version tag (e.g. `8`) » (README upstream). Les seuls tags non
-    # numériques du registre sont `edge` (build de développement, digest
-    # distinct), donc il n'existe aucun équivalent. `8` suit la dernière 8.x
-    # (même digest que 8.7.1 au 2026-08-29), ce qui garde l'esprit du repo à un
-    # majeur près. CONTREPARTIE : `make update STACK=arr` ne franchira jamais la
-    # 9 tout seul — bump à faire à la main ici, rien ne le signalera.
-    image: ghcr.io/recyclarr/recyclarr:8
-    # Mode manuel uniquement (pas de `restart:`, pas de healthcheck) — plus
-    # de scheduler interne (cron @daily par défaut de l'image, désactivé le
-    # 2026-07-30 : aucune valeur de CRON_SCHEDULE ne le désactive proprement,
-    # seule une expression cron qui ne matche jamais existe comme
-    # contournement, jugé pas assez propre). `profiles: [manual]` exclut ce
-    # service de `make up STACK=arr` (docker compose up sans cible explicite
-    # ignore les services profilés) — déclenché uniquement via
-    # `make recyclarr-sync` (`docker compose run --rm recyclarr sync`,
-    # passe des arguments à l'entrypoint donc bascule l'image en mode CLI
-    # one-shot plutôt que cron). Cron host (`scripts/crontab`) enchaîne ce
-    # target avec `arr-overrides` juste après pour réappliquer ce que le
-    # sync vient d'écraser (voir plus bas et CLAUDE.md) : la fenêtre où ces
-    # réglages sont faux se limite désormais à la durée réelle du sync
-    # (quelques secondes), plus à un délai de sécurité estimé.
-    user: "${PUID}:${PGID}"
-    profiles:
-      - manual
-    # service_healthy : `compose run` démarre sonarr/radarr s'ils sont arrêtés,
-    # et le sync partirait sinon avant que leur API réponde.
-    depends_on:
-      sonarr:
-        condition: service_healthy
-      radarr:
-        condition: service_healthy
-    volumes:
-      - ${DATA_ROOT}/.arr/recyclarr/config:/config
-      - ./recyclarr/recyclarr.yml:/config/recyclarr.yml:ro
-      - /etc/localtime:/etc/localtime:ro
-    env_file:
-      - .env
-    networks:
-      - default
     security_opt:
       - no-new-privileges:true
     cap_drop:

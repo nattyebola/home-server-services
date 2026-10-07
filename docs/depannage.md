@@ -41,8 +41,11 @@ touchent toutes les stacks.
 | Plus de nouveaux articles dans **Nextcloud News**, aucune erreur | `useCronUpdates` à faux : le job horaire sort sans rien faire | [Nextcloud](nextcloud.md#pièges-connus) |
 | Avertissements de sécurité dans l'admin Nextcloud | `security-headers` remis sur son routeur | [Nextcloud](nextcloud.md#pièges-connus) |
 | Une tâche cron « réussit » à la main mais pas sous cron | `%` non échappé | [Exploitation](exploitation.md#tâches-planifiées) |
-| Sonarr/Radarr **recréés à minuit**, ou un `.env` modifié « pas pris » | `make restart` ne recrée pas ; la commande compose suivante (le cron recyclarr) le fait | [plus bas](#env-modifié-conteneur-recréé--tout-seul--plus-tard) |
+| Un `.env` modifié « pas pris », puis appliqué plus tard sans raison apparente | `make restart` ne recrée pas ; la commande compose suivante sur la stack le fait | [plus bas](#env-modifié-conteneur-recréé--tout-seul--plus-tard) |
 | Un réglage arr corrigé « déjà à jour » alors qu'il a dérivé | écriture Servarr asynchrone (`202`) | [Téléchargement](telechargement.md#pièges-connus-1) |
+| Un épisode ou film sorti n'est **pas grabé** pendant 24 h, ou reste manquant | délai de 24 h voulu ; au-delà, aucune release n'annonce le français (`VOSTFR minimum`) | [Téléchargement](telechargement.md#règles-de-sélection) |
+| Un fichier sans français (ou sous les règles) n'est **jamais remplacé** | plus aucun upgrade depuis le 2026-10-07 : à remplacer à la main | [Téléchargement](telechargement.md#pièges-connus-1) |
+| Un contenu pour enfant grabé en VOSTFR | requête Seerr partie avant la bascule nocturne du tag vers le profil `… VF` | [Téléchargement](telechargement.md#comment-les-profils-les-appliquent) |
 
 ## Pièges Docker transverses
 
@@ -60,10 +63,9 @@ doit pouvoir être remplacé à chaud, monter son **dossier** (c'est le cas de
 `make restart` redémarre un conteneur **sans le recréer** : il garde
 l'environnement de sa création. Une valeur modifiée dans un `.env` de stack
 n'est donc pas appliquée. La première commande compose qui touche ensuite
-ce service voit l'écart et le recrée. Pour Sonarr et Radarr, c'est souvent
-le `make recyclarr-sync` de minuit (recyclarr dépend d'eux) : recréés à
-`00:00:01`, `Recreate` dans `arr/recyclarr-sync.log`. Rien de cassé, la
-config en attente s'applique.
+ce service voit l'écart et le recrée (un `make update`, un `make rebuild`…).
+Jusqu'au 2026-10-07, c'était le sync recyclarr de minuit pour Sonarr et
+Radarr. Rien de cassé, la config en attente s'applique.
 
 > [!TIP]
 > Après avoir modifié un `.env` : `make up STACK=…`, pas `make restart`.
@@ -96,7 +98,7 @@ les permissions du secret, ni assouplir le `cap_drop`.
 
 Un chemin d'exemple non remplacé dans un override, ou un dossier monté qui
 n'existe pas encore, est créé par Docker **en root**. Les services non-root
-crashent alors en `EACCES`. `make up` et `make recyclarr-sync` créent à
+crashent alors en `EACCES`. `make up` crée à
 l'avance **tous** les dossiers montés sous `DATA_ROOT` et sous le dépôt
 (`scripts/ensure-bind-dirs.py`, qui lit `docker compose config`). Hors de ces
 deux racines (chemins propres à la machine, dans un override), rien n'est

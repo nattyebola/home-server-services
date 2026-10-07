@@ -17,7 +17,7 @@ flowchart LR
     end
     subgraph P3["③ Provisionnement · ~15 min"]
         direction TB
-        s14["14 · make api-keys"] --> s15["15 · restart arr"] --> s16["16 · recyclarr-sync<br>+ arr-overrides"] --> s17["17 · make provision"] --> s18["18 · indexeurs"]
+        s14["14 · make api-keys"] --> s15["15 · restart arr"] --> s16["16 · arr-overrides"] --> s17["17 · make provision"] --> s18["18 · indexeurs"]
     end
     subgraph P4["④ Finalisation · ~10 min"]
         direction TB
@@ -174,7 +174,7 @@ make up STACK=komga     # ne dépend que de Traefik
 > Puis *Settings → Libraries → Add* →
 > `/data_root/.transmission/data/completed/bd`.
 
-`make up` (et `make recyclarr-sync`) crée au préalable **tous** les dossiers
+`make up` crée au préalable **tous** les dossiers
 de données montés par la stack, au nom de l'utilisateur qui lance `make` :
 laissés à Docker, ils naîtraient en root et presque tous les services
 planteraient en boucle sur `Permission denied` (vérifié sur une installation
@@ -202,12 +202,13 @@ make up STACK=arr       # cross-seed repart avec les vraies clés
 ### 16. Profils qualité
 
 ```sh
-make recyclarr-sync     # custom formats + profils des guides TRaSH
-make arr-overrides      # config du dépôt par-dessus (anime, Jellyfin, .nfo…)
+make arr-overrides      # profils, custom formats, tailles, délai, Jellyfin, .nfo…
 ```
 
-**Dans cet ordre** : `arr-overrides` référence par nom des custom formats que
-recyclarr vient de créer, et échoue explicitement s'ils manquent.
+Crée les six profils de `arr/profiles/` (voir
+[Règles de sélection](telechargement.md#règles-de-sélection)). Sur une
+installation neuve, les profils par défaut de Sonarr/Radarr (`Any`, `HD-1080p`…)
+restent à côté : les supprimer dans l'UI une fois les nouveaux en place.
 
 ### 17. Le reste de la configuration
 
@@ -301,8 +302,7 @@ Ces réglages ne sont pas provisionnés. Ils sont conservés par la sauvegarde,
 mais à refaire sur une installation neuve :
 
 - plugins Jellyfin, transcodage matériel VAAPI ;
-- le port d'écoute Transmission ouvert côté VPN (`settings.json`) ;
-- le tag `fr-priority` de Sonarr et son delay profile.
+- le port d'écoute Transmission ouvert côté VPN (`settings.json`).
 
 ### Hôte : fail2ban (SSH ouvert au WAN)
 

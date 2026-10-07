@@ -35,19 +35,16 @@ MAILTO=""
 # stale and the very next successful regeneration will show it in red.
 */5 * * * * python3 __REPO_ROOT__/scripts/generate-dashboard.py >> __REPO_ROOT__/dashboard/refresh.log 2>&1 && date +\%s > __DATA_ROOT__/.cron-status/dashboard-refresh
 
-# Trigger recyclarr sync (manual mode, no internal scheduler — see
-# arr/docker-compose.yml) then immediately reapply the Sonarr/Radarr
-# quality-definition size overrides + Radarr language field that it just
-# reset to guide defaults (see arr/recyclarr/recyclarr.yml and
-# scripts/apply-arr-overrides.py). Chained in one crontab line rather than
-# two separate schedules so the window where these settings are wrong is
-# bounded by the sync's actual duration, not an estimated safety delay.
-# Guarded by require-running.sh (needs both sonarr and radarr up) so this
-# is a silent no-op rather than a failed docker compose run/docker exec
-# every night when the arr stack is stopped. Success marker (only reached
+# Reapply the versioned arr configuration nightly (quality profiles, custom
+# formats, sizes, delay — arr/profiles/ — plus Jellyfin connection, .nfo,
+# public indexer ratio...): the script is declarative and authoritative, so a
+# change made by hand in the UI is reverted here (see
+# scripts/apply-arr-overrides.py). Guarded by require-running.sh (needs both
+# sonarr and radarr up) so this is a silent no-op rather than a failed
+# docker exec every night when the arr stack is stopped. Success marker (only reached
 # if all prior steps exit 0) consumed by the "Tâches planifiées" card (see
 # cron_marker_age_seconds()).
-0 0 * * * __REPO_ROOT__/scripts/require-running.sh arr/sonarr arr/radarr && make -C __REPO_ROOT__ recyclarr-sync >> __REPO_ROOT__/arr/recyclarr-sync.log 2>&1 && python3 __REPO_ROOT__/scripts/apply-arr-overrides.py >> __REPO_ROOT__/arr/apply-overrides.log 2>&1 && date +\%s > __DATA_ROOT__/.cron-status/arr-overrides
+0 0 * * * __REPO_ROOT__/scripts/require-running.sh arr/sonarr arr/radarr && python3 __REPO_ROOT__/scripts/apply-arr-overrides.py >> __REPO_ROOT__/arr/apply-overrides.log 2>&1 && date +\%s > __DATA_ROOT__/.cron-status/arr-overrides
 
 # Re-close the LAN-only middleware once its one-hour window has expired
 # (`make switch-lan-only-middleware` opens transmission + the arr services to
@@ -83,7 +80,7 @@ MAILTO=""
 # missed at release time is never retried (see scripts/search-missing.py).
 # Weekly and capped inside the script rather than nightly: a burst of searches
 # is what tripped C411 on 2026-07-28. The slot avoids the two other heavy jobs
-# (backup Sunday 3am, recyclarr + overrides at midnight). Guarded by
+# (backup Sunday 3am, arr overrides at midnight). Guarded by
 # require-running.sh so this is a silent no-op rather than a failure when the
 # arr stack is stopped. Success marker consumed by the "Tâches planifiées"
 # card (see cron_marker_age_seconds()).
@@ -97,7 +94,7 @@ MAILTO=""
 # soon as the episode does; this is the net for what has no trigger at all:
 # a manual rescan rewriting the .nfo, and a finaleType or series status
 # revised on TVDB without any file moving. 2am avoids the other heavy jobs
-# (recyclarr at midnight, backup Sunday 3am, logrotate 4:30, search-missing
+# (arr overrides at midnight, backup Sunday 3am, logrotate 4:30, search-missing
 # Monday 5am). Guarded by require-running.sh so this is a silent no-op
 # rather than a failed docker exec when the arr stack is stopped. Success
 # marker consumed by the "Tâches planifiées" card (see

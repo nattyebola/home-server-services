@@ -761,7 +761,7 @@ CRON_MARKER_SLACK = 1.2
 SCHEDULED_TASKS = [
     ("Nextcloud (cron.php)", "nextcloud-cron", 5 * 60, ["nextcloud/app"]),
     ("Rafraîchissement dashboard", "dashboard-refresh", 5 * 60, []),
-    ("Recyclarr + overrides arr", "arr-overrides", 24 * 3600, ["arr/sonarr", "arr/radarr"]),
+    ("Config arr (overrides)", "arr-overrides", 24 * 3600, ["arr/sonarr", "arr/radarr"]),
     ("Recherche des manquants", "search-missing", 7 * 24 * 3600, ["arr/sonarr", "arr/radarr"]),
     ("Marqueurs de finale", "mark-finales", 24 * 3600, ["arr/sonarr"]),
 ]

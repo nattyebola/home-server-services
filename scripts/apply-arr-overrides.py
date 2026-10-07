@@ -1,39 +1,24 @@
 #!/usr/bin/env python3
-# Réapplique les réglages que recyclarr ne peut pas exprimer en YAML sur les
-# deux profils principaux (voir arr/recyclarr/recyclarr.yml) : tailles de
-# palier de "Quality Definition" (le guide TRaSH "series" côté Sonarr ne
-# fixe aucun maxSize sur les paliers 2160p ; le guide "sqp-streaming" côté
-# Radarr cale preferredSize quasi au max sur tous les paliers) et le champ
-# `language` du profil Radarr (forcé à "Original" par le JSON du guide à
-# chaque sync). recyclarr resynchronise ces valeurs à leurs défauts à
-# CHAQUE `recyclarr sync` (cron interne @daily du conteneur recyclarr) —
-# ce script doit donc être relancé juste après (voir scripts/crontab) pour
-# que la dérive ne s'installe pas silencieusement entre deux exécutions
-# manuelles.
+# Applique la configuration arr versionnée dans le dépôt, de façon déclarative :
+# ce script FAIT AUTORITÉ, une modification faite à la main dans l'UI sur son
+# périmètre est annulée au run suivant (cron de minuit, scripts/crontab).
+#
+# Profils de qualité (arr/profiles/) : custom formats (custom-formats.json,
+# communs aux deux arr), profils, tailles de palier, délai de grab et profils
+# enfants (sonarr.json, radarr.json). Depuis le 2026-10-07, plus de recyclarr :
+# les profils des guides TRaSH ont été remplacés par des profils écrits à partir
+# des règles de docs/telechargement.md (« Règles de sélection ») et d'une étude
+# des releases réellement disponibles — voir .claude/docs/arr-config.md.
 #
 # Provisionne AUSSI la connexion Emby/Jellyfin de Sonarr/Radarr — création
 # incluse — à partir des constantes JELLYFIN_* plus bas et de JELLYFIN_API_KEY
-# (arr/.env, seule valeur secrète du lot). Contrairement au reste, ce n'est pas
-# recyclarr qui fait dériver ces réglages (il ne touche pas aux notifications) :
-# ils ne vivaient nulle part dans le repo, donc rien ne les recréait sur une
-# installation neuve ni ne rattrapait une modification par mégarde dans l'UI.
+# (arr/.env, seule valeur secrète du lot) : ces réglages ne vivaient nulle part
+# dans le repo, donc rien ne les recréait sur une installation neuve ni ne
+# rattrapait une modification par mégarde dans l'UI.
 #
 # Provisionne AUSSI la limite de ratio des indexeurs publics (voir
 # PUBLIC_INDEXER_SEED_RATIO) : même motif que la connexion Jellyfin, ce réglage
 # ne vivait que dans la base Sonarr et en avait silencieusement disparu.
-#
-# Provisionne AUSSI la config anime (arr/profiles/sonarr-anime.json) : les
-# custom formats qui nous appartiennent et les 3 profils Anime (Fansub)*.
-# recyclarr ne les gère pas (aucun trash_id ne les couvre), donc rien ne les
-# recréerait sur une installation neuve et rien ne les rattraperait s'ils
-# dérivaient — ils ne vivaient jusqu'au 2026-08-02 que dans la base Sonarr,
-# récupérables par la sauvegarde restic mais pas reproductibles depuis le
-# repo. Le JSON est déclaratif et fait autorité : tout custom format absent
-# de `scores` est remis à 0 sur le profil concerné.
-#
-# Provisionne AUSSI le délai de grab des anime VOSTFR (voir ANIME_DELAY_*) : un
-# tag, le delay profile qui le vise, et la pose/le retrait du tag selon le
-# profil qualité de chaque série.
 import copy
 import datetime
 import json
@@ -44,7 +29,8 @@ import sys
 import time
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ANIME_CONFIG = os.path.join(REPO_ROOT, "arr", "profiles", "sonarr-anime.json")
+PROFILES_DIR = os.path.join(REPO_ROOT, "arr", "profiles")
+CUSTOM_FORMATS_FILE = os.path.join(PROFILES_DIR, "custom-formats.json")
 
 SONARR_CONTAINER = "arr-sonarr-1"
 SONARR_URL = "http://localhost:8989/api/v3"
@@ -53,51 +39,19 @@ RADARR_URL = "http://localhost:7878/api/v3"
 PROWLARR_CONTAINER = "arr-prowlarr-1"
 PROWLARR_URL = "http://localhost:9696/api/v1"
 
-RADARR_PROFILE_NAME = "[SQP] SQP-1 WEB (2160p)"
-
-# --- relecture : les écritures de recyclarr atterrissent APRÈS sa sortie ------
+# --- relecture : les écritures de config atterrissent APRÈS la réponse -------
 #
-# `PUT /api/v3/qualitydefinition/update` répond **202 Accepted** : Sonarr/Radarr
-# mettent la mise à jour en file et l'appliquent après avoir répondu. recyclarr a
-# donc déjà rendu la main quand les valeurs du guide atterrissent — et ce script,
-# enchaîné juste derrière par `&&` (scripts/crontab), lisait des valeurs encore
-# correctes, concluait « déjà à jour, rien à faire », et laissait la dérive
-# s'installer pour 24 h, jusqu'au sync suivant qui reperdait la même course.
-#
-# Mesuré le 2026-08-07 en rejouant la chaîne cron à la main : PUT de recyclarr à
-# 12:26:17.2 (202 Accepted, 5 ms), lecture du script à 12:26:17.4 encore aux
-# bonnes valeurs, « déjà à jour » à 12:26:17.9 — et valeurs du guide bien en
-# place à 12:27:10. Même comportement côté Radarr (202 à 12:26:17.0).
-#
-# C'est ce qui rendait le correctif du 2026-07-30 (enchaîner recyclarr et ce
-# script par `&&` au lieu de deux horaires séparés) inopérant sur ces champs : la
-# fenêtre n'est pas un problème d'ordonnancement mais d'écriture asynchrone,
-# qu'aucun `&&` ne peut refermer.
-#
-# D'où une relecture des seules étapes que recyclarr fait dériver : on ne
-# s'arrête qu'après SETTLE_CLEAN_PASSES passes consécutives sans rien à
-# corriger, ce qui prouve qu'aucune écriture n'est encore en vol. Bornée, pour
-# qu'une dérive qui se rétablirait en boucle ne fasse pas tourner le cron sans
-# fin — au pire SETTLE_ATTEMPTS x SETTLE_DELAY_SECONDS d'attente.
-#
-# La fenêtre propre exigée doit couvrir la LATENCE MAX observée, pas une
-# latence typique. L'ancien réglage (2 passes à 5 s d'écart) concluait après
-# ~5 s de calme : une écriture recyclarr atterrissant à t=20 s — dans la
-# fourchette mesurée de 0,5 à 53 s — passait après la conclusion, et la dérive
-# s'installait pour 24 h exactement comme avant settle(). On exige donc
-# SETTLE_STABLE_SECONDS de calme continu (53 s mesurés + marge), relu toutes
-# les SETTLE_DELAY_SECONDS : la première passe propre ouvre la fenêtre, la
-# dernière la ferme SETTLE_STABLE_SECONDS plus tard. Le décompte part du début
-# du script, soit juste après la sortie de recyclarr (`&&` dans
-# scripts/crontab) — le point de départ de la latence mesurée.
-# Coût : chaque étape sous settle() dure au moins une minute, même sans
-# dérive. Accepté, le cron tourne à minuit.
-# Plafond = deux fenêtres complètes + 2 passes (~2 min 30 par étape au pire) :
-# une écriture qui atterrit juste avant la fin de la première fenêtre (53 s)
-# la remet à zéro, et il faut alors une seconde fenêtre entière pour conclure.
-# Un plafond plus serré déclarait « non stabilisé » ce cas pourtant documenté.
-# NE PAS remplacer par un `sleep` dans scripts/crontab : la latence n'est pas
-# bornée côté Servarr, seule la relecture prouve la stabilité.
+# `PUT /api/v3/qualitydefinition/...` peut répondre 202 Accepted : Sonarr/Radarr
+# mettent la mise à jour en file et l'appliquent après avoir répondu (0,5 à 53 s
+# mesurés le 2026-08-07, à l'époque où recyclarr réécrivait ces paliers juste
+# avant ce script). Une lecture enchaînée derrière voit encore l'ancienne valeur
+# et se déclare satisfaite. D'où settle() : on ne conclut qu'après
+# SETTLE_STABLE_SECONDS de calme continu (latence max mesurée + marge), relu
+# toutes les SETTLE_DELAY_SECONDS. Borné, pour qu'une dérive qui se rétablirait
+# en boucle ne fasse pas tourner le cron sans fin : deux fenêtres complètes + 2
+# passes au pire. Coût : au moins une minute par étape, accepté (cron de minuit).
+# NE PAS remplacer par un `sleep` : la latence n'est pas bornée côté Servarr,
+# seule la relecture prouve la stabilité.
 SETTLE_STABLE_SECONDS = 60
 SETTLE_DELAY_SECONDS = 10
 SETTLE_CLEAN_PASSES = SETTLE_STABLE_SECONDS // SETTLE_DELAY_SECONDS + 1
@@ -284,26 +238,6 @@ XBMC_METADATA_IMAGE_FIELDS = ("movieImages", "seriesImages", "seasonImages",
 SONARR_XBMC_METADATA_FIELDS = {"seriesMetadata": True, "episodeMetadata": True}
 RADARR_XBMC_METADATA_FIELDS = {"movieMetadata": True, "movieMetadataLanguage": 2}
 
-SONARR_SIZE_OVERRIDES = {
-    "WEBRip-2160p": {"maxSize": 100, "preferredSize": 85},
-    "WEBDL-2160p": {"maxSize": 100, "preferredSize": 85},
-}
-
-RADARR_SIZE_OVERRIDES = {
-    # maxSize WEBDL/WEBRip-1080p remonté de 45 à 50 Mo/min le 2026-08-01
-    # (demandé explicitement) : seule release WEB-DL trouvée pour "Maradona
-    # par Kusturica" (documentaire Kusturica, 90 min) pesait 4174 Mio =
-    # 46,4 Mo/min, rejetée de peu par l'ancien plafond (45). Marge donnée
-    # au-dessus de ce cas réel plutôt que collée dessus.
-    "WEBDL-1080p": {"minSize": 10, "preferredSize": 30, "maxSize": 50},
-    "WEBRip-1080p": {"minSize": 10, "preferredSize": 30, "maxSize": 50},
-    "Bluray-1080p": {"minSize": 18, "preferredSize": 40, "maxSize": 60},
-    "WEBDL-2160p": {"minSize": 25, "preferredSize": 65, "maxSize": 100},
-    "WEBRip-2160p": {"minSize": 25, "preferredSize": 65, "maxSize": 100},
-    "Bluray-2160p": {"minSize": 40, "preferredSize": 75, "maxSize": 120},
-}
-
-
 class MissingIntegration(Exception):
     """Intégration documentée comme optionnelle et absente de ce déploiement :
     ni une correction à signaler, ni une erreur à faire échouer le script."""
@@ -459,12 +393,12 @@ def _dedupe(lines):
 def settle(step):
     """Rejoue `step` jusqu'à SETTLE_CLEAN_PASSES passes consécutives sans rien à
     corriger — la seule façon de distinguer « rien ne dérive » d'une lecture
-    faite trop tôt, avant qu'une écriture asynchrone de recyclarr n'atterrisse
-    (voir le commentaire de SETTLE_CLEAN_PASSES).
+    faite trop tôt, avant qu'une écriture asynchrone n'atterrisse (voir le
+    commentaire de SETTLE_CLEAN_PASSES).
 
-    Une passe qui corrige quelque chose remet le compteur à zéro : si recyclarr
-    écrit en deux temps, on repart pour un tour au lieu de conclure sur la
-    première accalmie. Les corrections de toutes les passes sont cumulées, donc
+    Une passe qui corrige quelque chose remet le compteur à zéro : si une
+    écriture atterrit en deux temps, on repart pour un tour au lieu de conclure
+    sur la première accalmie. Les corrections de toutes les passes sont cumulées, donc
     une valeur rattrapée au 3e tour apparaît bien dans le rapport."""
     changed = []
     clean = 0
@@ -518,19 +452,6 @@ def apply_quality_sizes(label, container, base_url, api_key, overrides):
             continue
         changed.append(f"{label} {name}: {current} -> {wanted}")
     return step_result(changed, errors)
-
-
-def apply_radarr_language(container, base_url, api_key, profile_name):
-    profiles = api_get(container, base_url, api_key, "/qualityprofile")
-    profile = next((p for p in profiles if p["name"] == profile_name), None)
-    if profile is None:
-        raise RuntimeError(f"profil Radarr {profile_name!r} introuvable")
-    if profile["language"]["name"] == "Any":
-        return []
-    before = profile["language"]["name"]
-    profile["language"] = {"id": -1, "name": "Any"}
-    api_put(container, base_url, api_key, f"/qualityprofile/{profile['id']}", profile)
-    return [f"Radarr {profile_name}: language {before} -> Any"]
 
 
 # Réglages de /config/mediamanagement à maintenir sur les deux arr.
@@ -979,7 +900,7 @@ def apply_prowlarr_nyaa_category(prowlarr_api_key):
 
 
 def spec_body(spec):
-    """Un champ `fields` complet est inutile à l'écriture : Sonarr ne lit que
+    """Un champ `fields` complet est inutile à l'écriture : l'arr ne lit que
     `name`/`value`, et tout stocker (label/helpText traduits par l'UI, ordre,
     privacy) ferait diverger le JSON versionné à chaque changement de langue
     de l'instance."""
@@ -1000,18 +921,18 @@ def spec_signature(spec):
     return (spec["name"], spec["implementation"], spec["negate"], spec["required"], value)
 
 
-def apply_custom_formats(container, base_url, api_key, wanted_formats):
+def apply_custom_formats(label, container, base_url, api_key, wanted_formats):
     changed, errors = [], []
     existing = {cf["name"]: cf for cf in api_get(container, base_url, api_key, "/customformat")}
     for wanted in wanted_formats:
         name = wanted["name"]
-        body = {"name": name, "includeCustomFormatWhenRenaming": True,
+        body = {"name": name, "includeCustomFormatWhenRenaming": False,
                 "specifications": [spec_body(s) for s in wanted["specifications"]]}
         current = existing.get(name)
         try:
             if current is None:
                 api_write(container, base_url, api_key, "POST", "/customformat", body)
-                changed.append(f"Sonarr custom format {name!r} créé")
+                changed.append(f"{label} custom format {name!r} créé")
                 continue
             if [spec_signature(s) for s in current["specifications"]] == \
                [spec_signature(s) for s in wanted["specifications"]]:
@@ -1021,7 +942,7 @@ def apply_custom_formats(container, base_url, api_key, wanted_formats):
         except Exception as e:
             errors.append(f"custom format {name!r} : {e}")
             continue
-        changed.append(f"Sonarr custom format {name!r} mis à jour")
+        changed.append(f"{label} custom format {name!r} mis à jour")
     return step_result(changed, errors)
 
 
@@ -1029,39 +950,66 @@ def item_name(item):
     return item["name"] if item.get("quality") is None else item["quality"]["name"]
 
 
+def flatten_qualities(items):
+    """{nom: objet quality} de toutes les qualités d'un profil, groupes dépliés,
+    dans l'ordre du profil (du moins bon au meilleur)."""
+    out = {}
+    for item in items:
+        if item.get("quality") is not None:
+            out[item["quality"]["name"]] = item["quality"]
+        out.update(flatten_qualities(item.get("items") or []))
+    return out
+
+
+# Id du groupe de qualités : Sonarr/Radarr réservent les ids ≥ 1000 aux groupes.
+QUALITY_GROUP_ID = 1000
+# Langues de profil Radarr connues (Sonarr v4 n'a plus ce champ).
+PROFILE_LANGUAGES = {"Any": -1, "Original": -2}
+
+
 def build_profile_body(skeleton, wanted, format_ids):
     """Applique la config voulue sur un squelette — le profil existant, ou
-    /qualityprofile/schema pour une création. Les qualités et les custom
-    formats sont désignés par NOM dans le JSON versionné : leurs ids sont
-    propres à chaque instance (un déploiement neuf n'aura pas les mêmes),
-    c'est tout l'intérêt de ne pas figer un dump d'API brut."""
+    /qualityprofile/schema pour une création. Qualités et custom formats sont
+    désignés par NOM dans le JSON versionné : leurs ids sont propres à chaque
+    instance.
+
+    Toutes les qualités autorisées vont dans UN SEUL groupe. Sonarr/Radarr
+    classent les releases par qualité AVANT le score de custom format : avec
+    des paliers séparés, une VOSTFR 2160p battrait toujours une MULTi 1080p.
+    Dans un groupe, les qualités sont à égalité et c'est le score qui
+    départage — d'où l'ordre langue > résolution > codec > HDR, porté par les
+    ordres de grandeur des scores (milliers, centaines, dizaines, unités).
+
+    Jamais d'upgrade (règle « regrab minimum », cutoff au minimum toléré) : le
+    premier grab, fait après le délai du profil de délai, est définitif.
+    """
     body = copy.deepcopy(skeleton)
     body["name"] = wanted["name"]
-    body["upgradeAllowed"] = wanted["upgradeAllowed"]
+    body["upgradeAllowed"] = False
     body["minFormatScore"] = wanted["minFormatScore"]
-    body["cutoffFormatScore"] = wanted["cutoffFormatScore"]
+    body["cutoffFormatScore"] = wanted["minFormatScore"]
+    if "minUpgradeFormatScore" in body:
+        body["minUpgradeFormatScore"] = 1
 
-    allowed = set(wanted["allowed"])
-    cutoff_id = None
-    for item in body["items"]:
-        name = item_name(item)
-        item["allowed"] = name in allowed
-        # Les qualités d'un groupe suivent l'état du groupe (convention
-        # Sonarr : un groupe autorisé dont les enfants ne le sont pas est
-        # accepté par l'API mais ne matche rien).
-        for child in item.get("items") or []:
-            child["allowed"] = item["allowed"]
-        if name == wanted["cutoff"]:
-            cutoff_id = item["id"] if item.get("quality") is None else item["quality"]["id"]
-    if cutoff_id is None:
-        raise RuntimeError(f"profil {wanted['name']!r} : cutoff {wanted['cutoff']!r} introuvable")
-    body["cutoff"] = cutoff_id
+    qualities = flatten_qualities(body["items"])
+    group_names = wanted["group"]["qualities"]
+    unknown = [n for n in group_names if n not in qualities]
+    if unknown:
+        raise RuntimeError(f"profil {wanted['name']!r} : qualité(s) inconnue(s) {unknown}")
+    body["items"] = [{"quality": q, "items": [], "allowed": False}
+                     for n, q in qualities.items() if n not in group_names]
+    body["items"].append({
+        "id": QUALITY_GROUP_ID, "name": wanted["group"]["name"], "allowed": True,
+        "items": [{"quality": qualities[n], "items": [], "allowed": True} for n in group_names],
+    })
+    body["cutoff"] = QUALITY_GROUP_ID
+
+    if "language" in wanted:
+        body["language"] = {"id": PROFILE_LANGUAGES[wanted["language"]], "name": wanted["language"]}
 
     unknown = set(wanted["scores"]) - set(format_ids)
     if unknown:
-        raise RuntimeError(
-            f"profil {wanted['name']!r} : custom format(s) absent(s) de Sonarr : {sorted(unknown)} "
-            "— `make recyclarr-sync` doit tourner avant ce script (voir scripts/crontab)")
+        raise RuntimeError(f"profil {wanted['name']!r} : custom format(s) absent(s) : {sorted(unknown)}")
     body["formatItems"] = [
         {"format": fid, "name": name, "score": wanted["scores"].get(name, 0)}
         for name, fid in format_ids.items()
@@ -1071,12 +1019,11 @@ def build_profile_body(skeleton, wanted, format_ids):
 
 def profile_signature(profile):
     # L'état `allowed` des qualités À L'INTÉRIEUR d'un groupe est comparé aussi :
-    # build_profile_body l'aligne sur celui du groupe, mais sans lui dans la
-    # signature une qualité décochée dans un groupe autorisé (qui ne matche
-    # alors plus rien, voir build_profile_body) n'était jamais rattrapée.
+    # une qualité décochée dans un groupe autorisé ne matche plus rien, et sans
+    # elle dans la signature elle n'était jamais rattrapée.
     return (
         profile["upgradeAllowed"], profile["cutoff"], profile["minFormatScore"],
-        profile["cutoffFormatScore"],
+        profile["cutoffFormatScore"], (profile.get("language") or {}).get("name"),
         [(item_name(i), i["allowed"],
           [(item_name(c), c["allowed"]) for c in i.get("items") or []])
          for i in profile["items"]],
@@ -1084,7 +1031,7 @@ def profile_signature(profile):
     )
 
 
-def apply_quality_profiles(container, base_url, api_key, wanted_profiles):
+def apply_quality_profiles(label, container, base_url, api_key, wanted_profiles):
     changed = []
     format_ids = {cf["name"]: cf["id"]
                   for cf in api_get(container, base_url, api_key, "/customformat")}
@@ -1099,7 +1046,7 @@ def apply_quality_profiles(container, base_url, api_key, wanted_profiles):
                     schema = api_get(container, base_url, api_key, "/qualityprofile/schema")
                 api_write(container, base_url, api_key, "POST", "/qualityprofile",
                           build_profile_body(schema, wanted, format_ids))
-                changed.append(f"Sonarr profil {wanted['name']!r} créé")
+                changed.append(f"{label} profil {wanted['name']!r} créé")
                 continue
             body = build_profile_body(current, wanted, format_ids)
             if profile_signature(current) == profile_signature(body):
@@ -1108,125 +1055,98 @@ def apply_quality_profiles(container, base_url, api_key, wanted_profiles):
         except Exception as e:
             errors.append(f"profil {wanted['name']!r} : {e}")
             continue
-        changed.append(f"Sonarr profil {wanted['name']!r} réaligné sur {os.path.basename(ANIME_CONFIG)}")
+        changed.append(f"{label} profil {wanted['name']!r} réaligné sur arr/profiles/")
     return step_result(changed, errors)
 
 
-def apply_anime_config(container, base_url, api_key):
-    with open(ANIME_CONFIG) as f:
-        config = json.load(f)
-    # Les custom formats d'abord : les profils ci-dessous les référencent par
-    # nom et échouent tant qu'ils n'existent pas. run_all et pas une séquence
-    # qui s'arrête au premier échec : un CF en erreur n'empêche pas de réaligner
-    # les profils qui n'en dépendent pas (ceux qui en dépendent lèvent une
-    # erreur explicite dans build_profile_body).
-    return run_all(
-        lambda: apply_custom_formats(container, base_url, api_key, config["custom_formats"]),
-        lambda: apply_quality_profiles(container, base_url, api_key, config["quality_profiles"]))
+def api_delete(container, base_url, api_key, path):
+    code, body = _curl(container, api_key, ["-X", "DELETE", f"{base_url}{path}"])
+    if not code.startswith("2"):
+        raise RuntimeError(f"DELETE {path} : HTTP {code} — {body[:300] or 'réponse vide'}")
 
 
-# --- délai de grab des anime VOSTFR -------------------------------------------
-#
-# Sur Nyaa, les releases sans français (raws japonais, WEB « OV ») sortent avant
-# les VOSTFR. Sans délai, Sonarr grabe la première, puis la remplace par
-# chaque meilleure release qui arrive. Pour un seul fichier gardé, on a
-# jusqu'à trois téléchargements, et les perdants restent coincés en
-# importPending (skill manual-import).
-# Mesuré le 2026-09-25 sur tout l'historique du profil VOSTFR : 38 des 39
-# remplacements par une release ≥ 50 sont arrivés moins de 2 h 20 après le
-# premier grab, un seul à 11,9 h. 3 h couvre donc l'essentiel. Les épisodes
-# qui n'auront jamais de VOSTFR (les deux tiers des premiers grabs < 50, dont
-# les ToonsHub MSubs légitimes) arrivent 3 h plus tard, c'est le prix.
-#
-# Exception à partir de 50 = le score de `VOSTFR (hors suffixe)` : une release
-# VOSTFR part immédiatement, seules les releases sans marqueur français attendent.
-# Le delay profile `fr-priority`, créé à la main (6 h, exception à 100), ne
-# peut pas jouer ce rôle : 100 est quasi inatteignable sur ce profil qualité.
-# On NE monte PAS `minFormatScore` à la place : il rejetterait aussi les
-# ToonsHub MSubs à score 0 (voir .claude/docs/arr-pieges.md).
-#
-# Un delay profile se rattache par tag, pas par profil qualité. Le tag est
-# donc PILOTÉ par le profil : posé sur toute série en `Anime (Fansub) VOSTFR`,
-# retiré de toute autre (une série passée en VF dans Sonarr sort ainsi du
-# délai). Le poser à la main ne sert à rien, il serait retiré la nuit
-# suivante.
-ANIME_DELAY_TAG = "anime-vostfr-delai"
-ANIME_DELAY_QUALITY_PROFILE = "Anime (Fansub) VOSTFR"
-ANIME_DELAY_FIELDS = {
-    "enableUsenet": True, "enableTorrent": True, "preferredProtocol": "torrent",
-    "usenetDelay": 180, "torrentDelay": 180,
-    "bypassIfHighestQuality": False,
-    "bypassIfAboveCustomFormatScore": True, "minimumCustomFormatScore": 50,
-}
+def apply_delay_profile(label, container, base_url, api_key, wanted):
+    """Un seul délai pour tout (règle du 2026-10-07 : 24 h) : le profil de délai
+    par défaut (sans tag) est réaligné, et tout profil de délai à tag est
+    supprimé — un tag plus court le court-circuiterait pour les séries visées.
+
+    `bypassIfHighestQuality` doit rester à false : avec un seul groupe de
+    qualités, TOUTE release est « de la meilleure qualité » et partirait sans
+    attendre."""
+    changed, errors = [], []
+    for delay in api_get(container, base_url, api_key, "/delayprofile"):
+        try:
+            if delay["tags"]:
+                api_delete(container, base_url, api_key, f"/delayprofile/{delay['id']}")
+                changed.append(f"{label} profil de délai à tag {delay['tags']} supprimé")
+            elif any(delay.get(k) != v for k, v in wanted.items()):
+                api_put(container, base_url, api_key, f"/delayprofile/{delay['id']}", {**delay, **wanted})
+                changed.append(f"{label} profil de délai par défaut réaligné "
+                               f"({wanted['torrentDelay']} min)")
+        except Exception as e:
+            errors.append(f"profil de délai {delay['id']} : {e}")
+    return step_result(changed, errors)
 
 
-def apply_anime_delay(container, base_url, api_key):
-    changed = []
-    tags = {t["label"]: t["id"] for t in api_get(container, base_url, api_key, "/tag")}
-    tag_id = tags.get(ANIME_DELAY_TAG)
+def apply_kids_profiles(label, container, base_url, api_key, config):
+    """Le tag `pour-les-enfants` (posé depuis Seerr à la requête) fait passer
+    la série ou le film sur la variante VF de son profil : VF obligatoire pour
+    les enfants. Sens unique : retirer le tag ne repasse pas en VOSTFR, un
+    profil VF choisi à la main reste."""
+    tag_id = next((t["id"] for t in api_get(container, base_url, api_key, "/tag")
+                   if t["label"] == config["kids_tag"]), None)
     if tag_id is None:
-        tag_id = api_write(container, base_url, api_key, "POST", "/tag",
-                           {"label": ANIME_DELAY_TAG})["id"]
-        changed.append(f"Sonarr tag {ANIME_DELAY_TAG!r} créé")
-
-    # Au-delà du tag, delay profile et pose du tag sont indépendants : l'un en
-    # échec n'empêche pas l'autre, et un tag créé avant l'échec reste rapporté.
-    errors = []
-    try:
-        # Rattaché par son tag : un delay profile n'a pas de nom.
-        delay = next((d for d in api_get(container, base_url, api_key, "/delayprofile")
-                      if d["tags"] == [tag_id]), None)
-        if delay is None:
-            api_write(container, base_url, api_key, "POST", "/delayprofile",
-                      {**ANIME_DELAY_FIELDS, "tags": [tag_id]})
-            changed.append(f"Sonarr delay profile {ANIME_DELAY_TAG!r} créé")
-        elif any(delay.get(k) != v for k, v in ANIME_DELAY_FIELDS.items()):
-            api_put(container, base_url, api_key, f"/delayprofile/{delay['id']}",
-                    {**delay, **ANIME_DELAY_FIELDS})
-            changed.append(f"Sonarr delay profile {ANIME_DELAY_TAG!r} réaligné")
-    except Exception as e:
-        errors.append(f"delay profile : {e}")
-
-    try:
-        profile_id = next((p["id"] for p in api_get(container, base_url, api_key, "/qualityprofile")
-                           if p["name"] == ANIME_DELAY_QUALITY_PROFILE), None)
-        if profile_id is None:
-            raise RuntimeError(f"profil {ANIME_DELAY_QUALITY_PROFILE!r} introuvable")
-        all_series = api_get(container, base_url, api_key, "/series")
-    except Exception as e:
-        errors.append(str(e))
-        return step_result(changed, errors)
-    add, remove = [], []
-    for s in all_series:
-        wanted, tagged = s["qualityProfileId"] == profile_id, tag_id in s["tags"]
-        if wanted and not tagged:
-            add.append(s)
-        elif tagged and not wanted:
-            remove.append(s)
-    # Passe par /series/editor plutôt qu'un PUT /series/<id> : on n'envoie que
-    # le tag, sans renvoyer toute la série (monitoring, chemins...). Il répond
-    # par une liste que api_write refuserait, d'où l'appel direct.
-    for series, apply_tags in ((add, "add"), (remove, "remove")):
-        if not series:
-            continue
+        return []
+    by_name = {p["name"]: p["id"] for p in api_get(container, base_url, api_key, "/qualityprofile")}
+    mapping = {by_name[src]: by_name[dst] for src, dst in config["kids_profiles"].items()
+               if src in by_name and dst in by_name}
+    kind, ids_field = ("series", "seriesIds") if label == "Sonarr" else ("movie", "movieIds")
+    moves = {}
+    for item in api_get(container, base_url, api_key, f"/{kind}"):
+        if tag_id in item["tags"] and item["qualityProfileId"] in mapping:
+            moves.setdefault(mapping[item["qualityProfileId"]], []).append(item)
+    changed, errors = [], []
+    names = {v: k for k, v in by_name.items()}
+    for dst, items in moves.items():
+        # /editor plutôt qu'un PUT par élément : on n'envoie que le profil, sans
+        # renvoyer toute la série (monitoring, chemins...). Il répond par une
+        # liste que api_write refuserait, d'où l'appel direct.
         try:
             code, body = _curl(container, api_key,
                                ["-X", "PUT", "-H", "Content-Type: application/json",
-                                "--data", "@-", f"{base_url}/series/editor"],
-                               stdin=json.dumps({"seriesIds": [s["id"] for s in series],
-                                                 "tags": [tag_id],
-                                                 "applyTags": apply_tags}).encode())
+                                "--data", "@-", f"{base_url}/{kind}/editor"],
+                               stdin=json.dumps({ids_field: [i["id"] for i in items],
+                                                 "qualityProfileId": dst}).encode())
         except Exception as e:
-            errors.append(f"PUT /series/editor ({apply_tags}) : {e}")
+            errors.append(f"PUT /{kind}/editor : {e}")
             continue
         if not code.startswith("2"):
-            errors.append(f"PUT /series/editor ({apply_tags}) : HTTP {code} — "
-                          f"{body[:300] or 'réponse vide'}")
+            errors.append(f"PUT /{kind}/editor : HTTP {code} — {body[:300] or 'réponse vide'}")
             continue
-        verb = "posé sur" if apply_tags == "add" else "retiré de"
-        changed.append(f"Sonarr tag {ANIME_DELAY_TAG!r} {verb} : "
-                       + ", ".join(s["title"] for s in series))
+        changed.append(f"{label} profil {names[dst]!r} (tag {config['kids_tag']}) : "
+                       + ", ".join(i["title"] for i in items))
     return step_result(changed, errors)
+
+
+def load_profiles_config(app):
+    with open(os.path.join(PROFILES_DIR, f"{app}.json")) as f:
+        config = json.load(f)
+    with open(CUSTOM_FORMATS_FILE) as f:
+        config["custom_formats"] = json.load(f)
+    return config
+
+
+def apply_profiles_config(label, container, base_url, api_key, config):
+    # Les custom formats d'abord : les profils les référencent par nom et
+    # échouent tant qu'ils n'existent pas. run_all et pas une séquence qui
+    # s'arrête au premier échec : un CF en erreur n'empêche pas de réaligner
+    # ce qui n'en dépend pas (les profils qui en dépendent lèvent une erreur
+    # explicite dans build_profile_body).
+    return run_all(
+        lambda: apply_custom_formats(label, container, base_url, api_key, config["custom_formats"]),
+        lambda: apply_quality_profiles(label, container, base_url, api_key, config["quality_profiles"]),
+        lambda: apply_delay_profile(label, container, base_url, api_key, config["delay_profile"]),
+        lambda: apply_kids_profiles(label, container, base_url, api_key, config))
 
 
 def main():
@@ -1286,19 +1206,20 @@ def main():
     except Exception as e:
         errors.append(f"Prowlarr: {e}")
 
-    # Sous `settle` : c'est l'étape que recyclarr fait dériver, et son écriture
-    # est asynchrone (voir SETTLE_CLEAN_PASSES).
-    run("Sonarr", lambda: settle(
-        lambda: apply_quality_sizes("Sonarr", SONARR_CONTAINER, SONARR_URL,
-                                    sonarr_api_key, SONARR_SIZE_OVERRIDES)))
-    # Étape à part : une erreur sur la config anime ne doit pas empêcher les
-    # tailles de palier ci-dessus d'être corrigées, et inversement
-    # (best-effort par domaine, même principe que Sonarr vs Radarr).
-    run("Sonarr (anime)", lambda: apply_anime_config(SONARR_CONTAINER, SONARR_URL,
-                                                     sonarr_api_key))
-    # Après la config anime : le profil qualité qui pilote le tag doit exister.
-    run("Sonarr (délai anime)", lambda: apply_anime_delay(SONARR_CONTAINER, SONARR_URL,
-                                                          sonarr_api_key))
+    # Profils de qualité (arr/profiles/). Tailles de palier sous `settle` : leur
+    # écriture est asynchrone (voir SETTLE_CLEAN_PASSES). Étapes séparées : une
+    # erreur sur les profils ne doit pas empêcher les tailles d'être corrigées,
+    # et inversement (best-effort par domaine, même principe que Sonarr vs Radarr).
+    for label, app, container, url, key in (("Sonarr", "sonarr", SONARR_CONTAINER, SONARR_URL, sonarr_api_key),
+                                            ("Radarr", "radarr", RADARR_CONTAINER, RADARR_URL, radarr_api_key)):
+        try:
+            config = load_profiles_config(app)
+        except Exception as e:
+            errors.append(f"{label} (profils) : arr/profiles/{app}.json illisible — {e}")
+            continue
+        run(label, lambda: settle(
+            lambda: apply_quality_sizes(label, container, url, key, config["quality_definitions"])))
+        run(f"{label} (profils)", lambda: apply_profiles_config(label, container, url, key, config))
     run("Sonarr (Jellyfin)", lambda: apply_jellyfin_connection(
         "Sonarr", SONARR_CONTAINER, SONARR_URL, sonarr_api_key, jellyfin_api_key,
         SONARR_JELLYFIN_TRIGGERS))
@@ -1307,9 +1228,8 @@ def main():
     # connexion Jellyfin qui a besoin d'une clé.
     run("Sonarr (metadata)", lambda: apply_xbmc_metadata(
         "Sonarr", SONARR_CONTAINER, SONARR_URL, sonarr_api_key, SONARR_XBMC_METADATA_FIELDS))
-    # Hors `settle` : recyclarr ne touche pas à /config/mediamanagement, il n'y
-    # a donc pas de course à perdre ici — seul un changement manuel dans l'UI
-    # peut faire dériver ce réglage.
+    # Hors `settle` : seul un changement manuel dans l'UI peut faire dériver
+    # /config/mediamanagement, il n'y a pas d'écriture concurrente à attendre.
     run("Sonarr (mediamanagement)", lambda: apply_config_overrides(
         "Sonarr", SONARR_CONTAINER, SONARR_URL, sonarr_api_key, "mediamanagement",
         MEDIA_MANAGEMENT_OVERRIDES))
@@ -1318,19 +1238,6 @@ def main():
     run("Sonarr (naming)", lambda: apply_config_overrides(
         "Sonarr", SONARR_CONTAINER, SONARR_URL, sonarr_api_key, "naming",
         SONARR_NAMING_OVERRIDES))
-    # Les deux réglages Radarr que recyclarr fait dériver, donc sous `settle`
-    # pour la même raison que les tailles Sonarr — le champ `language` vit sur le
-    # profil qualité, que recyclarr réécrit aussi. run_all et pas `a() + b()` :
-    # avec l'addition, une langue en erreur faisait perdre du rapport les
-    # tailles que la même passe venait d'écrire.
-    run("Radarr", lambda: settle(lambda: run_all(
-        lambda: apply_quality_sizes("Radarr", RADARR_CONTAINER, RADARR_URL,
-                                    radarr_api_key, RADARR_SIZE_OVERRIDES),
-        lambda: apply_radarr_language(RADARR_CONTAINER, RADARR_URL, radarr_api_key,
-                                      RADARR_PROFILE_NAME))))
-    # Étape à part de celle ci-dessus pour la même raison que la config anime :
-    # une connexion Jellyfin absente ou en erreur ne doit pas emporter les
-    # tailles de palier et le champ language de Radarr.
     run("Radarr (Jellyfin)", lambda: apply_jellyfin_connection(
         "Radarr", RADARR_CONTAINER, RADARR_URL, radarr_api_key, jellyfin_api_key,
         RADARR_JELLYFIN_TRIGGERS))

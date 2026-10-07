@@ -257,7 +257,7 @@ croyant n'y perdre que des vignettes.
 ## Divers
 
 - **Image `gotson/komga:latest`** — le tag existe et suit (1.27.1 au
-  2026-09-22), pas d'exception à la règle du repo comme `recyclarr:8`.
+  2026-09-22), pas d'exception à la règle `:latest` du repo.
 - **`user: "${PUID}:${PGID}"`** : l'image n'a pas de directive `USER` (elle
   tourne en root) et ne chown rien. Le dossier de config doit donc exister et
   appartenir à l'utilisateur **avant** le premier démarrage — c'est `make up`
