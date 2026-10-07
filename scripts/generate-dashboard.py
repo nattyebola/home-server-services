@@ -221,14 +221,20 @@ def docker_compose_config(stack):
     if override.exists():
         args += ["-f", str(override)]
     args += ["config", "--format", "json"]
+    if not stack_env.exists() and (REPO_ROOT / stack / ".env.example").exists():
+        # Stack jamais configurée sur cet hôte : son `env_file: .env` manquant
+        # fait échouer `config` (nextcloud, 2026-10-08), donc le dashboard
+        # entier. `--no-interpolate` ne lit pas les env_file et suffit à lister
+        # ses services pour « Stack non lancée » ; les `${VAR}` restent
+        # littérales, sans effet sur une carte d'arrêt (seul le nom compte).
+        args.append("--no-interpolate")
     # Échec bruyant, même raisonnement que docker_ps_set() : renvoyer `{}` ici
     # faisait disparaître TOUTE la stack de la page, y compris de « Stack non
     # lancée » (on ne sait plus quels services elle déclare), avec exit 0 et
     # marqueur cron vert — une page crédible et fausse. Planter laisse en place
     # le dernier index.html valide, que le surlignage « page périmée » de
-    # dashboard.js signale, et fait passer la tâche au rouge. Pas de faux
-    # positif sur une stack non configurée : sans son .env, `config` réussit
-    # quand même (avertissements seulement, aucun `${VAR:?}` dans les compose).
+    # dashboard.js signale, et fait passer la tâche au rouge. Une stack non
+    # configurée (sans .env) passe par `--no-interpolate`, voir plus haut.
     try:
         res = subprocess.run(args, capture_output=True, text=True, timeout=30)
     except subprocess.TimeoutExpired as e:
@@ -383,6 +389,10 @@ def extract_traefik_services(config, lan_names):
     haut de page qui dit que la restriction est levée, et jusqu'à quand."""
     for name, svc in (config.get("services") or {}).items():
         labels = svc.get("labels") or {}
+        # `config --no-interpolate` (stack sans .env) rend les labels tels
+        # qu'écrits, en liste `clé=valeur` plutôt qu'en dictionnaire.
+        if isinstance(labels, list):
+            labels = dict(item.split("=", 1) for item in labels if "=" in item)
         if labels.get("traefik.enable") != "true":
             continue
         rule_key = router = None

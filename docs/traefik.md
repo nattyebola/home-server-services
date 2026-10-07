@@ -69,6 +69,8 @@ flowchart LR
 - **Trois groupes de services** : Public, Local (LAN), Stack non lancée.
   Déduits de l'état réel, rien à maintenir à la main hormis le nom affiché et
   le logo (`scripts/generate-dashboard.py`, `dashboard/assets/logos/`).
+  Une stack jamais configurée (`.env.example` sans `.env`) figure dans
+  « Stack non lancée ».
 - **Contour rouge** autour d'un service `unhealthy`.
 - **Cartes LAN grisées pour un visiteur WAN** : chaque carte sonde une image
   du service avec `<img>` (un `fetch` échouerait pareil qu'il soit bloqué ou
@@ -108,5 +110,7 @@ flowchart LR
   volontairement de publier une page fausse quand `docker ps` ou
   `docker compose config` échoue (sinon une stack entière disparaîtrait de la
   page). Lire `dashboard/refresh.log`, relancer `make dashboard-refresh`.
+  Une stack jamais configurée (`.env.example` sans `.env`) ne la fait plus
+  échouer depuis le 2026-10-08 : son `config` passe en `--no-interpolate`.
 - **Access log** (`${DATA_ROOT}/.traefik/log/`) : seule trace des requêtes WAN,
   403 des filtres LAN compris.

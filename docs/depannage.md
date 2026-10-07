@@ -22,6 +22,7 @@ touchent toutes les stacks.
 | `transmission-vpn` ne démarre pas / ne route rien | module `ip_tables` absent sur l'hôte | [Installation](installation.md#prérequis) |
 | `Connection refused` vers un tracker qui répond ailleurs | DNS du FAI qui renvoie `127.0.0.1` | [plus bas](#dns-du-fai-menteur) |
 | Dashboard surligné **« périmé »** | régénération en échec (`docker ps` ou `docker compose config`), voir `dashboard/refresh.log` | [Traefik](traefik.md#pièges-connus) |
+| Dashboard « périmé », `env file … not found` dans `dashboard/refresh.log` | stack avec `env_file: .env` jamais configurée sur l'hôte ; ignorée depuis le 2026-10-08 si elle a un `.env.example` (`--no-interpolate`), sinon créer son `.env` | [Traefik](traefik.md#pièges-connus) |
 | Carte **grisée** sur le dashboard alors que le service est `healthy` | chemin de sonde qui redirige vers `/login` (arr : sonder `/Content/…`) | [Traefik](traefik.md#le-dashboard) |
 | Les 5 services LAN répondent **404** | `traefik/dynamic/lan-only.yml` absent | [Traefik](traefik.md#pièges-connus) |
 | Certificat resté en échec | Traefik ne retente pas seul | [Traefik](traefik.md#pièges-connus) |
