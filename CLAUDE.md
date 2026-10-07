@@ -180,7 +180,7 @@ server/
 ├── Makefile                `make help` (défaut), généré depuis les annotations des cibles
 ├── README.md, docs/        doc humaine (une page par thème)
 ├── CLAUDE.md, .claude/     docs/ par domaine + skills/ (changelogs, indexer-quota,
-│                           manual-import, server-report, vpn-bench)
+│                           manual-import, multi-groupes, server-report, vpn-bench)
 ├── scripts/                crontab + install-crontab.sh, logrotate.conf,
 │                           provision.py, apply-arr-overrides.py, search-missing.py,
 │                           manual-import.py, backup.sh/restore.sh, generate-dashboard.py,
