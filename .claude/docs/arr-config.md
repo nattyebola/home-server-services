@@ -258,7 +258,9 @@ ou aux connexions arr → Jellyfin.
     obligatoire : avec un seul groupe, toute release est « la meilleure
     qualité » et partirait sans attendre. Remplace le délai anime de 3 h
     (tag `anime-vostfr-delai`) et le délai manuel `fr-priority` (6 h), tags
-    supprimés.
+    supprimés. Délai compté depuis la publication sur l'indexeur ; ignoré
+    par toute recherche `trigger: manual` (interface **et** `POST /command`,
+    donc `search-missing.py`). Détail : `docs/telechargement.md`.
   - **Langue sur annonce explicite** : précision mesurée sur fichiers — 0 %
     sans FR quand un tracker français annonce VF/VOSTFR, 2 % pour une VOSTFR
     Nyaa, **12 % pour un `MULTi` Nyaa** (multi de plateforme sans FR), 100 %

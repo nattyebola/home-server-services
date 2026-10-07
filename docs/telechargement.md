@@ -212,6 +212,29 @@ releases avant de choisir. Mesuré le 2026-10-07 : la release minimale sort en
 moins de 24 h dans 90 % des cas (anime) à 100 % (séries, films), et la
 meilleure est déjà là à 24 h pour 65 % des anime et 73 % des séries.
 
+**Quand le délai s'applique.** Les 24 h se comptent depuis la **publication
+de la release sur l'indexeur**, pas depuis le moment où l'arr la voit.
+
+1. Release de moins de 24 h : rejetée et mise **en attente** dans la file
+   (statut `delay`).
+2. Les releases trouvées ensuite pour le même épisode ou film rejoignent les
+   candidates.
+3. Dès que la plus ancienne en attente dépasse 24 h, l'arr prend **la
+   meilleure** des candidates, même toute récente. Le grab part au RSS sync
+   suivant (Sonarr toutes les 15 min, Radarr toutes les 30 min).
+
+| Situation | Délai |
+|---|---|
+| Nouvel épisode ou film tout juste sorti, vu au RSS | **appliqué** (le cas visé) |
+| Titre déjà sorti ajouté par Seerr ou à la main | appliqué, mais ses releases ont déjà plus de 24 h : grab immédiat |
+| Recherche lancée depuis l'interface | **ignoré** |
+| Commande envoyée par l'API, dont `search-missing.py` | **ignoré** a priori : l'API marque la commande `trigger: manual`, ce que le code Servarr traite comme une recherche lancée par l'utilisateur |
+
+> [!WARNING]
+> Une recherche lancée à la main ou par l'API grabbe sans attendre, et ce
+> grab est définitif. Pour un épisode sorti il y a moins de 24 h, mieux vaut
+> laisser le RSS faire.
+
 **Tailles** (Mo/min, globales à chaque arr : elles valent pour tous ses
 profils) :
 
