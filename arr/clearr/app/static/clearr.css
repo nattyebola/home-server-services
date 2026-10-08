@@ -187,25 +187,35 @@ tr.collapsing {
    un masquage porté par une classe DANS le fragment aurait dû être rejoué en JS
    après chaque swap, avec un flash des lignes masquées entre les deux.
 
-   Trois états : absent = avec fichier (défaut), "show" = tous, "only" = sans
-   fichier. Le défaut est écrit en :not(show):not(only) et pas en [...="with"] :
-   sans attribut (JS désactivé, chargement de la page) les titres sans
-   fichier restent masqués, comme demandé. */
-:root:not([data-clearr-empty="show"]):not([data-clearr-empty="only"]) .row-empty,
-:root[data-clearr-empty="only"] .row-filled {
+   Quatre états : absent = avec fichier (défaut), "show" = tous, "only" = sans
+   fichier, "unmonitored" = non suivis, avec ou sans fichier. Le défaut est
+   écrit en :not(...) et pas en [...="with"] : sans attribut (JS désactivé,
+   chargement de la page) les titres sans fichier restent masqués, comme
+   demandé. Tout nouvel état doit donc s'ajouter aux deux :not() du défaut. */
+:root:not([data-clearr-empty="show"]):not([data-clearr-empty="only"]):not([data-clearr-empty="unmonitored"]) .row-empty,
+:root[data-clearr-empty="only"] .row-filled,
+:root[data-clearr-empty="unmonitored"] .row-monitored {
   display: none;
 }
 
-/* Messages « aucun titre avec/sans fichier » : rendus seulement quand le cas
-   se présente, affichés pour le seul filtre concerné. */
+/* Messages « aucun titre avec/sans fichier / non suivi » : rendus seulement
+   quand le cas se présente, affichés pour le seul filtre concerné. */
 .file-empty-with,
-.file-empty-only {
+.file-empty-only,
+.file-empty-unmonitored {
   display: none;
 }
-:root:not([data-clearr-empty="show"]):not([data-clearr-empty="only"]) .file-empty-with,
-:root[data-clearr-empty="only"] .file-empty-only {
+:root:not([data-clearr-empty="show"]):not([data-clearr-empty="only"]):not([data-clearr-empty="unmonitored"]) .file-empty-with,
+:root[data-clearr-empty="only"] .file-empty-only,
+:root[data-clearr-empty="unmonitored"] .file-empty-unmonitored {
   display: table-row;
 }
+
+/* Titre non suivi par Sonarr/Radarr (ex-colonne MON) : toute la ligne en
+   rouge, dans tous les filtres. Sur les <td> et préfixé `.table`, pour la
+   même raison que .title-danger plus bas ; même teinte. */
+.table .row-unmonitored > td { color: #c92a2a; }
+[data-bs-theme="dark"] .table .row-unmonitored > td { color: #ff6b6b; }
 
 /* Picto de la colonne TYPE (vue Torrents, templates/_kind_icon.html) : plus
    grand que le texte, demandé pour qu'on distingue les types d'un coup d'œil.
@@ -273,17 +283,4 @@ tr.collapse .kind-icon { opacity: .6; }
 .nav-tabs .kind-icon {
   width: 1.3em;
   height: 1.3em;
-}
-/* Type à zéro (radio disabled) : Bootstrap coupe pointer-events sur le
-   label, donc plus de survol, donc plus de `title=` natif. Rétabli ici,
-   sans l'effet de survol du bouton ; un clic sur le label d'un radio
-   désactivé ne le coche pas, c'est le navigateur qui le garantit. */
-.kind-filter .btn-check:disabled + .btn {
-  pointer-events: auto;
-  cursor: not-allowed;
-}
-.kind-filter .btn-check:disabled + .btn:hover {
-  color: var(--bs-btn-color);
-  background-color: var(--bs-btn-bg);
-  border-color: var(--bs-btn-border-color);
 }

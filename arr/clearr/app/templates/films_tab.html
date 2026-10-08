@@ -22,8 +22,7 @@
   </thead>
   <tbody>
     {% for m in rows %}
-    <tr class="{{ 'row-empty' if m.empty else 'row-filled' }}">
-      <td class="{{ 'text-success-emphasis' if m.monitored else '' }}">{{ '✓' if m.monitored else '' }}</td>
+    <tr class="{{ 'row-empty' if m.empty else 'row-filled' }} {{ 'row-monitored' if m.monitored else 'row-unmonitored' }}">
       <td class="{{ 'text-success-emphasis' if m.has_file else '' }}">{{ '✓' if m.has_file else '' }}</td>
       <td>{{ m.year }}</td>
       <td>{{ m.size }}</td>
@@ -34,9 +33,9 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="6" class="text-body-secondary py-3">{{ empty_label }}{% if filter_str %} pour ce filtre{% endif %}.</td></tr>
+    <tr><td colspan="5" class="text-body-secondary py-3">{{ empty_label }}{% if filter_str %} pour ce filtre{% endif %}.</td></tr>
     {% endfor %}
-    {{ file_empty_rows(6) }}
+    {{ file_empty_rows(5) }}
   </tbody>
 </table>
 </div>

@@ -253,8 +253,13 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   Son infobulle le dit. Radios **hors du
   `<form>`** (sinon sérialisées dans le filtre en direct), comptes calculés sur
   les groupes rendus (donc après le filtre par nom), **non mémorisé** (pas de
-  `localStorage`, comme le filtre par nom). Bouton à zéro **désactivé** ;
-  type vidé par le filtre par nom ou une suppression → ligne
+  `localStorage`, comme le filtre par nom). Bouton à zéro **non rendu**
+  (2026-10-08, demandé ; il était grisé), groupe vide compris, **sauf
+  « Tous »**, toujours rendu : c'est la sortie d'un filtre dont le bouton a
+  disparu. Retiré dans le gabarit (`selectattr("count")`), pas masqué en
+  CSS : un bouton `display:none` en fin de `btn-group` laisserait les coins
+  carrés au dernier visible (`:last-child`). Type vidé par le filtre par nom
+  ou une suppression → bouton disparu, état toujours actif sur `<html>`, ligne
   `data-kind-empty` (« Aucun torrent de ce type ») affichée par
   `syncKindEmpty()`, le CSS ne sachant pas dire « plus aucune ligne ».
   **Pas de variante petit écran** (picto seul essayé puis retiré le
@@ -332,7 +337,7 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   style que le filtre par type des Torrents (classe `.kind-filter` réutilisée),
   « Tous » avec le picto de l'onglet (`spec["kind"]` de `ARR_TABS`, décoratif).
   Comptes sur les lignes **rendues** (après le filtre par nom) ; radio à zéro
-  désactivée sauf « Tous ». Défaut « Avec fichier » (comportement d'avant),
+  **non rendue** sauf « Tous » (même règle que le filtre par type). Défaut « Avec fichier » (comportement d'avant),
   **non mémorisé** (demandé le 2026-10-08, comme le filtre par type : plus
   de `localStorage`, l'ancienne clé `clearr.showEmpty` n'est plus lue). Le
   filtre par nom passe sur la même ligne et prend
@@ -354,6 +359,16 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   (les 2 chemins de swap + le rendu initial, qui vient de `page.html`).
   Radios **hors du `<form>` de filtre** : dedans, elles seraient sérialisées
   dans les paramètres du filtre en direct.
+  **4e radio « Non suivi »** (2026-10-08, demandé, remplace la colonne MON
+  des trois vues) : même groupe, donc **exclusif** (pas une bascule
+  combinable, choix explicite) ; montre les titres `monitored: false`
+  **avec ou sans fichier** (état `unmonitored`, à ajouter aux `:not()` du
+  défaut dans `clearr.css` — tout nouvel état aussi, sinon les titres sans
+  fichier y restent masqués). Lignes `row-monitored`/`row-unmonitored` ;
+  `.row-unmonitored` = **toute la ligne en rouge** dans tous les filtres
+  (couleur sur les `<td>`, préfixe `.table`, même piège que `.title-danger`).
+  Série : suivi de la série seule, pas des saisons (colonne SAISONS). Un
+  `?sort=MON` resté dans une URL retombe sur le 1er champ (`field_index`).
   Gabarit unique `templates/_file_filter.html` (macros `file_toolbar` et
   `file_empty_rows`, importées `with context`), ex-`_rowcount.html` — sinon le
   bloc serait recopié dans `series_tab.html` et `films_tab.html`.

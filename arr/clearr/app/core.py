@@ -1314,7 +1314,7 @@ def assign_torrent_kinds(all_torrents, cross_seed_groups, metas, queue_states):
 def kind_filter_groups(kinds):
     """Boutons du filtre par type de la vue Torrents : {"healthy": [(type,
     nombre), ...], "degraded": [...]}, dans l'ordre de TORRENT_KINDS, types à
-    zéro compris (le bouton est alors désactivé). `kinds` : le type de chaque
+    zéro compris (c'est le gabarit qui ne les rend pas). `kinds` : le type de chaque
     groupe RENDU (celui de son parent), donc après le filtre par nom."""
     counts = collections.Counter(kinds)
     groups = {"healthy": [], "degraded": []}
@@ -2266,9 +2266,9 @@ SORT_FIELDS = [
 # Mêmes conventions que SORT_FIELDS — même ordre que les colonnes affichées.
 # Défaut sur TITRE (dernier champ) pour préserver le tri alphabétique déjà
 # posé par fetch_series_list()/fetch_movies_list() tant que l'utilisateur n'a
-# pas encore trié lui-même.
+# pas encore trié lui-même. Plus de colonne MON (2026-10-08, demandé) : le
+# suivi passe par le radio « Non suivi » et la ligne en rouge.
 SERIES_SORT_FIELDS = [
-    ("MON", lambda s: bool(s.get("monitored"))),
     ("SAISONS", lambda s: sum(1 for se in s.get("seasons", []) if se.get("monitored"))),
     ("EPISODES", lambda s: s.get("statistics", {}).get("episodeFileCount", 0)),
     ("TAILLE", lambda s: s.get("statistics", {}).get("sizeOnDisk", 0)),
@@ -2276,7 +2276,6 @@ SERIES_SORT_FIELDS = [
 ]
 
 FILMS_SORT_FIELDS = [
-    ("MON", lambda m: bool(m.get("monitored"))),
     ("FICH", lambda m: bool(m.get("hasFile"))),
     ("ANNEE", lambda m: m.get("year", 0)),
     ("TAILLE", lambda m: m.get("sizeOnDisk", 0)),

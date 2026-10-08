@@ -29,14 +29,21 @@
       <input type="radio" class="btn-check" name="kind-filter" id="kind-all" value="" data-kind-filter checked>
       <label class="btn btn-outline-secondary" for="kind-all" title="Tous les types. Un torrent et ses cross-seeds comptent pour un.">{{ kind_icon("torrents", decorative=True) }} Tous <span class="small">{{ groups|length }}</span></label>
     </div>
+    {# Type à zéro NON RENDU (2026-10-08, demandé ; il était grisé), groupe
+       vide compris : retiré du DOM plutôt que masqué en CSS, sinon le dernier
+       bouton visible d'un btn-group garderait ses coins carrés. Un type
+       choisi puis vidé par le filtre par nom disparaît donc aussi : « Aucun
+       torrent de ce type » l'explique, « Tous » (toujours rendu) en sort. #}
     {% for group, group_label in (("healthy", "Types sains"), ("degraded", "Types dégradés")) %}
+    {% set shown = kind_filters[group]|selectattr("count")|list %}
+    {% if shown %}
     <div class="btn-group btn-group-sm" role="group" aria-label="{{ group_label }}">
-      {% for f in kind_filters[group] %}
-      {# Désactivé à zéro : il ne montrerait qu'un tableau vide. #}
-      <input type="radio" class="btn-check" name="kind-filter" id="kind-{{ f.key }}" value="{{ f.key }}" data-kind-filter{% if not f.count %} disabled{% endif %}>
+      {% for f in shown %}
+      <input type="radio" class="btn-check" name="kind-filter" id="kind-{{ f.key }}" value="{{ f.key }}" data-kind-filter>
       <label class="btn btn-outline-secondary" for="kind-{{ f.key }}" title="{{ kind_descriptions[f.kind] }}">{{ kind_icon(f.kind) }} {{ f.label }} <span class="small">{{ f.count }}</span></label>
       {% endfor %}
     </div>
+    {% endif %}
     {% endfor %}
   </div>
   {% endif %}

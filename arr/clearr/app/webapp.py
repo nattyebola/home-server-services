@@ -446,7 +446,8 @@ def render_arr_tab(tab, sort, reverse, filter_str, message=None, message_kind="s
     # fait par CSS depuis data-clearr-empty sur <html> (voir page.html), donc
     # il survit à chaque swap de fragment sans rien à rejouer en JS, et ne
     # coûte aucun aller-retour serveur. empty_count : titres sans fichier DANS
-    # la sélection courante (comptes des radios, _file_filter.html).
+    # la sélection courante (comptes des radios, _file_filter.html). Même
+    # chose pour `monitored` (radio « Non suivi », ligne en rouge).
     rows = [dict(spec["row"](i), empty=spec["empty"](i)) for i in selected]
     return render(
         spec["template"],
@@ -457,6 +458,8 @@ def render_arr_tab(tab, sort, reverse, filter_str, message=None, message_kind="s
         columns=build_columns(tab, spec["fields"], sort, reverse, filter_str),
         rows=rows,
         empty_count=sum(1 for r in rows if r["empty"]),
+        unmonitored_count=sum(1 for r in rows if not r["monitored"]),
+        arr_name="Radarr" if spec["kind"] == "film" else "Sonarr",
         message=message, message_kind=message_kind,
     )
 
