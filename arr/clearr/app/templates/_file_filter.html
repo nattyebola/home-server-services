@@ -1,0 +1,51 @@
+{# Barre de filtres + messages « aucun titre » des onglets Séries / Animés /
+   Films — un seul gabarit plutôt que le même bloc recopié dans
+   series_tab.html et films_tab.html, comme title_cell dans _meta.html.
+   Importé `with context` (tab, sort, rows, empty_count…).
+
+   Filtre par fichier (2026-10-08, remplace le switch « Afficher les titres
+   sans fichier ») : radios du même style que le filtre par type des Torrents.
+   État sur <html> (data-clearr-empty : absent = avec fichier, le défaut ;
+   "show" = tous ; "only" = sans fichier), posé par clearr.js et NON mémorisé
+   (chaque chargement repart sur « Avec fichier ») : masquage 100 % CSS
+   (clearr.css), rien à rejouer après un swap sauf l'état coché des radios. Radios HORS du <form>, sinon
+   sérialisées dans le filtre en direct. Comptes sur la sélection rendue
+   (après le filtre par nom). #}
+{% from "_kind_icon.html" import kind_icon %}
+
+{% macro file_toolbar() -%}
+<div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+  <div class="d-flex flex-wrap gap-2 align-items-center kind-filter" role="radiogroup" aria-label="Filtrer par fichier">
+    <div class="btn-group btn-group-sm">
+      <input type="radio" class="btn-check" name="file-filter" id="file-all" value="show" data-file-filter>
+      <label class="btn btn-outline-secondary" for="file-all" title="Tous les titres, avec ou sans fichier.">{{ kind_icon(tab_kind, decorative=True) }} Tous <span class="small">{{ rows|length }}</span></label>
+    </div>
+    <div class="btn-group btn-group-sm">
+      {# « Avec fichier » coché au rendu : c'est le défaut. Désactivé à zéro, comme un type des Torrents. #}
+      <input type="radio" class="btn-check" name="file-filter" id="file-with" value="" data-file-filter checked{% if rows|length == empty_count %} disabled{% endif %}>
+      <label class="btn btn-outline-secondary" for="file-with" title="Titres dont au moins un fichier est sur le disque.">Avec fichier <span class="small">{{ rows|length - empty_count }}</span></label>
+      <input type="radio" class="btn-check" name="file-filter" id="file-only" value="only" data-file-filter{% if not empty_count %} disabled{% endif %}>
+      {# title= natif : pas de Popper vendoré, donc pas de tooltip Bootstrap. #}
+      <label class="btn btn-outline-secondary" for="file-only"
+             title="Titres suivis sans aucun fichier sur le disque. Ils peuvent encore porter des torrents jamais importés (onglet Torrents), que seule « Purger » emporte.">Sans fichier <span class="small">{{ empty_count }}</span></label>
+    </div>
+  </div>
+  <form class="d-flex flex-grow-1" style="min-width:240px" data-live-get="/tab/{{ tab }}" data-live-target="#tab-content" onsubmit="return false">
+    <input type="hidden" name="sort" value="{{ sort }}">
+    <input type="hidden" name="reverse" value="{{ '1' if reverse else '0' }}">
+    <input type="search" class="form-control form-control-sm" name="filter" value="{{ filter_str }}"
+           placeholder="Filtrer par titre…" data-live autocomplete="off">
+  </form>
+</div>
+{%- endmacro %}
+
+{# Lignes « aucun titre avec/sans fichier », rendues seulement quand le cas se
+   présente, affichées par le CSS selon le filtre choisi : le CSS masque des
+   lignes mais ne sait pas dire « il n'en reste aucune ». Comptes connus au
+   rendu, et toute suppression rerend le fragment : pas de JS. #}
+{% macro file_empty_rows(colspan) -%}
+{% if rows %}
+{% if rows|length == empty_count %}<tr class="file-empty-with"><td colspan="{{ colspan }}" class="text-body-secondary py-3">Aucun titre avec fichier{% if filter_str %} pour ce filtre{% endif %}.</td></tr>{% endif %}
+{% if not empty_count %}<tr class="file-empty-only"><td colspan="{{ colspan }}" class="text-body-secondary py-3">Aucun titre sans fichier{% if filter_str %} pour ce filtre{% endif %}.</td></tr>{% endif %}
+{% endif %}
+{%- endmacro %}

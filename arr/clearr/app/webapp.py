@@ -24,8 +24,9 @@ templates = Jinja2Templates(directory=os.path.join(APP_DIR, "templates"))
 
 # Onglet -> service qui l'alimente. Un onglet dont le service ne répond pas
 # disparaît de la barre (_tabs.html) au lieu d'afficher un bandeau d'erreur
-# à chaque clic. BD ne LIT rien dans Komga (c'est un filtre de la liste
-# Transmission), mais sans Komga ces BD ne sont lisibles nulle part. Torrents,
+# à chaque clic. BD est un filtre de la liste Transmission, qui ne lit dans
+# Komga que la jaquette et la fiche (best-effort) ; sans Komga ces BD ne sont
+# de toute façon lisibles nulle part. Torrents,
 # absent d'ici, est toujours affiché. Les routes /tab/... restent servies :
 # on ne masque que l'entrée.
 TAB_SERVICES = {"bd": "komga", "series": "sonarr", "animes": "sonarr", "films": "radarr"}
@@ -41,7 +42,7 @@ templates.env.globals["tab_visible"] = tab_visible
 app = FastAPI(title="clearr")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-DEFAULT_SORT = {"torrents": "AGE", "bd": "AGE", "series": "TITRE", "animes": "TITRE", "films": "TITRE"}
+DEFAULT_SORT = {"torrents": "AGE", "bd": "NOM", "series": "TITRE", "animes": "TITRE", "films": "TITRE"}
 # Sens par défaut ("1" = décroissant, comme le paramètre `reverse` des routes).
 # Torrents : plus récents en haut (demandé le 2026-10-08) — AGE trie sur
 # addedDate, décroissant = dernier ajouté en tête.
@@ -159,6 +160,30 @@ def poster(kind: str, arr_id: int):
                         headers={"Cache-Control": "public, max-age=86400"})
 
 
+@app.get("/bd-cover/{book_id}")
+def bd_cover(book_id: str):
+    """Couverture d'un livre, générée par Komga (core.bd_meta), relayée telle
+    quelle : le navigateur ne parle qu'à clearr. `book_id` validé par
+    KOMGA_ID_RE avant de construire le chemin d'API (pas de int() possible, les
+    ids Komga sont des chaînes). 404 sur tout échec, comme /poster : clearr.js
+    n'affiche alors rien au survol."""
+    if not core.KOMGA_ID_RE.fullmatch(book_id):
+        return Response(status_code=404)
+    resp = core.komga_request("GET", f"/api/v1/books/{book_id}/thumbnail", accept="image/*")
+    if not resp or resp[0] != 200 or not resp[1].startswith("image/"):
+        return Response(status_code=404)
+    return Response(resp[2], media_type=resp[1], headers={"Cache-Control": "public, max-age=86400"})
+
+
+def komga_index_for(torrents):
+    """Index Komga si l'un de ces torrents est une BD et que Komga répond
+    (sonde mise en cache, voir tab_visible) — sinon vide, sans appel : un
+    Komga arrêté ne doit pas coûter un timeout à chaque rendu."""
+    if any(core.is_bd_torrent(t) for t in torrents) and tab_visible("bd"):
+        return core.build_komga_index()
+    return core.EMPTY_KOMGA_INDEX
+
+
 # --- helpers d'affichage ---
 
 def ratio_class(ratio):
@@ -216,9 +241,8 @@ def torrent_view(t, child=False, meta=None):
         "kind": t.get("_kind"),
         "title_class": KIND_TITLE_CLASSES.get(t.get("_kind"), ""),
         "name": t["name"],
-        "abs": "" if child else ("✓" if t.get("_missing") else ""),
-        "abs_danger": (not child) and bool(t.get("_missing")),
         "age": core.human_age(t["addedDate"]),
+        "books": core.bd_book_count(t),
         "size": core.human_size(t["totalSize"]),
         "ratio": f"{t['uploadRatio']:.2f}",
         "ratio_class": ratio_class(t["uploadRatio"]),
@@ -288,9 +312,6 @@ def render_torrents_tab(sort, reverse, filter_str, message=None, message_kind="s
         all_torrents = [t for t in all_torrents if spec["select"](t)]
     cross_seed_groups = state["cross_seed_groups"]
     cross_seed_child_ids = state["cross_seed_child_ids"]
-    selected_ids = {t["id"] for t in all_torrents}
-    linked_ids = state["linked_ids"] & selected_ids
-    missing_ids = state["missing_ids"] & selected_ids
 
     # Métadonnées et type calculés AVANT le tri (la colonne TYPE trie sur
     # `_kind`), sur la liste complète : les enfants cross-seed d'un onglet
@@ -300,7 +321,10 @@ def render_torrents_tab(sort, reverse, filter_str, message=None, message_kind="s
     # « absent » sans elles, seuls types qu'il affiche (couleur du titre).
     is_bd = tab == "bd"
     meta_index = core.build_arr_meta_index()
-    metas = {t["id"]: core.torrent_meta(t, state["library_index"], meta_index)
+    komga_index = komga_index_for(all_torrents)
+    # BD : rattachées à Komga (jaquette + lien), jamais à un arr.
+    metas = {t["id"]: core.bd_meta(t, komga_index) if core.is_bd_torrent(t)
+             else core.torrent_meta(t, state["library_index"], meta_index)
              for t in state["all_torrents"]}
     queue_states = None if is_bd else core.arr_queue_states()
     core.assign_torrent_kinds(state["all_torrents"], cross_seed_groups, metas, queue_states)
@@ -342,10 +366,6 @@ def render_torrents_tab(sort, reverse, filter_str, message=None, message_kind="s
         qs=query_string(sort, reverse, filter_str),
         columns=build_columns(tab, fields, sort, reverse, filter_str),
         groups=groups, kind_filters=kind_filters,
-        total=len(all_torrents), linked_count=len(linked_ids), missing_count=len(missing_ids),
-        # Compté sur les groupes RENDUS et non sur cross_seed_groups entier :
-        # celui-ci est global, il annoncerait les groupes des autres onglets.
-        group_count=sum(1 for g in groups if g["children"]),
         # Sur l'état global, pas sur la sélection de l'onglet : un montage raté
         # touche Torrents et BD à la fois.
         mount_warning=core.mount_suspicion(state["all_torrents"], state["missing_ids"]),
@@ -396,15 +416,15 @@ ARR_TABS = {
     "series": {"fetch": core.fetch_series_list, "fields": core.SERIES_SORT_FIELDS, "row": series_row,
                "template": "series_tab.html", "select": lambda s: not core.is_anime(s),
                "empty": core.series_without_files,
-               "count_label": "série(s)", "empty_label": "Aucune série"},
+               "kind": "series", "empty_label": "Aucune série"},
     "animes": {"fetch": core.fetch_series_list, "fields": core.SERIES_SORT_FIELDS, "row": series_row,
                "template": "series_tab.html", "select": core.is_anime,
                "empty": core.series_without_files,
-               "count_label": "animé(s)", "empty_label": "Aucun animé"},
+               "kind": "anime", "empty_label": "Aucun animé"},
     "films": {"fetch": core.fetch_movies_list, "fields": core.FILMS_SORT_FIELDS, "row": film_row,
               "template": "films_tab.html", "select": None,
               "empty": core.movie_without_files,
-              "count_label": "film(s)", "empty_label": "Aucun film"},
+              "kind": "film", "empty_label": "Aucun film"},
 }
 
 # Les deux onglets Sonarr renvoient vers les mêmes routes de suppression, qui
@@ -422,27 +442,21 @@ def render_arr_tab(tab, sort, reverse, filter_str, message=None, message_kind="s
         items = [i for i in items if spec["select"](i)]
     selected = core.filter_by_title(items, filter_str)
     core.sort_items(selected, spec["fields"], field_index(spec["fields"], sort), reverse)
-    # `empty` marque la ligne, il ne la retire pas : le masquage est fait par
-    # CSS depuis data-clearr-empty sur <html> (voir page.html), donc il survit
-    # à chaque swap de fragment sans rien à rejouer en JS, et le switch ne
-    # coûte aucun aller-retour serveur.
-    #   - empty_count : masqués DANS la sélection courante, ce que le compte
-    #     affiché doit retrancher ;
-    #   - empty_total : masquables dans tout l'onglet, ce qui décide de la
-    #     présence du switch — sinon un filtre textuel ne ramenant aucun titre
-    #     sans fichier ferait disparaître le switch, laissant l'utilisateur sans
-    #     moyen de le rebasculer.
+    # `empty` marque la ligne, il ne la retire pas : le filtre par fichier est
+    # fait par CSS depuis data-clearr-empty sur <html> (voir page.html), donc
+    # il survit à chaque swap de fragment sans rien à rejouer en JS, et ne
+    # coûte aucun aller-retour serveur. empty_count : titres sans fichier DANS
+    # la sélection courante (comptes des radios, _file_filter.html).
     rows = [dict(spec["row"](i), empty=spec["empty"](i)) for i in selected]
     return render(
         spec["template"],
         active=tab, tab=tab,
-        count_label=spec["count_label"], empty_label=spec["empty_label"],
+        tab_kind=spec["kind"], empty_label=spec["empty_label"],
         sort=sort, reverse=reverse, filter_str=filter_str,
         qs=query_string(sort, reverse, filter_str),
         columns=build_columns(tab, spec["fields"], sort, reverse, filter_str),
-        rows=rows, total=len(items),
+        rows=rows,
         empty_count=sum(1 for r in rows if r["empty"]),
-        empty_total=sum(1 for i in items if spec["empty"](i)),
         message=message, message_kind=message_kind,
     )
 
@@ -511,7 +525,7 @@ def library_orphans_delete(sort: str = Form(DEFAULT_SORT["torrents"]), reverse: 
         return HTMLResponse(render_torrents_tab(
             sort, reverse == "1", filter, message_kind="warning",
             message="La liste des orphelins a changé depuis son affichage : rien n'a été supprimé. "
-                    "Rouvrez « Orphelins library/ » pour voir la liste à jour."))
+                    "Rouvrez « Fichiers orphelins » pour voir la liste à jour."))
     removed, freed, failed = core.delete_library_orphans(orphans)
     message = f"library/ : {removed} fichier(s) orphelin(s) supprimé(s), {core.human_size(freed)} libéré(s)"
     if failed:
@@ -602,15 +616,21 @@ def _media_rows(arr_file):
 def _torrent_details_context(torrent, state):
     host_files = core.torrent_host_files(torrent)
     lib_matches = core.find_library_matches(host_files, state["library_index"])
-    meta = core.torrent_meta(torrent, state["library_index"], core.build_arr_meta_index())
+    is_bd = core.is_bd_torrent(torrent)
+    if is_bd:
+        komga_index = komga_index_for([torrent])
+        meta = core.bd_meta(torrent, komga_index)
+    else:
+        meta = core.torrent_meta(torrent, state["library_index"], core.build_arr_meta_index())
     children = state["cross_seed_groups"].get(torrent["id"], [])
     trackers = core.tracker_host(torrent)
+    komga = _komga_details(torrent, meta, komga_index) if is_bd else {"sections": [], "lists": [], "overview": None}
     return dict(
         title=torrent["name"],
         poster=meta["poster"] if meta else None,
         links=meta["links"] if meta else [],
-        overview=None,
-        sections=[
+        overview=komga["overview"],
+        sections=komga["sections"] + [
             {"title": "Torrent", "rows": [
                 ("Statut", TORRENT_STATUS_LABELS.get(torrent.get("status"), "?")),
                 ("Taille", core.human_size(torrent["totalSize"])),
@@ -625,12 +645,13 @@ def _torrent_details_context(torrent, state):
                 ("Hôtes d'annonce", trackers.replace(",", ", ") if trackers != "?" else "—"),
             ]},
             {"title": "Rattachement", "rows": [
-                ("Titre arr", meta["title"] if meta else "aucun (jamais importé)"),
+                ("Titre Komga", meta["title"] if meta else "aucun (Komga arrêté, sans clé d'API, ou pas encore scanné)")
+                if is_bd else ("Titre arr", meta["title"] if meta else "aucun (jamais importé)"),
                 ("Cross-seed", f"{len(children)} torrent(s) rattaché(s)" if children
                                else ("injecté par cross-seed" if core.is_cross_seed_entry(torrent) else "non")),
             ]},
         ],
-        lists=[
+        lists=komga["lists"] + [
             {"title": "Fichiers Transmission",
              "items": [{"name": os.path.basename(p), "size": core.human_size(s)} for p, s in host_files]},
             {"title": "Fichiers bibliothèque",
@@ -640,6 +661,51 @@ def _torrent_details_context(torrent, state):
              "items": [{"name": c["name"], "size": c.get("_tracker_name", "")} for c in children]},
         ],
     )
+
+
+# Statuts d'analyse Komga d'un livre (MediaDto.status) autres que READY : un
+# .cbr RAR5 ou solid finit en ERROR/UNSUPPORTED (.claude/docs/komga.md).
+KOMGA_MEDIA_STATUS_LABELS = {"UNKNOWN": "pas encore analysé", "ERROR": "illisible",
+                             "UNSUPPORTED": "format non pris en charge", "OUTDATED": "à réanalyser"}
+
+
+def _komga_details(torrent, meta, index):
+    """Ce que Komga sait d'une BD, pour la fiche : séries, auteurs, éditeur,
+    résumé (s'ils ont été saisis dans Komga — pas de Komf, voir
+    .claude/docs/komga.md), livres et ceux qu'il n'a pas su lire."""
+    if not meta:
+        return {"sections": [], "lists": [], "overview": None}
+    books = meta["books"]
+    series = [index["series"][sid] for sid in dict.fromkeys(b.get("seriesId") for b in books)
+              if sid in index["series"]]
+    authors = sorted({a["name"] for s in series for a in (s.get("booksMetadata") or {}).get("authors", [])})
+    publishers = sorted({(s.get("metadata") or {}).get("publisher") for s in series} - {None, ""})
+    unreadable = [b for b in books if (b.get("media") or {}).get("status") != "READY"]
+    summaries = [(s.get("metadata") or {}).get("summary") or (s.get("booksMetadata") or {}).get("summary")
+                 for s in series if not core.is_komga_root_series(s)]
+    rows = [
+        ("Série(s)", ", ".join(core.komga_series_title(s) for s in series
+                               if not core.is_komga_root_series(s)) or "— (fichier à la racine)"),
+        ("Livres", f"{len(books)} vu(s) par Komga sur {core.bd_book_count(torrent)} fichier(s)"),
+        ("Pages", str(sum((b.get("media") or {}).get("pagesCount", 0) for b in books))),
+        ("Auteurs", ", ".join(authors) or "—"),
+        ("Éditeur", ", ".join(publishers) or "—"),
+    ]
+    if unreadable:
+        rows.append(("Illisibles", f"{len(unreadable)} livre(s), voir la liste"))
+
+    def book_label(b):
+        status = (b.get("media") or {}).get("status")
+        if status != "READY":
+            return KOMGA_MEDIA_STATUS_LABELS.get(status, status or "?")
+        return f"{(b.get('media') or {}).get('pagesCount', 0)} p."
+    return {
+        "sections": [{"title": "Komga", "rows": rows}],
+        "lists": [{"title": "Livres Komga",
+                   "items": [{"name": (b.get("metadata") or {}).get("title") or b.get("name", ""),
+                              "size": book_label(b)} for b in books]}],
+        "overview": next((s for s in summaries if s), None),
+    }
 
 
 def _series_details_context(series):
@@ -1005,7 +1071,7 @@ def series_delete(sid: int, purge: str = "0", seasons: list[int] = Form(default=
                    filter: str = Form(""), tab: str = Form("series")):
     """`seasons` ne porte que des numéros de saison, jamais un chemin : rien de
     ce qui sera supprimé ne vient du client, le plan est recalculé côté serveur
-    à partir des seuls entiers reçus (même règle que « Orphelins library/ »).
+    à partir des seuls entiers reçus (même règle que « Fichiers orphelins »).
     FastAPI les valide en int, ce qui suffit — plan_season_deletion refuse de
     toute façon une saison que Sonarr ne connaît pas.
 

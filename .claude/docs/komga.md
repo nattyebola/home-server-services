@@ -23,7 +23,7 @@ Ce que ça achète :
 - Aucun script d'import à écrire, aucune traduction de chemin, aucun
   renommage.
 - **`library/` n'est pas touché**, donc `_arr_covered_paths()` et le bouton
-  « Orphelins library/ » de clearr restent justes. C'était le vrai danger de
+  « Fichiers orphelins » de clearr restent justes. C'était le vrai danger de
   l'option avec hardlinks : un `.cbz` sous `library/` n'est connu d'aucun arr,
   donc serait tombé orphelin par construction, et le bouton aurait proposé de
   supprimer toute la bibliothèque BD.
@@ -34,7 +34,8 @@ Ce que ça coûte, et qui est assumé :
   ses séries des dossiers (voir plus bas) et on ne peut pas réorganiser des
   données seedées.
 - **Supprimer un torrent = perdre la BD**, et garder la BD = seeder à vie. Il
-  n'y a pas de second exemplaire. Une future vue BD dans clearr doit le dire
+  n'y a pas de second exemplaire. La vue BD de clearr le dit dans sa modale de
+  confirmation (plus en tête d'onglet depuis le 2026-10-08, à la demande),
   dans ces termes : ce n'est pas une vue « ce que je peux récupérer » comme
   les trois autres, c'est une vue « supprimer cette BD ».
 
@@ -75,22 +76,16 @@ n'a aucune raison de voir Nextcloud ou `library/`.
 
 **Livré le 2026-09-23** — détail d'implémentation dans
 `.claude/docs/clearr.md`. La vue **liste les torrents dont le `downloadDir`
-est sous `completed/bd`**, sans jamais interroger Komga : un filtre, rien de
-plus. Ce choix supprime d'un coup la traduction de chemin, le besoin d'un
-compte admin Komga et le trou anti-traversal sur les jaquettes.
+est sous `completed/bd`** : c'est la liste Transmission filtrée, pas une
+source Komga.
 
-Ce qu'il faut retenir côté komga :
+**Komga interrogé depuis le 2026-10-08** (demandé : « traiter les BD comme
+les arr », jaquette au survol, fiche au clic), en revenant sur le choix
+initial de ne jamais l'interroger. Best-effort et en lecture seule : sans
+clé, ou Komga arrêté, la vue reste la liste filtrée d'avant.
 
-- **`_linked` est toujours `False`** sur ces torrents (aucun hardlink
-  `library/` n'existe), d'où la colonne BIB retirée de cet onglet : ailleurs
-  son absence signifie « jamais importé », ici elle ne signifierait rien.
-- **La modale de suppression dit explicitement qu'il n'y a pas d'autre
-  exemplaire**, et elle le dit d'après le torrent et non d'après l'onglet —
-  donc aussi depuis la vue Torrents.
-- **Si un jour la vue veut rattacher un torrent à une entrée Komga**, c'est
-  `BookDto.url` (chemin exact) et `SeriesDto.url` (préfixe de dossier), même
-  structure que `build_arr_meta_index()`. Mais alors **le compte Komga doit
-  être ADMIN** :
+- **Clé d'API d'un compte ADMIN** (`KOMGA_API_KEY` dans `arr/.env`, en-tête
+  `X-API-Key`, Komga ≥ 1.20). Indispensable :
 
   ```kotlin
   // BookController.kt, 7 sites d'appel
@@ -101,10 +96,45 @@ Ce qu'il faut retenir côté komga :
 
   Avec un compte non-admin, ça répond **200 normalement** et tous les
   rattachements échouent en silence. Faux négatif silencieux, même famille que
-  les 202 de Servarr (cf. `CLAUDE.md`). Et les ids Komga étant des chaînes,
-  la garantie anti-traversal que `int()` donne à `/poster/{kind}/{arr_id}`
-  disparaîtrait : il faudrait valider explicitement le format d'id avant de
-  construire une URL de vignette.
+  les 202 de Servarr (cf. `CLAUDE.md`). `core.build_komga_index()` le
+  détecte (aucun `url` absolu) et le journalise en warning.
+  `arr/.env` est aussi l'`env_file` de cross-seed : il voit donc cette clé
+  admin, comme il voit déjà celles de Sonarr/Radarr.
+- **Rattachement par `BookDto.url` = chemin exact** d'un fichier du torrent
+  (`torrent_host_files()`, même chemin des deux côtés du montage), pas par
+  `SeriesDto.url` : un torrent mono-fichier est dans la série racine « bd »,
+  partagée avec tous les autres. Pour celle-là (`is_komga_root_series`), le
+  titre et le lien sont ceux du **livre**, pas de la série.
+- **Ids Komga = chaînes** : la garantie anti-traversal que `int()` donne à
+  `/poster/{kind}/{arr_id}` n'existe plus, d'où `KOMGA_ID_RE` validé avant
+  de construire tout chemin d'API ou lien (`/bd-cover/{book_id}`).
+- **`POST /api/v1/{books,series}/list?unpaged=true`** et pas `GET
+  /api/v1/books`, déprécié en 1.28.
+- **Vignette : `Accept: image/*`**, pas `application/json` — Komga répond
+  **406** sinon (`komga_request(..., accept=...)`). Vu au premier essai.
+- **Série retenue pour un pack = la plus fournie** dans le torrent
+  (`bd_meta`) ; titre au survol = nom du torrent s'il y a plusieurs séries.
+  Le pack Aldébaran (7 cycles + « Bonus ») donnait sinon « Bonus » par ordre
+  de dossier.
+- **Image de même nom à côté d'un livre = couverture servie telle quelle**
+  par Komga, sans réduction : le pack Aldébaran a un `.jpg` par `.pdf`, d'où
+  des vignettes de 3 à 7 Mo (contre ~15 Ko générées). Rien à corriger côté
+  clearr ; dans Komga, choisir la vignette générée (édition du livre, onglet
+  couverture) n'écrit que dans sa base, compatible `:ro`.
+- **Par Traefik** (`TRAEFIK_HTTPS` + `Host: komga.${DOMAIN}`, comme la sonde) :
+  clearr ne partage aucun réseau avec komga. Passe donc par son `rate-limit`
+  (50/s, rafale 100), sans commune mesure avec 2 appels par rendu d'onglet.
+  Pas d'appel du tout si aucune BD n'est listée ou si la sonde (cache 30 s)
+  dit Komga arrêté — pas de timeout à chaque rendu.
+
+Ce qu'il faut retenir côté komga :
+
+- **`_linked` est toujours `False`** sur ces torrents (aucun hardlink
+  `library/` n'existe), d'où la colonne BIB retirée de cet onglet : ailleurs
+  son absence signifie « jamais importé », ici elle ne signifierait rien.
+- **La modale de suppression dit explicitement qu'il n'y a pas d'autre
+  exemplaire**, et elle le dit d'après le torrent et non d'après l'onglet —
+  donc aussi depuis la vue Torrents.
 
 ## Comment Komga voit l'arborescence (vérifié dans `FileSystemScanner.kt`)
 

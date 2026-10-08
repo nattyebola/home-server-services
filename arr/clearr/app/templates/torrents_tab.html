@@ -5,21 +5,29 @@
 {% if mount_warning %}<div class="alert alert-danger py-2">⚠ {{ mount_warning }}</div>{% endif %}
 
 <div class="d-flex flex-wrap gap-3 align-items-center justify-content-between mb-2">
-  <div class="d-flex flex-wrap gap-2 align-items-center">
+  <div class="d-flex flex-wrap gap-2 align-items-center flex-grow-1">
   {# Filtre par type : HORS du <form> (il y serait sérialisé dans les
-     paramètres du filtre en direct, comme le switch « sans fichier »).
+     paramètres du filtre en direct, comme le filtre par fichier).
      Masquage 100 % CSS depuis data-clearr-kind sur <html> (clearr.css) : l'état
      survit aux swaps de #tab-content (tri, frappe, suppression) sans être
-     propagé dans les routes ni les modales. Pas dans l'onglet BD, où le type
-     est constant. #}
-  {% if not is_bd %}
+     propagé dans les routes ni les modales. Dans l'onglet BD, où le type est
+     constant : un faux filtre « Tous » toujours coché (2026-10-08), qui porte
+     le compte, sans data-kind-filter donc ignoré par clearr.js. #}
+  {% if is_bd %}
+  <div class="d-flex flex-wrap gap-2 align-items-center kind-filter">
+    <div class="btn-group btn-group-sm">
+      <input type="radio" class="btn-check" name="kind-filter" id="kind-all" checked>
+      <label class="btn btn-outline-secondary" for="kind-all" title="Toutes les BD. Un torrent et ses cross-seeds comptent pour un.">{{ kind_icon("bd", decorative=True) }} Tous <span class="small">{{ groups|length }}</span></label>
+    </div>
+  </div>
+  {% else %}
   {# Trois groupes d'un même jeu de radios (même `name`) : Tous, types sains,
      types dégradés (core.HEALTHY_KINDS) — séparés par le seul espacement
      entre groupes, sans trait (retiré à la demande). #}
   <div class="d-flex flex-wrap gap-2 align-items-center kind-filter" role="radiogroup" aria-label="Filtrer par type">
     <div class="btn-group btn-group-sm">
       <input type="radio" class="btn-check" name="kind-filter" id="kind-all" value="" data-kind-filter checked>
-      <label class="btn btn-outline-secondary" for="kind-all" title="Tous les torrents, quel que soit leur type">Tous</label>
+      <label class="btn btn-outline-secondary" for="kind-all" title="Tous les types. Un torrent et ses cross-seeds comptent pour un.">{{ kind_icon("torrents", decorative=True) }} Tous <span class="small">{{ groups|length }}</span></label>
     </div>
     {% for group, group_label in (("healthy", "Types sains"), ("degraded", "Types dégradés")) %}
     <div class="btn-group btn-group-sm" role="group" aria-label="{{ group_label }}">
@@ -32,35 +40,22 @@
     {% endfor %}
   </div>
   {% endif %}
-  <form class="d-flex" style="max-width:340px" data-live-get="/tab/{{ tab }}" data-live-target="#tab-content" onsubmit="return false">
+  {# Filtre par nom : prend la place restante de la ligne (2026-10-08) ;
+     min-width pour passer à la ligne plutôt que s'écraser à côté des radios. #}
+  <form class="d-flex flex-grow-1" style="min-width:240px" data-live-get="/tab/{{ tab }}" data-live-target="#tab-content" onsubmit="return false">
     <input type="hidden" name="sort" value="{{ sort }}">
     <input type="hidden" name="reverse" value="{{ '1' if reverse else '0' }}">
     <input type="search" class="form-control form-control-sm" name="filter" value="{{ filter_str }}"
            placeholder="Filtrer par nom…" data-live autocomplete="off">
   </form>
   </div>
-  {# Agit sur tout library/, pas sur la sélection de l'onglet — donc hors sujet
-     dans BD, où il promettrait une portée qu'il n'a pas. La purge en masse des
-     absents (ex-« Purger les ABS ») a été retirée le 2026-10-07 : un absent se
-     supprime ligne à ligne. #}
-  <div class="d-flex gap-2">
-    {% if not is_bd %}
-    <a href="#" class="btn btn-outline-secondary btn-sm" data-get="/library/orphans/confirm?{{ qs }}" data-target="#modal-body"
-       title="Chercher les fichiers de library/ qu'aucun torrent ne couvre et qu'aucun arr ne connaît">
-      Orphelins library/
-    </a>
-    {% endif %}
-  </div>
+  {# Bouton « Fichiers orphelins » : dans la barre d'onglets (_tabs.html)
+     depuis le 2026-10-08. #}
 </div>
 
-<p class="text-body-secondary small mb-2">
-  {% if is_bd %}
-  {{ total }} BD ({{ missing_count }} fichier manquant{% if group_count %}, {{ group_count }} groupe(s) cross-seed{% endif %}) —
-  <span class="text-danger-emphasis">supprimer ici supprime la BD, il n'y a pas de second exemplaire</span>
-  {% else %}
-  {{ total }} torrents ({{ linked_count }} avec fichier(s) bibliothèque, {{ missing_count }} fichier manquant{% if group_count %}, {{ group_count }} groupe(s) cross-seed{% endif %})
-  {% endif %}
-</p>
+{# Ligne de résumé retirée le 2026-10-08 (Torrents puis BD, à la demande) :
+   le total passe sur le bouton « Tous ». L'avertissement « pas de second
+   exemplaire » d'une BD reste dans la modale de confirmation. #}
 
 <div class="table-responsive">
 <table class="table table-sm table-hover align-middle small mb-0 table-sticky-actions">
@@ -83,11 +78,12 @@
        masque le groupe entier. Absent dans BD (pas de filtre par type). #}
     {% set kind_attr %}{% if not is_bd %} data-kind="{{ g.parent.kind or 'unknown' }}"{% endif %}{% endset %}
     <tr{{ kind_attr }}>
-      {# TYPE dans la vue Torrents (ABS y est devenu le type « absent »), ABS
-         dans l'onglet BD, qui n'a pas de colonne TYPE. #}
-      {% if is_bd %}<td class="{{ 'text-danger-emphasis fw-semibold' if g.parent.abs_danger else '' }}">{{ g.parent.abs }}</td>
-      {% else %}<td class="text-center">{{ kind_icon(g.parent.kind) }}</td>{% endif %}
-      <td>{{ g.parent.age }}</td>
+      {# TYPE dans la vue Torrents (ABS y est devenu le type « absent ») ;
+         ni TYPE ni ABS dans l'onglet BD (ABS retirée le 2026-10-08 : une BD
+         absente y garde son titre en rouge, title_class du type « absent »). #}
+      {% if not is_bd %}<td class="text-center">{{ kind_icon(g.parent.kind) }}</td>{% endif %}
+      {# LIVRES à la place d'AGE dans BD (core.BD_SORT_FIELDS). #}
+      <td>{{ g.parent.books if is_bd else g.parent.age }}</td>
       <td>{{ g.parent.size }}</td>
       <td class="ratio-{{ g.parent.ratio_class }}">{{ g.parent.ratio }}</td>
       <td class="text-body-secondary"{% if g.parent.tracker_others %} title="{{ g.parent.tracker_others }}"{% endif %}>{{ g.parent.tracker }}</td>
@@ -108,8 +104,8 @@
     </tr>
     {% for c in g.children %}
     <tr class="collapse xseed-{{ g.parent.id }} {{ 'show' if g.force_open else '' }}"{{ kind_attr }}>
-      {% if is_bd %}<td></td>{% else %}<td class="text-center">{{ kind_icon(c.kind) }}</td>{% endif %}
-      <td>{{ c.age }}</td>
+      {% if not is_bd %}<td class="text-center">{{ kind_icon(c.kind) }}</td>{% endif %}
+      <td>{{ c.books if is_bd else c.age }}</td>
       <td>{{ c.size }}</td>
       <td class="ratio-{{ c.ratio_class }}">{{ c.ratio }}</td>
       <td class="text-body-secondary"{% if c.tracker_others %} title="{{ c.tracker_others }}"{% endif %}>{{ c.tracker }}</td>
@@ -118,7 +114,7 @@
     </tr>
     {% endfor %}
     {% else %}
-    <tr><td colspan="7" class="text-body-secondary py-3">{{ 'Aucune BD' if is_bd else 'Aucun torrent' }}{% if filter_str %} pour ce filtre{% endif %}.</td></tr>
+    <tr><td colspan="{{ columns|length + 1 }}" class="text-body-secondary py-3">{{ 'Aucune BD' if is_bd else 'Aucun torrent' }}{% if filter_str %} pour ce filtre{% endif %}.</td></tr>
     {% endfor %}
     {# Affichée par clearr.js (syncKindEmpty) quand le filtre par type ne
        laisse aucune ligne : sans data-kind, le CSS du filtre ne la masque pas. #}

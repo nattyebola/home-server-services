@@ -14,6 +14,7 @@ flowchart LR
     T --> BD[("completed/bd/<br>données seedées")]
     BD -->|"montage :ro"| K["📚 Komga"]
     BD -.->|"onglet BD"| C["clearr"]
+    K -.->|"couvertures, fiche<br>(clé d'API admin)"| C
 ```
 
 Contrairement aux vidéos, **pas d'arr, pas d'import, pas de hardlink, pas de
@@ -77,6 +78,15 @@ pouvoir lire, pas d'avoir un rayonnage impeccable.**
 - Déclarer la bibliothèque dans l'UI : *Settings → Libraries → Add* →
   `/data_root/.transmission/data/completed/bd`. Le chemin est le même des deux
   côtés du montage, pour correspondre à celui de clearr.
+- Facultatif, pour les couvertures et la fiche Komga dans l'onglet BD de
+  clearr : créer une **clé d'API avec le compte admin** (*paramètres du
+  compte → clés d'API*), la mettre dans `KOMGA_API_KEY` de `arr/.env`, puis
+  `make up STACK=arr`.
+
+> [!WARNING]
+> La clé doit venir d'un compte **admin**. Avec un autre compte, Komga masque
+> les chemins des fichiers : clearr ne rattache aucune BD, sans erreur
+> visible (seulement un warning dans `make logs STACK=arr`).
 - Exposé au WAN après audit de sa configuration (2026-09-22) : API, OPDS et
   SSE exigent une authentification, `/actuator/health` ne rend que `UP`.
   Komga **ne verrouille aucun compte** après des échecs : le `rate-limit` de

@@ -39,6 +39,7 @@ import http.client
 import json
 import logging
 import os
+import re
 import ssl
 import time
 import urllib.error
@@ -622,8 +623,8 @@ def fetch_series_list():
 
 # Un titre sans aucun fichier sur le disque n'a RIEN à nettoyer : c'est du
 # contenu suivi en attente de diffusion ou de release. clearr le masque par
-# défaut dans les vues Séries/Animés/Films (switch pour le révéler, voir
-# webapp.ARR_TABS et templates/_rowcount.html) — leur nombre ne peut que
+# défaut dans les vues Séries/Animés/Films (filtre par fichier pour le
+# révéler, voir webapp.ARR_TABS et templates/_file_filter.html) — leur nombre ne peut que
 # croître avec le temps, alors que la vocation de l'outil est de montrer ce
 # qui occupe de la place.
 #
@@ -787,6 +788,148 @@ def poster_file(kind, arr_id):
         if os.path.exists(path):
             return path
     return None
+
+
+# --- Komga (BD) : jaquette au survol, fiche au clic --------------------------
+#
+# Ajouté le 2026-10-08 (demandé : « traiter les BD comme les arr »), en
+# revenant sur le choix du 2026-09-23 de ne jamais interroger Komga. Lecture
+# seule (GET + les POST de RECHERCHE /list), par Traefik comme _probe_komga :
+# clearr ne partage aucun réseau Docker avec komga. Best-effort : clé absente,
+# Komga arrêté ou en erreur = onglet BD sans jaquette ni fiche Komga, le reste
+# fonctionne.
+#
+# La clé doit être celle d'un compte ADMIN (voir .claude/docs/komga.md) : pour
+# un non-admin Komga réduit `url` au nom de fichier et répond 200 quand même,
+# donc aucun rattachement ne se ferait, sans erreur. build_komga_index() le
+# détecte et le journalise.
+KOMGA_API_KEY = os.environ.get("KOMGA_API_KEY", "")
+# Extensions scannées par Komga (FileSystemScanner.kt) : un « livre » de la
+# colonne LIVRES est un fichier de ce type, compté sur la liste Transmission —
+# donc juste même sans Komga, ou avant qu'il ait scanné.
+KOMGA_BOOK_EXTENSIONS = (".cbz", ".zip", ".cbr", ".rar", ".pdf", ".epub")
+# Les ids Komga sont des chaînes (TSID), pas des entiers : sans le int() qui
+# protège /poster/{kind}/{arr_id}, c'est ce motif qui garantit qu'une valeur
+# venue de l'URL ne peut pas réécrire le chemin d'API construit avec.
+KOMGA_ID_RE = re.compile(r"[0-9A-Za-z]{1,64}")
+EMPTY_KOMGA_INDEX = {"books": {}, "series": {}}
+
+
+def bd_book_count(torrent):
+    return sum(1 for f in torrent.get("files", []) if f["name"].lower().endswith(KOMGA_BOOK_EXTENSIONS))
+
+
+def komga_request(method, path, body=None, timeout=5, accept="application/json"):
+    """(status, content-type, corps) d'une requête à l'API Komga, ou None si
+    elle n'est pas configurée ou injoignable. Certificat non vérifié : on
+    parle à Traefik par son nom de service, comme _probe_komga. `accept` : Komga
+    répond 406 à une vignette demandée en application/json."""
+    if not (DOMAIN and KOMGA_API_KEY):
+        return None
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    conn = http.client.HTTPSConnection(*TRAEFIK_HTTPS, timeout=timeout, context=context)
+    headers = {"Host": f"komga.{DOMAIN}", "X-API-Key": KOMGA_API_KEY, "Accept": accept}
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode()
+        headers["Content-Type"] = "application/json"
+    try:
+        conn.request(method, path, body=data, headers=headers)
+        resp = conn.getresponse()
+        return resp.status, resp.getheader("Content-Type", ""), resp.read()
+    except (OSError, http.client.HTTPException) as e:
+        logger.warning("Komga injoignable (%s %s) : %s", method, path, e)
+        return None
+    finally:
+        conn.close()
+
+
+def _komga_list(kind):
+    """Tous les livres ou toutes les séries. POST /api/v1/{kind}/list et non
+    GET /api/v1/{kind}, déprécié en 1.28."""
+    resp = komga_request("POST", f"/api/v1/{kind}/list?unpaged=true", body={})
+    if not resp:
+        return []
+    status, _ctype, body = resp
+    if status != 200:
+        logger.warning("Komga : /api/v1/%s/list a répondu %s (clé d'API invalide ?)", kind, status)
+        return []
+    try:
+        return json.loads(body).get("content", [])
+    except ValueError:
+        logger.warning("Komga : réponse illisible pour /api/v1/%s/list", kind)
+        return []
+
+
+def build_komga_index():
+    """{"books": {chemin: BookDto}, "series": {id: SeriesDto}}. Les livres sont
+    indexés par leur `url`, qui est le chemin du fichier — identique des deux
+    côtés du montage (.claude/docs/komga.md), donc comparable tel quel à
+    torrent_host_files(). Même idée que build_arr_meta_index()."""
+    books = _komga_list("books")
+    if books and not any(b.get("url", "").startswith("/") for b in books):
+        logger.warning("Komga : chemins des livres masqués — la clé d'API n'est pas celle d'un "
+                       "compte ADMIN, aucune BD ne sera rattachée")
+    return {"books": {b["url"]: b for b in books if b.get("url")},
+            "series": {s["id"]: s for s in _komga_list("series")}}
+
+
+def torrent_komga_books(torrent, komga_index):
+    """Livres Komga d'un torrent (chemin exact de ses fichiers), triés par
+    dossier (= série Komga, dans l'ordre du disque) puis par numéro. Vide si
+    Komga ne les a pas (encore) scannés."""
+    books = komga_index["books"]
+    found = [books[p] for p, _s in torrent_host_files(torrent) if p in books]
+    return sorted(found, key=lambda b: (os.path.dirname(b["url"]),
+                                        (b.get("metadata") or {}).get("numberSort", 0), b.get("name", "")))
+
+
+def komga_series_title(series):
+    return (series.get("metadata") or {}).get("title") or series.get("name", "")
+
+
+def is_komga_root_series(series):
+    """Série « bd » de la racine, où Komga range tous les torrents
+    mono-fichier (.claude/docs/komga.md) : son nom ne dit rien du torrent."""
+    return series.get("url", "").rstrip("/") == BD_ROOT
+
+
+def bd_meta(torrent, komga_index):
+    """Même bloc que item_meta(), pour une BD rattachée à Komga, ou None.
+    Série retenue : celle qui a le PLUS de livres dans le torrent — un pack
+    (Aldébaran : 7 cycles + un dossier « Bonus ») n'a pas de série qui le
+    résume, et la première par ordre de dossier y serait « Bonus ». Jaquette :
+    son premier livre (Komga la génère depuis la première page). Titre : la
+    série, ou le nom du torrent si le pack en a plusieurs ; pour la série
+    racine « bd » (torrent mono-fichier), le livre lui-même, lien compris."""
+    books = torrent_komga_books(torrent, komga_index)
+    if not books:
+        return None
+    counts = collections.Counter(b.get("seriesId") for b in books)
+    main_id = max(counts, key=lambda sid: (counts[sid], -[b.get("seriesId") for b in books].index(sid)))
+    first = next(b for b in books if b.get("seriesId") == main_id)
+    series = komga_index["series"].get(main_id)
+    links = []
+    if series and not is_komga_root_series(series):
+        title = komga_series_title(series) if len(counts) == 1 else torrent["name"]
+        target = f"series/{series['id']}"
+    else:
+        title = (first.get("metadata") or {}).get("title") or first.get("name", "")
+        target = f"book/{first['id']}"
+    if DOMAIN and KOMGA_ID_RE.fullmatch(target.split("/")[1]):
+        # `arr: True` : lien vers NOTRE infra, rendu en badge plein (comme Sonarr/Radarr).
+        links.append({"label": "Komga", "arr": True, "url": f"https://komga.{DOMAIN}/{target}"})
+    return {
+        "kind": "bd",
+        "anime": False,
+        "id": first["id"],
+        "title": title,
+        "poster": f"/bd-cover/{first['id']}" if KOMGA_ID_RE.fullmatch(first["id"]) else None,
+        "links": links,
+        "books": books,
+    }
 
 
 def external_links(kind, item):
@@ -1310,8 +1453,8 @@ def series_orphan_files(matched, series_path):
 #                 Sonarr avec exclusion de liste. La sélection de saisons est
 #                 alors IGNORÉE (purger une partie d'une série laisserait les
 #                 saisons gardées dans library/ sans plus aucun arr pour les
-#                 revendiquer : invisibles des trois vues, hors « Orphelins
-#                 library/ »).
+#                 revendiquer : invisibles des trois vues, hors « Fichiers
+#                 orphelins »).
 #   purge=False : les saisons choisies partent, la série RESTE dans Sonarr en
 #                 monitorNewItems="all" — c'est ce qui permet à une saison
 #                 future d'être téléchargée alors qu'on vient d'effacer les
@@ -1446,7 +1589,7 @@ def plan_season_deletion(state, series, seasons):
 
     # Dernier fichier de la série : son dossier ne garderait que ses sidecars
     # (tvshow.nfo & co). Personne ne les voit — les trois vues partent des
-    # torrents ou des objets arr, et le bouton « Orphelins library/ » les tient
+    # torrents ou des objets arr, et le bouton « Fichiers orphelins » les tient
     # pour couverts tant que Sonarr connaît la série — mais Jellyfin, lui,
     # continue d'afficher une série sans le moindre épisode (2 constatées le
     # 2026-09-23). On les emporte donc, et le dossier avec : la série reste
@@ -1460,8 +1603,8 @@ def plan_season_deletion(state, series, seasons):
     if series_emptied:
         seen = {p for p, _s in orphans}
         # Sidecars SEULEMENT. Une vidéo que Sonarr ne revendique pas est un
-        # orphelin, et la supprimer est un choix humain (bouton « Orphelins
-        # library/ »), jamais un effet de bord d'une suppression de saison : la
+        # orphelin, et la supprimer est un choix humain (bouton « Fichiers
+        # orphelins »), jamais un effet de bord d'une suppression de saison : la
         # laisser fera simplement échouer le rmdir du dossier, ce qui est le bon
         # comportement.
         series_leftovers = [(p, s) for p, s in orphan_files_under(series["path"], covered | target_paths)
@@ -2110,8 +2253,7 @@ def execute_delete_media_path(client, plan, all_torrents, cross_seed_groups, lin
 # lambda ne reçoit que le torrent : TYPE lit donc `_kind`, posé par
 # assign_torrent_kinds avant le tri (il dépend des métadonnées et de la file
 # arr, que load_full_state ne charge pas), ABS lit `_missing`, posé au
-# chargement. Plus de colonne BIB (2026-10-07) : le nombre de torrents liés à
-# library/ est dans la ligne de résumé.
+# chargement. Plus de colonne BIB (2026-10-07).
 SORT_FIELDS = [
     ("TYPE", lambda t: TORRENT_KINDS.index(t.get("_kind"))),
     ("AGE", lambda t: t["addedDate"]),
@@ -2141,11 +2283,12 @@ FILMS_SORT_FIELDS = [
     ("TITRE", lambda m: m["title"].lower()),
 ]
 
-# Colonnes de l'onglet BD : ABS à la place de TYPE, qui n'y vaudrait que
-# « BD » ou « absent » — ABS dit la même chose en une coche, seul signal d'une
-# BD disparue. Dérivé de SORT_FIELDS plutôt que recopié : un champ ajouté
-# là-bas arrive ici tout seul.
-BD_SORT_FIELDS = [("ABS", lambda t: t["_missing"])] + [f for f in SORT_FIELDS if f[0] != "TYPE"]
+# Colonnes de l'onglet BD : sans TYPE, qui n'y vaudrait que « BD » ou
+# « absent ». ABS, qui la remplaçait, retirée le 2026-10-08 (demandé) : une BD
+# disparue garde son titre en rouge (type « absent », webapp.KIND_TITLE_CLASSES).
+# LIVRES à la place d'AGE (même jour, demandé). Dérivé de SORT_FIELDS plutôt
+# que recopié : un champ ajouté là-bas arrive ici tout seul.
+BD_SORT_FIELDS = [("LIVRES", bd_book_count)] + [f for f in SORT_FIELDS if f[0] not in ("TYPE", "AGE")]
 
 
 def sort_items(items, fields, sort_idx, reverse):

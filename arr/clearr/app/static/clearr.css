@@ -179,7 +179,7 @@ tr.collapsing {
   min-width: 0;
 }
 
-/* Titres sans fichier (switch « Afficher les titres sans fichier »).
+/* Filtre par fichier des onglets Séries/Animés/Films (_file_filter.html).
 
    Piloté par data-clearr-empty sur <html>, posé AVANT le rendu du <body>
    (page.html) comme data-bs-theme : l'état vit donc hors de #tab-content, qui
@@ -187,16 +187,24 @@ tr.collapsing {
    un masquage porté par une classe DANS le fragment aurait dû être rejoué en JS
    après chaque swap, avec un flash des lignes masquées entre les deux.
 
-   Écrit en :not([...="show"]) et pas en [...="hide"] : sans attribut (JS
-   désactivé, localStorage bloqué, premier rendu) le comportement par défaut
-   reste le masquage, qui est celui demandé. */
-:root:not([data-clearr-empty="show"]) .row-empty,
-:root:not([data-clearr-empty="show"]) .count-when-shown {
+   Trois états : absent = avec fichier (défaut), "show" = tous, "only" = sans
+   fichier. Le défaut est écrit en :not(show):not(only) et pas en [...="with"] :
+   sans attribut (JS désactivé, chargement de la page) les titres sans
+   fichier restent masqués, comme demandé. */
+:root:not([data-clearr-empty="show"]):not([data-clearr-empty="only"]) .row-empty,
+:root[data-clearr-empty="only"] .row-filled {
   display: none;
 }
 
-:root[data-clearr-empty="show"] .count-when-hidden {
+/* Messages « aucun titre avec/sans fichier » : rendus seulement quand le cas
+   se présente, affichés pour le seul filtre concerné. */
+.file-empty-with,
+.file-empty-only {
   display: none;
+}
+:root:not([data-clearr-empty="show"]):not([data-clearr-empty="only"]) .file-empty-with,
+:root[data-clearr-empty="only"] .file-empty-only {
+  display: table-row;
 }
 
 /* Picto de la colonne TYPE (vue Torrents, templates/_kind_icon.html) : plus
@@ -253,9 +261,16 @@ tr.collapse .kind-icon { opacity: .6; }
 :root[data-clearr-kind="unknown"] tr[data-kind]:not([data-kind="unknown"]) {
   display: none;
 }
-/* Pictos à la hauteur d'un bouton btn-sm, pour s'aligner sur le champ de
+/* .kind-filter : filtre par type (Torrents) ET filtre par fichier
+   (Séries/Animés/Films, _file_filter.html), même style.
+   Pictos à la hauteur d'un bouton btn-sm, pour s'aligner sur le champ de
    filtre voisin. */
 .kind-filter .kind-icon {
+  width: 1.3em;
+  height: 1.3em;
+}
+/* Picto devant le libellé des onglets (_tabs.html). */
+.nav-tabs .kind-icon {
   width: 1.3em;
   height: 1.3em;
 }

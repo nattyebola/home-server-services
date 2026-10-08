@@ -54,8 +54,8 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   liens sortent, suivis par le navigateur. TVDB adressé par
   `thetvdb.com/dereferrer/series/<tvdbId>` (Sonarr n'expose pas le slug) ;
   Radarr par `<tmdbId>` (son `titleSlug` EST le tmdbId).
-  Seule exception au « zéro WAN » : `core.quality_profile_names()`, sur le
-  réseau interne.
+  Seules exceptions au « zéro WAN », toutes deux sur le réseau interne :
+  `core.quality_profile_names()` et l'API Komga de l'onglet BD.
   `DOMAIN` (liens `sonarr.${DOMAIN}`/`radarr.${DOMAIN}`) vient de
   `.env.shared`, hors du `env_file: .env` du service : injecté par un bloc
   `environment:` dans `arr/docker-compose.yml`. Absent = pas de lien arr,
@@ -79,7 +79,7 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   Séries et Animés sont **deux vues filtrées d'une seule liste Sonarr** :
   même `fetch`, même gabarit `series_tab.html`, mêmes routes de suppression
   `/series/{id}/...` — seuls le prédicat `select` de la spec `ARR_TABS` et les
-  libellés (`count_label`/`empty_label`, portés par la spec pour qu'elle reste
+  libellés et picto (`kind`/`empty_label`, portés par la spec pour qu'elle reste
   la seule source) changent. Pas d'`animes_tab.html` : il aurait été la copie
   mot pour mot du premier.
   **Le critère est `seriesType == "anime"` (`core.is_anime`), pas le root
@@ -116,11 +116,32 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   non recopié) : sous `completed/bd` il n'y a jamais de hardlink `library/`,
   la colonne serait vide en permanence — et vide y voudrait dire autre chose
   qu'ailleurs, où l'absence de BIB signale un grab jamais importé.
-  **Bouton « Orphelins library/ » masqué** : il agit sur tout `library/`, pas
+  **Bouton « Fichiers orphelins » masqué** : il agit sur tout `library/`, pas
   sur la sélection de l'onglet — l'afficher promettrait une portée qu'il n'a
   pas (« Purger les ABS » l'était pour la même raison, avant son retrait).
-  `group_count` est en revanche recompté sur les groupes **rendus**, sinon
-  l'onglet annoncerait les groupes cross-seed des autres.
+  **Colonne LIVRES à la place d'AGE** (2026-10-08, demandé) :
+  `core.bd_book_count`, fichiers du torrent aux extensions scannées par Komga
+  (`KOMGA_BOOK_EXTENSIONS`), compté sur la liste Transmission — juste sans
+  Komga et avant son scan. Tri par défaut passé à NOM (`DEFAULT_SORT`), AGE
+  n'existant plus dans cet onglet.
+  **Jaquette au survol, fiche au clic, lien Komga** (2026-10-08, demandé :
+  « traiter les BD comme les arr ») : `core.bd_meta()` rend le même bloc
+  qu'`item_meta()`, donc `_meta.html`/`details.html` inchangés.
+  `render_torrents_tab` l'utilise pour **toute BD, vue Torrents comprise**,
+  à la place de `torrent_meta` (une BD n'a jamais d'arr). Jaquette relayée par
+  `/bd-cover/{book_id}` (Komga la génère), id validé par `KOMGA_ID_RE`. Fiche :
+  section Komga (`_komga_details` : séries, nombre de livres vus par Komga sur
+  nombre de fichiers, pages, auteurs, éditeur, livres pas READY — un `.cbr`
+  RAR5 ressort ici), résumé de la série, liste des livres. Clé admin, réseau,
+  pièges : `.claude/docs/komga.md` (« L'onglet BD de clearr »).
+  Exception assumée au « zéro WAN » au même titre que
+  `quality_profile_names()` : Komga est interne (par Traefik).
+  **Ni ligne de résumé ni avertissement rouge en tête d'onglet** (retirés le
+  2026-10-08, à la demande) : à la place, un **faux filtre « Tous »** (picto
+  bulle, nombre de groupes rendus) toujours coché, sans `data-kind-filter`
+  donc inerte, pour l'alignement avec les autres vues. L'avertissement « pas
+  de second exemplaire » ne vit plus que dans la modale de confirmation —
+  c'est là qu'il compte, au moment de supprimer.
   **`is_bd` de la modale de confirmation vient du TORRENT, pas de l'onglet**
   (corrigé avant livraison) : ce que la suppression détruit ne dépend pas de la
   vue d'où on a cliqué, et c'est justement depuis l'onglet Torrents — qui
@@ -132,8 +153,8 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   ferait croire à un problème à chaque suppression.
 - **Colonne TYPE de la vue Torrents** (2026-10-07) : picto
   film / série / anime / BD / inconnu, **à la place de BIB** (demandé : la
-  colonne BIB a disparu, le compte des torrents liés à `library/` reste
-  dans la ligne de résumé), `core.torrent_kind()`. **Sources sûres uniquement, arbitré** : dossier BD,
+  colonne BIB a disparu ; la ligne de résumé de la vue Torrents a suivi le
+  2026-10-08, à la demande — le total passe sur le bouton « Tous »), `core.torrent_kind()`. **Sources sûres uniquement, arbitré** : dossier BD,
   puis rattachement arr (`meta["anime"]` posé par `item_meta` via
   `is_anime`, même critère que l'onglet Animés, sinon `meta["kind"]`), puis
   catégorie `completed/{sonarr,radarr}` (`ARR_CATEGORY_KINDS`, suit
@@ -168,9 +189,11 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   vue Torrents) : `_missing`, testé **en premier**, avant même la BD — sinon
   une BD disparue redevenait une simple bulle et l'info était perdue. Sans
   fichier il n'y a de toute façon ni inode, ni meta, ni lien `library/`.
-  **L'onglet BD garde la colonne ABS** à la place de TYPE (`BD_SORT_FIELDS` =
-  ABS + `SORT_FIELDS` sans TYPE) : seul signal d'une BD disparue. Il ne lit
-  pas les files arr (`queue_states=None`), inutiles à ses deux types.
+  **L'onglet BD n'a ni TYPE ni ABS** (`BD_SORT_FIELDS` = `SORT_FIELDS` sans
+  TYPE ; ABS, qui y remplaçait TYPE, retirée le 2026-10-08 à la demande) :
+  une BD disparue reste signalée par son **titre en rouge** (`_kind`
+  « absent » → `title-danger`, `assign_torrent_kinds` tourne aussi pour BD).
+  Il ne lit pas les files arr (`queue_states=None`), inutiles à ses deux types.
   **« Purger les ABS » retiré** (web le 2026-10-07, demandé ; `Maj+P` parti
   avec la TUI le 2026-10-08, confirmé) : plus aucune purge en masse des
   absents. Ne pas la réintroduire sans demande. Son garde-fou (montage raté =
@@ -194,8 +217,8 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   est ignorée **sans aucun signe**, constaté seulement sur capture d'écran.
   Rouge = `#c92a2a` (celui du picto « bloqué »), pas
   `--bs-danger-text-emphasis`, bordeaux presque noir en thème clair. Remplace l'ancien
-  rouge réservé aux ABS (`abs_danger`, qui ne colore plus que la cellule ABS
-  de l'onglet BD).
+  rouge réservé aux ABS (`abs_danger`, supprimé avec la colonne ABS de BD le
+  2026-10-08).
   **`_kind` posé avant le tri** (`core.assign_torrent_kinds`, appelé par
   `render_torrents_tab`) : TYPE trie dessus. Il porte aussi l'héritage du
   type par les cross-seeds sans type propre (jamais l'inverse) ; les compteurs
@@ -210,20 +233,32 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   dans `templates/_kind_icon.html` — à garder) en ligne, **pas d'emoji** (même
   raison que la croix ✕). Grands (1,6 em) et une couleur par type, variante
   sombre sous `[data-bs-theme="dark"]` dans `clearr.css`.
+  **Pictos devant les libellés d'onglets** (2026-10-08, demandé) : même
+  macro, `kind_icon(kind, decorative=True)` dans `_tabs.html` → `aria-hidden`
+  et **pas de `<title>`** (le survol d'un onglet afficherait sinon la
+  description d'un type de torrent). Torrents : aimant (game-icons lorc/magnet,
+  `kind == "torrents"`, couleur héritée du lien), qui n'est pas un type de
+  `TORRENT_KINDS` — repris, décoratif aussi, sur le bouton « Tous » du filtre
+  (son infobulle reste celle du `<label>`).
   **Filtre par type** (radios avant le filtre par nom, 2026-10-07) : **100 %
-  CSS**, même mécanique que le switch « sans fichier » — `data-clearr-kind` sur
+  CSS**, même mécanique que le filtre par fichier — `data-clearr-kind` sur
   `<html>`, `data-kind` sur chaque `<tr>` (celui du **parent** jusque sur ses
   cross-seeds, le groupe reste entier), radios resynchronisées par
   `syncKindFilters()`. Choisi plutôt qu'un paramètre serveur : le filtre par
   nom traverse 6 routes et 3 modales (`qs`, champs cachés), un 4e paramètre
-  aurait dû suivre partout. Corollaire : la ligne de résumé ignore le type
-  (elle ignorait déjà la vue). Radios **hors du
+  aurait dû suivre partout. **« Tous » affiche `groups|length`** (arbitré le
+  2026-10-08) : la somme des autres boutons (groupes rendus, cross-seeds non
+  comptés à part, après le filtre par nom), pas le total brut Transmission
+  qu'affichait l'ancienne ligne de résumé — sinon « Tous » ≠ somme des types.
+  Son infobulle le dit. Radios **hors du
   `<form>`** (sinon sérialisées dans le filtre en direct), comptes calculés sur
   les groupes rendus (donc après le filtre par nom), **non mémorisé** (pas de
   `localStorage`, comme le filtre par nom). Bouton à zéro **désactivé** ;
   type vidé par le filtre par nom ou une suppression → ligne
   `data-kind-empty` (« Aucun torrent de ce type ») affichée par
   `syncKindEmpty()`, le CSS ne sachant pas dire « plus aucune ligne ».
+  **Pas de variante petit écran** (picto seul essayé puis retiré le
+  2026-10-08, à la demande : clearr n'est pas pensé mobile de toute façon).
   **Jamais de `data-kind` dans
   l'onglet BD** : sans radios pour le réinitialiser, un filtre « film » resté
   posé sur `<html>` y masquerait tout.
@@ -278,43 +313,50 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   tête de `page.html` pose `data-bs-theme` avant le rendu du `<body>` pour
   éviter un flash clair→sombre.
 - **Titres sans fichier masqués par défaut dans Séries/Animés/Films**
-  (2026-09-09), révélés par un switch « Afficher les titres sans fichier ».
-  Demandé : la vocation de clearr est de montrer ce qui occupe de la place, et
-  le nombre de titres suivis en attente de diffusion ne peut que croître (7/16
-  séries et 14/42 films au moment de l'ajout, soit 21 lignes de bruit).
+  (2026-09-09). Demandé : la vocation de clearr est de montrer ce qui occupe
+  de la place, et le nombre de titres suivis en attente de diffusion ne peut
+  que croître (7/16 séries et 14/42 films au moment de l'ajout, soit 21
+  lignes de bruit).
   Critère `core.series_without_files`/`movie_without_files` : ce que l'objet arr
   porte déjà (`statistics.episodeFileCount`, `hasFile`), **jamais un appel
   supplémentaire** — au rendu d'un onglet c'est la seule contrainte qui compte.
   **Ce n'est PAS « rien à supprimer »** : une série sans fichier peut encore
   porter des torrents grabés jamais importés (`series_grabbed_torrents`), que
-  seule la purge emporte. C'est pour ça que c'est un **switch et pas un filtre
-  en dur**, que le compte des masqués reste affiché (« 9/16 série(s) · 7 sans
-  fichier masqué(s) »), et que le `title=` du switch renvoie vers l'onglet
+  seule la purge emporte. C'est pour ça que c'est un **filtre qu'on rebascule
+  et pas un retrait en dur**, que le nombre de titres sans fichier reste
+  affiché, et que le `title=` de « Sans fichier » renvoie vers l'onglet
   Torrents. Les rattacher au rendu coûterait un appel history par série.
-  **Masquage 100 % CSS depuis `data-clearr-empty` sur `<html>`**, posé par le
-  script de tête de `page.html` à côté de `data-bs-theme` : `#tab-content` est
-  remplacé en entier à chaque clic d'onglet, tri et frappe dans le filtre, donc
-  une classe portée par le fragment aurait dû être rejouée en JS après chaque
-  swap — avec un flash des lignes masquées entre les deux. Le switch ne coûte
-  aucun aller-retour serveur, et l'état survit aux swaps.
-  Écrit en `:not([data-clearr-empty="show"])` et non `[…="hide"]` : sans
-  attribut (JS coupé, `localStorage` qui lève en navigation privée) le défaut
-  reste le masquage, celui qui est demandé.
-  Les **deux comptes sont rendus ensemble**, le CSS choisit lequel s'affiche —
-  réécrire le texte en JS après chaque swap aurait fait clignoter le mauvais
-  chiffre. Seul l'état *coché* de la case ne peut pas venir du CSS, d'où
-  `syncEmptySwitches()` appelé aux 3 points d'entrée (les 2 chemins de swap +
-  le rendu initial, qui vient de `page.html` et ne passe pas par `swapInto`),
-  via `syncFragmentState()` depuis le filtre par type.
-  Le switch vit **hors du `<form>` de filtre** : dedans, il serait sérialisé
+  **Filtre par fichier** (2026-10-08, demandé, remplace le switch « Afficher
+  les titres sans fichier » et la ligne de compte « 9/16 série(s) · 7 sans
+  fichier masqué(s) ») : radios **Tous / Avec fichier / Sans fichier** du même
+  style que le filtre par type des Torrents (classe `.kind-filter` réutilisée),
+  « Tous » avec le picto de l'onglet (`spec["kind"]` de `ARR_TABS`, décoratif).
+  Comptes sur les lignes **rendues** (après le filtre par nom) ; radio à zéro
+  désactivée sauf « Tous ». Défaut « Avec fichier » (comportement d'avant),
+  **non mémorisé** (demandé le 2026-10-08, comme le filtre par type : plus
+  de `localStorage`, l'ancienne clé `clearr.showEmpty` n'est plus lue). Le
+  filtre par nom passe sur la même ligne et prend
+  la place restante, comme côté Torrents.
+  **Masquage 100 % CSS depuis `data-clearr-empty` sur `<html>`** (absent =
+  avec fichier, `show`, `only`), posé par `clearr.js` : `#tab-content` est
+  remplacé en entier à chaque
+  clic d'onglet, tri et frappe dans le filtre, donc une classe portée par le
+  fragment aurait dû être rejouée en JS après chaque swap — avec un flash des
+  lignes masquées entre les deux. Lignes marquées `row-empty`/`row-filled`.
+  Défaut écrit en `:not([…="show"]):not([…="only"])` : sans attribut (JS
+  coupé, chargement de la page) les titres sans fichier restent masqués.
+  **Messages « Aucun titre avec/sans fichier »** : lignes `file-empty-with`/
+  `file-empty-only` rendues seulement quand le cas se présente (comptes connus
+  au rendu, toute suppression rerend le fragment), affichées par le CSS pour
+  le seul filtre concerné — pas de JS, contrairement au `syncKindEmpty()` des
+  Torrents. Seul l'état *coché* des radios ne peut pas venir du CSS, d'où
+  `syncFileFilters()` via `syncFragmentState()`, appelé aux 3 points d'entrée
+  (les 2 chemins de swap + le rendu initial, qui vient de `page.html`).
+  Radios **hors du `<form>` de filtre** : dedans, elles seraient sérialisées
   dans les paramètres du filtre en direct.
-  Sa présence tient à `empty_total` (tout l'onglet) et non `empty_count` (la
-  sélection filtrée) : sinon un filtre textuel ne ramenant aucun titre sans
-  fichier ferait disparaître le switch, sans plus aucun moyen de le rebasculer.
-  Un onglet sans aucun titre masquable ne l'affiche pas du tout (Animés, 0/21).
-  Gabarit unique `templates/_rowcount.html` (macro `count_and_switch`), comme
-  `title_cell` de `_meta.html` — sinon le bloc serait recopié dans
-  `series_tab.html` et `films_tab.html`.
+  Gabarit unique `templates/_file_filter.html` (macros `file_toolbar` et
+  `file_empty_rows`, importées `with context`), ex-`_rowcount.html` — sinon le
+  bloc serait recopié dans `series_tab.html` et `films_tab.html`.
 - **Suppression toujours confirmée par une modale**, composant Modal natif
   de Bootstrap plutôt qu'un `<dialog>` fait main : focus trap / Échap /
   clic-sur-le-fond déjà corrects, les réimplémenter aurait été strictement
@@ -336,7 +378,9 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   Les films n'ont volontairement pas d'orphelins : `_delete_movie` ne balaie
   pas le dossier du film (soit un torrent le couvre, soit Radarr supprime son
   propre fichier), donc en annoncer serait promettre plus que ce qui est fait.
-- **Bouton « Orphelins library/ »**, pas une 4e vue (demandé) :
+- **Bouton « Fichiers orphelins »**, pas une 4e vue (demandé) ; à droite de
+  la barre d'onglets (`_tabs.html`, vue Torrents seulement) depuis le
+  2026-10-08, pour libérer la ligne des filtres :
   `core.library_orphan_files()`/`delete_library_orphans()`. Comble un trou
   structurel — les 3 vues partent des torrents ou des objets arr, donc un
   fichier ni lié à un torrent ni connu d'un arr n'apparaissait nulle part.
@@ -476,7 +520,7 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   (`series_emptied` / `series_leftover_paths` dans le plan, 2026-09-23). Sans
   ça `prune_empty_dirs_from` butait sur le `tvshow.nfo` du metadata writer et
   laissait un dossier que **personne ne voit** — les trois vues partent des
-  torrents ou des objets arr, et le bouton « Orphelins `library/` » tient un
+  torrents ou des objets arr, et le bouton « Fichiers orphelins » tient un
   sidecar pour *couvert* tant que Sonarr connaît la série — mais que
   **Jellyfin, lui, affiche comme une série sans le moindre épisode** (2
   dossiers dans ce cas, dont *Daemons of the Shadow Realm*, encore `continuing`
@@ -488,8 +532,8 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   Deux bornes voulues : rien n'est emporté si la saison choisie **n'avait aucun
   fichier** (on n'efface pas du disque quand on n'a rien supprimé), et **les
   sidecars seulement** — une vidéo que Sonarr ne revendique pas reste un
-  orphelin, dont la suppression est un choix humain (bouton « Orphelins
-  `library/` »), pas un effet de bord. Elle fait alors échouer le `rmdir`, ce
+  orphelin, dont la suppression est un choix humain (bouton « Fichiers
+  orphelins »), pas un effet de bord. Elle fait alors échouer le `rmdir`, ce
   qui est le comportement voulu. La liste est **calculée dans le plan et
   rejouée telle quelle** à l'exécution, comme les `season_dirs` et pour la même
   raison : la recalculer après coup emporterait ce qui n'a jamais été annoncé

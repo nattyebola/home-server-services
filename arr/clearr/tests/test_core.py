@@ -332,15 +332,73 @@ class IsBdTorrent(unittest.TestCase):
 
 class BdSortFields(unittest.TestCase):
     """BD_SORT_FIELDS est dérivé de SORT_FIELDS, pas recopié : un champ ajouté
-    à SORT_FIELDS doit arriver dans l'onglet BD tout seul. ABS y remplace TYPE
-    (seul signal d'une BD disparue)."""
+    à SORT_FIELDS doit arriver dans l'onglet BD tout seul. Ni TYPE ni ABS
+    dans BD (une BD disparue y garde son titre en rouge), LIVRES à la place
+    d'AGE."""
 
-    def test_abs_remplace_type(self):
+    def test_livres_sans_type_ni_age(self):
         noms = [n for n, _ in core.SORT_FIELDS]
         noms_bd = [n for n, _ in core.BD_SORT_FIELDS]
         self.assertEqual(noms[0], "TYPE")
-        self.assertEqual(noms_bd, ["ABS"] + [n for n in noms if n != "TYPE"])
+        self.assertEqual(noms_bd, ["LIVRES"] + [n for n in noms if n not in ("TYPE", "AGE")])
+        self.assertNotIn("ABS", noms_bd)
         self.assertNotIn("BIB", noms)
+
+    def test_livres_compte_les_extensions_komga(self):
+        t = {"files": [{"name": "X/T01.cbz"}, {"name": "X/T02.CBR"}, {"name": "X/T03.pdf"},
+                       {"name": "X/cover.jpg"}, {"name": "X/info.nfo"}]}
+        self.assertEqual(core.bd_book_count(t), 3)
+
+
+class KomgaMeta(unittest.TestCase):
+    """Rattachement BD -> Komga par chemin exact des fichiers (core.bd_meta).
+    Les ids et chemins sont ceux qu'expose Komga à un compte admin."""
+
+    def torrent(self, *names):
+        return {"downloadDir": "/data/completed/bd", "name": names[0].split("/")[0],
+                "files": [{"name": n, "length": 1} for n in names]}
+
+    def index(self, books, series):
+        return {"books": {b["url"]: b for b in books}, "series": {s["id"]: s for s in series}}
+
+    def book(self, bid, path, sid, num, title=None):
+        return {"id": bid, "url": os.path.join(core.BD_ROOT, path), "seriesId": sid,
+                "seriesTitle": sid, "name": os.path.basename(path),
+                "metadata": {"numberSort": num, "title": title or os.path.basename(path)}}
+
+    def test_serie_du_premier_livre(self):
+        idx = self.index([self.book("B2", "Sillage/T02.cbz", "S1", 2), self.book("B1", "Sillage/T01.cbz", "S1", 1)],
+                         [{"id": "S1", "name": "Sillage", "url": os.path.join(core.BD_ROOT, "Sillage")}])
+        meta = core.bd_meta(self.torrent("Sillage/T01.cbz", "Sillage/T02.cbz"), idx)
+        self.assertEqual((meta["title"], meta["poster"]), ("Sillage", "/bd-cover/B1"))
+
+    def test_pack_serie_majoritaire_titre_du_torrent(self):
+        # Pack Aldébaran : « Bonus » vient en premier par dossier, mais c'est la
+        # série la plus fournie qui donne jaquette et lien, et le titre est
+        # celui du torrent (aucune série ne résume le pack).
+        books = [self.book("X1", "Pack/Bonus/Encyclo.pdf", "SB", 1),
+                 self.book("C1", "Pack/Cycle 5/T01.cbz", "S5", 1),
+                 self.book("C2", "Pack/Cycle 5/T02.cbz", "S5", 2)]
+        idx = self.index(books, [{"id": "SB", "name": "Bonus", "url": os.path.join(core.BD_ROOT, "Pack/Bonus")},
+                                 {"id": "S5", "name": "Cycle 5", "url": os.path.join(core.BD_ROOT, "Pack/Cycle 5")}])
+        meta = core.bd_meta(self.torrent("Pack/Bonus/Encyclo.pdf", "Pack/Cycle 5/T01.cbz", "Pack/Cycle 5/T02.cbz"), idx)
+        self.assertEqual((meta["title"], meta["poster"]), ("Pack", "/bd-cover/C1"))
+        self.assertTrue(meta["links"] == [] or meta["links"][0]["url"].endswith("/series/S5"))
+
+    def test_fichier_a_la_racine_prend_le_titre_du_livre(self):
+        # Tous les mono-fichiers tombent dans la série racine « bd » : son nom
+        # ne dit rien du torrent.
+        idx = self.index([self.book("B9", "Maus.cbr", "R", 1, title="Maus")],
+                         [{"id": "R", "name": "bd", "url": core.BD_ROOT}])
+        meta = core.bd_meta(self.torrent("Maus.cbr"), idx)
+        self.assertEqual(meta["title"], "Maus")
+
+    def test_rien_de_rattache_sans_livre(self):
+        self.assertIsNone(core.bd_meta(self.torrent("Inconnu/T01.cbz"), core.EMPTY_KOMGA_INDEX))
+
+    def test_id_non_conforme_sans_jaquette(self):
+        idx = self.index([self.book("../x", "A/T01.cbz", "S", 1)], [])
+        self.assertIsNone(core.bd_meta(self.torrent("A/T01.cbz"), idx)["poster"])
 
 
 class TorrentKind(unittest.TestCase):
@@ -756,7 +814,7 @@ class SerieVideeDeSonDernierFichier(unittest.TestCase):
 
     def test_video_orpheline_a_la_racine_n_est_pas_emportee(self):
         """Une vidéo que Sonarr ne revendique pas est un ORPHELIN : la supprimer
-        est un choix humain (bouton « Orphelins library/ »), jamais un effet de
+        est un choix humain (bouton « Fichiers orphelins »), jamais un effet de
         bord. Elle fait échouer le rmdir, et c'est le bon comportement."""
         video = touch(self.root / "grab-jamais-importe.mkv", b"vvvv")
         plan = core.plan_season_deletion(self.state, self.series, [1])
@@ -1071,7 +1129,7 @@ class MountSuspicion(unittest.TestCase):
 
 
 class OrphansFingerprint(unittest.TestCase):
-    """Le POST « Orphelins library/ » ne supprime que si la liste recalculée est
+    """Le POST « Fichiers orphelins » ne supprime que si la liste recalculée est
     celle qui a été affichée."""
 
     def test_stable_et_sensible(self):

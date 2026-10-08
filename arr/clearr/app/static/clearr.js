@@ -142,39 +142,34 @@
   // affichée dans le vide.
   window.addEventListener("scroll", hidePoster, true);
 
-  // --- Switch « Afficher les titres sans fichier » --------------------------
-  // Le masquage lui-même est purement CSS, depuis data-clearr-empty sur <html>
-  // (posé avant le rendu du <body>, voir page.html) : rien à rejouer après un
-  // swap de fragment, et aucun aller-retour serveur au basculement.
-  // Seul l'état COCHÉ de la case ne peut pas venir du CSS, et la case vit DANS
+  // --- Filtre par fichier (Séries / Animés / Films) --------------------------
+  // Le masquage lui-même est purement CSS, depuis data-clearr-empty sur <html> :
+  // l'attribut vit hors de #tab-content, donc rien à rejouer après un swap de
+  // fragment, et aucun aller-retour serveur au basculement.
+  // Seul l'état COCHÉ des radios ne peut pas venir du CSS, et elles vivent DANS
   // le fragment remplacé — d'où cette resynchro après chaque swap.
-  var EMPTY_KEY = "clearr.showEmpty";
+  // Volontairement NON mémorisé (demandé le 2026-10-08) : chaque chargement
+  // repart sur « Avec fichier », comme le filtre par type des Torrents.
 
-  function syncEmptySwitches() {
-    var shown = document.documentElement.getAttribute("data-clearr-empty") === "show";
-    document.querySelectorAll("[data-show-empty]").forEach(function (box) {
-      box.checked = shown;
+  function syncFileFilters() {
+    var state = document.documentElement.getAttribute("data-clearr-empty") || "";
+    document.querySelectorAll("[data-file-filter]").forEach(function (radio) {
+      radio.checked = radio.value === state;
     });
   }
 
   document.addEventListener("change", function (e) {
-    var box = e.target.closest("[data-show-empty]");
-    if (!box) return;
-    if (box.checked) {
-      document.documentElement.setAttribute("data-clearr-empty", "show");
+    var radio = e.target.closest("[data-file-filter]");
+    if (!radio) return;
+    if (radio.value) {
+      document.documentElement.setAttribute("data-clearr-empty", radio.value);
     } else {
       document.documentElement.removeAttribute("data-clearr-empty");
-    }
-    try {
-      localStorage.setItem(EMPTY_KEY, box.checked ? "1" : "0");
-    } catch (err) {
-      // Préférence non mémorisable : le basculement reste valable pour la
-      // session en cours, ce qui vaut mieux que de ne rien faire.
     }
   });
 
   // --- Filtre par type (vue Torrents) ----------------------------------------
-  // Même mécanique que le switch ci-dessus : masquage CSS depuis
+  // Même mécanique que le filtre par fichier ci-dessus : masquage CSS depuis
   // data-clearr-kind sur <html>, radios resynchronisées après chaque swap.
   // Volontairement NON mémorisé (pas de localStorage) : il se comporte comme
   // le filtre par nom, qui repart vide à chaque chargement.
@@ -209,7 +204,7 @@
   // État porté par <html> mais affiché DANS le fragment : à rejouer après
   // chaque remplacement de #tab-content.
   function syncFragmentState() {
-    syncEmptySwitches();
+    syncFileFilters();
     syncKindFilters();
   }
 
