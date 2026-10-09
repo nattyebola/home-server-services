@@ -182,7 +182,11 @@ update: require-env-shared network ## STACK=<nom> — pull/rebuild puis recrée 
 	@# fait jamais échouer l'update.
 	@$(compose) --profile manual config --format json | python3 scripts/image-versions.py snapshot $(STACK)
 	$(compose) --profile manual pull
-	@if [ "$(STACK)" = "nextcloud" ] || [ "$(STACK)" = "arr" ]; then $(compose) build -q; fi
+	@# --pull : interroge le registre pour l'image du FROM même si une copie
+	@# locale taguée existe (sinon BuildKit s'en contente et la base reste
+	@# figée, cas de nginx-unprivileged constaté le 2026-10-09). Digest
+	@# inchangé = toutes les étapes en cache, même image, `up` ne recrée rien.
+	@if [ "$(STACK)" = "nextcloud" ] || [ "$(STACK)" = "arr" ]; then $(compose) build --pull -q; fi
 	@# --wait : rend la main quand chaque conteneur est healthy (et échoue s'il
 	@# devient unhealthy), plutôt qu'aussitôt créé. Sans lui les `occ` ci-dessous
 	@# partaient pendant que l'entrypoint de Nextcloud faisait encore son propre
