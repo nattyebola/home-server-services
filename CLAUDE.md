@@ -93,6 +93,8 @@ Ne pas proposer d'y revenir sans demande explicite de l'utilisateur.
   hardlink, pas d'import (arbitré le 2026-09-22 : « pouvoir lire, pas une
   bibliothèque bien rangée »). Le `:ro` n'est pas négociable (données
   seedées). Komf écarté ; s'il revient, son mode `COMIC_INFO` est interdit.
+  **Kavita essayé et écarté le 2026-10-12** (série = nom de fichier, jamais
+  le dossier : bibliothèque éclatée), détail dans `docs/komga.md`.
 
 ### Repo public et historique git
 

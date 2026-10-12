@@ -68,6 +68,23 @@ pouvoir lire, pas d'avoir un rayonnage impeccable.**
 - **La base Komga est le seul inventaire des BD** (aucun arr ne peut
   reconstituer la liste) : elle est dans la sauvegarde, ne pas l'en retirer.
 
+## Pourquoi pas Kavita
+
+Essayé le 2026-10-12 à côté de Komga, pour ses réglages de lecture mémorisés
+par série (sens, zoom, mise en page). **Écarté** : il est incompatible avec
+des releases gardées telles qu'uploadées.
+
+| Ce que fait Kavita | Effet sur `completed/bd` |
+|---|---|
+| Série = **nom de fichier** (ou `ComicInfo.xml`), jamais le dossier | Elfes (`01 Le Crystal des Elfes bleus.cbz`…) éclaté en 25 séries ; 64 séries pour 13 BD |
+| Fichiers à la racine de la bibliothèque ignorés | Maus et V pour Vendetta absents |
+| `ComicInfo.xml` lu, mais seulement dans l'archive | 5 CBZ sur 114 en ont un, 0 CBR sur 38 |
+
+Les seuls remèdes (écrire des `ComicInfo.xml` dans les archives, ou une vue de
+liens renommés) touchent aux données seedées ou recréent la bibliothèque
+rangée écartée le 2026-09-22. Komga, qui prend le dossier comme série, colle
+à ce modèle.
+
 ## Installation et sécurité
 
 - Pas de `.env` : **la première visite de `komga.<DOMAIN>` crée le compte
