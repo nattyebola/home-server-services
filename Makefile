@@ -347,8 +347,8 @@ search-missing: ## ARGS=<options> — recherche les manquants déjà sortis (aus
 # scripts/crontab (donc résistante à une déconnexion SSH et à un redémarrage).
 # Régénère le dashboard à la fin dans les deux sens : c'est lui qui porte le
 # bandeau d'avertissement tant que l'ouverture est active.
-switch-lan-only-middleware: ## — ouvre/referme les services LAN-only au WAN (referme seul au bout d'1 h)
-	@scripts/lan-only-middleware.sh toggle
+switch-lan-only-middleware: ## ONLY=<middleware…> — ouvre/referme les services LAN-only au WAN (referme seul au bout d'1 h ; ONLY=transmission-lan-only n'ouvre que lui)
+	@scripts/lan-only-middleware.sh toggle $(ONLY)
 
 test: ## — lance les tests des chemins destructifs de clearr (stdlib, rien à installer)
 	@# unittest et pas pytest : le dépôt n'installe aucune dépendance de

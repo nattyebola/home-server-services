@@ -40,8 +40,9 @@
 # tombe entre 60 et 65 min après l'ouverture, pas à la seconde.
 #
 # Sous-commandes :
-#   toggle  (défaut) bascule selon l'état courant, puis régénère le dashboard
-#   open              ouvre au WAN pour OPEN_WINDOW_SECONDS
+#   toggle  [mw…]    bascule selon l'état courant (à l'ouverture : seulement les
+#                     middlewares cités, tous sinon), puis régénère le dashboard
+#   open    [mw…]    ouvre au WAN pour OPEN_WINDOW_SECONDS (mêmes arguments)
 #   close             referme (LAN uniquement)
 #   rearm             referme SI l'échéance est passée — appelé par cron, muet sinon
 #   ensure            écrit le fichier s'il manque, en mode fermé (défaut sûr)
@@ -72,16 +73,27 @@ source "$REPO_ROOT/.env.shared"
 # .transmission-stats-history.jsonl : de l'état d'exécution, pas de l'infra
 # as code, donc hors du checkout.
 STATE_FILE="$DATA_ROOT/.lan-only-open-until"
+# Ouverture ciblée (`open <middleware>…`, ajoutée le 2026-10-12), par exemple
+# transmission sans clearr. Ce fichier liste les middlewares ouverts, un par
+# ligne ; absent = tous.
+# Fichier à part plutôt qu'une 2e ligne dans STATE_FILE : deadline() rejette
+# tout contenu non numérique, et ce rejet doit rester l'échec fermé.
+OPEN_ONLY_FILE="$DATA_ROOT/.lan-only-open-only"
+
+is_opened() { # $1 = middleware ; vrai s'il fait partie de l'ouverture en cours
+	[ ! -f "$OPEN_ONLY_FILE" ] || grep -qxF "$1" "$OPEN_ONLY_FILE"
+}
 
 render() { # $1 = lan|wan
-	local mode="$1" ranges label
+	local mode="$1" wan_ranges lan_ranges label
+	# ::/0 en plus de 0.0.0.0/0 : sans lui un client IPv6 resterait bloqué,
+	# et l'ouverture serait silencieusement partielle.
+	wan_ranges=$'          - "0.0.0.0/0"\n          - "::/0"'
+	lan_ranges="          - \"$LAN_CIDR\""
 	if [ "$mode" = "wan" ]; then
-		# ::/0 en plus de 0.0.0.0/0 : sans lui un client IPv6 resterait bloqué,
-		# et l'ouverture serait silencieusement partielle.
-		ranges=$'          - "0.0.0.0/0"\n          - "::/0"'
 		label="OUVERT AU WAN"
+		[ -f "$OPEN_ONLY_FILE" ] && label="$label ($(paste -sd' ' "$OPEN_ONLY_FILE") seulement)"
 	else
-		ranges="          - \"$LAN_CIDR\""
 		label="LAN uniquement ($LAN_CIDR)"
 	fi
 
@@ -98,7 +110,11 @@ render() { # $1 = lan|wan
 			echo "    $name:"
 			echo "      ipAllowList:"
 			echo "        sourceRange:"
-			echo "$ranges"
+			if [ "$mode" = "wan" ] && is_opened "$name"; then
+				echo "$wan_ranges"
+			else
+				echo "$lan_ranges"
+			fi
 		done
 	} >"$tmp"
 	chmod 644 "$tmp"
@@ -114,9 +130,28 @@ refresh_dashboard() {
 	python3 "$REPO_ROOT/scripts/generate-dashboard.py"
 }
 
-open_until() {
-	local deadline tmp
+open_until() { # $@ = middlewares à ouvrir, aucun = tous
+	local deadline tmp name
+	for name in "$@"; do
+		[[ " ${MIDDLEWARES[*]} " == *" $name "* ]] || {
+			echo "middleware inconnu : $name (connus : ${MIDDLEWARES[*]})" >&2
+			exit 1
+		}
+	done
 	deadline=$(($(date +%s) + OPEN_WINDOW_SECONDS))
+	# La sélection est posée avant l'échéance et avant l'ouverture : si son
+	# écriture échoue, on n'ouvre rien (et surtout pas tout).
+	if [ $# -gt 0 ]; then
+		tmp=$(mktemp "$(dirname "$OPEN_ONLY_FILE")/.lan-only-open-only.XXXXXX") || {
+			echo "impossible d'écrire dans $(dirname "$OPEN_ONLY_FILE") — ouverture annulée" >&2
+			exit 1
+		}
+		printf '%s\n' "$@" >"$tmp"
+		chmod 644 "$tmp"
+		mv "$tmp" "$OPEN_ONLY_FILE"
+	else
+		rm -f "$OPEN_ONLY_FILE"
+	fi
 	# L'échéance est écrite AVANT l'ouverture, et atomiquement (mktemp + mv,
 	# comme le fichier dynamique juste au-dessus). L'ordre inverse laissait une
 	# fenêtre où le middleware était ouvert sans qu'aucune échéance n'existe
@@ -133,12 +168,12 @@ open_until() {
 	render wan
 	echo "LAN-only DÉSACTIVÉ — services joignables depuis le WAN"
 	echo "  refermeture automatique vers $(date -d "@$deadline" '+%H:%M') (garde cron, ±5 min)"
-	echo "  concernés : ${MIDDLEWARES[*]}"
+	if [ $# -gt 0 ]; then echo "  concernés : $*"; else echo "  concernés : ${MIDDLEWARES[*]}"; fi
 }
 
 close_now() {
 	render lan
-	rm -f "$STATE_FILE"
+	rm -f "$STATE_FILE" "$OPEN_ONLY_FILE"
 	echo "LAN-only ACTIF — seul $LAN_CIDR peut atteindre ces services"
 }
 
@@ -172,11 +207,11 @@ deadline() { # échéance VALIDE, vide si fermé ou si le contenu est inexploita
 
 case "${1:-toggle}" in
 toggle)
-	if window_open; then close_now; else open_until; fi
+	if window_open; then close_now; else open_until "${@:2}"; fi
 	refresh_dashboard
 	;;
 open)
-	open_until
+	open_until "${@:2}"
 	refresh_dashboard
 	;;
 close)
