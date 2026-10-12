@@ -160,11 +160,17 @@ fichier importé en hardlink survit — le confirmer plutôt que le supposer.
 ## Langue mal détectée
 
 `list` marque **⚠ langue douteuse** quand le nom du fichier porte un tag
-`MULTI`/`VFF`/`VF2`/`TRUEFRENCH`/`VOSTFR`… alors que la langue détectée
-n'est pas le français. Sur `La.Vie.est.un.Miracle.2002.MULTI…`, Radarr
-proposait *Vietnamese*. Ce n'est pas cosmétique : la langue part dans le
-nom du fichier renommé et dans le `.nfo` lu par Jellyfin. Corriger avec
+d'audio français (`MULTI`/`VFF`/`VF2`/`TRUEFRENCH`/`FRENCH`…) alors que la
+langue détectée n'est pas le français. Sur `La.Vie.est.un.Miracle.2002.MULTI…`,
+Radarr proposait *Vietnamese*. Ce n'est pas cosmétique : la langue part dans
+le nom du fichier renommé et dans le `.nfo` lu par Jellyfin. Corriger avec
 `assign … --language French`.
+
+**`VOSTFR`/`SUBFRENCH` ne comptent pas** : sous-titres français, audio en VO.
+Une VOSTFR anime détectée *Japanese* est juste ; la forcer en *French*
+inventerait une VF (faux positif rencontré le 2026-10-11, retiré du script
+depuis). Si une alerte apparaît quand même, vérifier le tag avant de
+corriger : une `MULTi VOSTFR` reste une MULTi.
 
 ## Limites connues
 

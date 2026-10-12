@@ -64,11 +64,14 @@ ARRS = {
     },
 }
 
-# Tags scène qui impliquent une piste ou un sous-titrage français. Servent
-# uniquement à SIGNALER une détection de langue douteuse : sur
+# Tags scène qui impliquent une piste AUDIO française. Servent uniquement à
+# SIGNALER une détection de langue douteuse : sur
 # `La.Vie.est.un.Miracle.2002.MULTI...`, Radarr a proposé « Vietnamese ». Une
 # langue fausse part dans le nom du fichier importé et dans le `.nfo`.
-FRENCH_TAGS = re.compile(r"\b(MULTI|MULTi|VFF|VFQ|VF|TRUEFRENCH|FRENCH|VOSTFR|SUBFRENCH)\b")
+# VOSTFR/SUBFRENCH exclus : sous-titres FR, audio en VO — la langue détectée
+# (japonais, anglais…) y est juste, et la forcer en French inventerait une VF
+# (faux positif sur une VOSTFR anime le 2026-10-11).
+FRENCH_TAGS = re.compile(r"\b(MULTI|MULTi|VFF|VFQ|VF|VF2|TRUEFRENCH|FRENCH)\b")
 
 # Même mécanisme que scripts/apply-arr-overrides.py et
 # scripts/search-missing.py, dupliqué plutôt qu'importé (chaque script du repo
