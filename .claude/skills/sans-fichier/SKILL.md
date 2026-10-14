@@ -1,9 +1,9 @@
 ---
 name: sans-fichier
-description: Fait l'inventaire des séries, animés et films qui n'ont aucun fichier en bibliothèque, en écartant ce qui n'est pas encore sorti (ou seulement en salle) et ce qui est sorti depuis moins de 2 semaines, puis sépare ce que Sonarr/Radarr cherchent sans rien trouver de ce qu'ils ne chercheront jamais (rien de suivi). À utiliser quand l'utilisateur demande ce qui manque dans la bibliothèque, les titres sans fichier, pourquoi une série ou un film n'a jamais été téléchargé, ou lance /sans-fichier.
+description: Fait l'inventaire des séries, animés et films suivis qui n'ont aucun fichier en bibliothèque, en écartant ce qui n'est pas encore sorti (ou seulement en salle) et ce qui est sorti depuis moins de 2 semaines, puis vérifie titre par titre ce qu'il est possible de faire (release acceptable disponible, rejetée, ou inexistante). À utiliser quand l'utilisateur demande ce qui manque dans la bibliothèque, les titres sans fichier, pourquoi une série ou un film n'a jamais été téléchargé, ou lance /sans-fichier.
 ---
 
-# sans-fichier — titres sortis et toujours absents
+# sans-fichier — titres suivis, sortis et toujours absents
 
 ## Contexte
 
@@ -13,14 +13,17 @@ Le périmètre est le **titre entier** : une série ou un anime sans aucun
 n'en fait pas partie. Ces épisodes-là sont traités par `search-missing.py`
 (lundi, 5 h).
 
-Un titre sans fichier n'est pas forcément anormal. Le catalogue en compte
-toujours une bonne moitié qui n'est pas encore sortie. L'intérêt du skill
-est de ne garder que **le reste**, puis de dire pourquoi il manque.
+**Seuls les titres suivis comptent** (choix de l'utilisateur, 2026-10-14) :
+ceux que Sonarr/Radarr cherchent sans rien trouver. Un titre sorti dont
+rien n'est suivi (ajout en « épisodes futurs uniquement », film non suivi)
+est un choix, pas un manque. Le script l'écarte du rapport, ne pas le
+présenter ni proposer de le suivre.
 
 ## Critères (fixés par l'utilisateur le 2026-10-14)
 
 | Écarté | Règle |
 |---|---|
+| Rien de suivi | aucun épisode voulu déjà diffusé, ou film non suivi (visible seulement en `--json`) |
 | Pas encore sorti (série) | aucun épisode voulu déjà diffusé, et une saison suivie attend sa diffusion |
 | Pas encore sorti (film) | pas de sortie numérique ou physique passée. **Une sortie en salle seule ne compte pas** (il n'en existe que des CAM, refusées par les profils), même si Radarr dit `isAvailable` (`minimumAvailability: inCinemas`) |
 | Trop récent | sorti depuis moins de **14 jours** (`GRACE_DAYS`, `--grace N`) : délai de grab de 24 h + attente d'une VF |
@@ -28,8 +31,7 @@ est de ne garder que **le reste**, puis de dire pourquoi il manque.
 
 Dates de référence :
 
-- **série suivie** : le plus ancien épisode voulu (suivi, diffusé) ;
-- **série sans rien de suivi** : le premier épisode diffusé ;
+- **série** : le plus ancien épisode voulu (suivi, diffusé) ;
 - **film** : la première sortie numérique ou physique. Sans aucune date,
   on se fie au statut Radarr `released` (vieux documentaires).
 
@@ -46,35 +48,55 @@ Lecture seule, ~10 s : aucune requête aux indexeurs, aucun suivi modifié.
 La « dernière recherche auto » vient de l'état de `search-missing.py`
 (`$DATA_ROOT/.search-missing-state.json`).
 
-## Étape 2 — présenter
+## Étape 2 — vérifier chaque titre
 
-Deux tableaux, par type (série / anime / film) :
+Pour chaque titre, établir ce qu'il est possible de faire. La recherche
+interactive coûte une requête par indexeur actif et par titre (voir skill
+`indexer-quota`). Elle est acceptable pour une poignée de titres, pas pour
+des dizaines.
 
-1. **Suivis, sortis, aucun fichier trouvé** : Sonarr/Radarr cherchent,
-   rien n'est passé le profil. Indiquer la dernière recherche auto.
-2. **Sortis, mais rien de suivi** : aucune saison ni aucun épisode suivi
-   (ajout en « épisodes futurs uniquement », ou film non suivi).
-   Sonarr/Radarr **ne les chercheront jamais**. Souvent voulu (on attend
-   la saison suivante) : poser la question, ne pas présumer.
+1. **Recherche interactive**, sans grab : `GET /release?movieId=<id>`
+   (Radarr) ou `GET /release?seriesId=<id>&seasonNumber=<n>` (Sonarr,
+   **par saison** : c'est la seule qui remonte les packs). Lire pour chaque
+   release `approved`, `rejections`, `customFormatScore`, `seeders`.
+2. **Historique du titre** : `GET /history/movie?movieId=<id>` ou
+   `/history/series?seriesId=<id>`. Le paramètre `?movieId=` sur `/history`
+   est **ignoré sans erreur** : il renvoie tout l'historique.
+3. Si un grab apparaît sans import : chercher le torrent dans Transmission
+   et la release dans les logs arr (`/config/logs/sonarr.txt`, `radarr.txt` =
+   fichier courant ; les `.0.txt`, `.1.txt`… sont les rotations).
 
-Les écartés tiennent en une ligne chacun (titre, date), sans détail.
+Classer chaque titre :
 
-## Étape 3 — proposer (rien sans accord)
+| Constat | Action à proposer |
+|---|---|
+| Release `approved` disponible | recherche ciblée (`MoviesSearch` / `SeasonSearch`), qui grabera la meilleure. Expliquer pourquoi l'auto l'a ratée (voir Pièges) |
+| Releases FR rejetées à tort (`Unknown Movie`/`Unknown Series`, nom alternatif) | grab manuel de la release précise, en nommant taille, langue, seeders : `POST /release` avec `guid`, `indexerId` et `movieId` (rattache la release au film), dans les 30 min qui suivent la recherche (cache Radarr) |
+| Releases rejetées à raison (pas de FR, taille, 0 seeder) | rien : `search-missing` le repasse toutes les 2 semaines |
+| Aucune release, même en texte libre (`GET` Prowlarr `/search?type=search&query=`) | rien à faire chez nos indexeurs ; proposer de le laisser ou de ne plus le suivre |
 
-- **Catégorie 1** : une recherche ciblée (`MoviesSearch` /
-  `SeriesSearch`) consomme du quota d'indexeur, une requête par indexeur
-  activé. Proposer titre par titre, en petit nombre (voir skill
-  `indexer-quota`). Si un titre ressort vide recherche après recherche,
-  c'est en général qu'aucune release ne passe le profil (pas de FR,
-  par exemple). Le dire plutôt que relancer : `search-missing` le
-  repasse déjà toutes les 2 semaines.
-- **Catégorie 2** : suivre les saisons voulues (`PUT /series` avec
-  `seasons[].monitored`, ou `PUT /movie` pour un film), puis laisser
-  `search-missing` les prendre. Choix de l'utilisateur, saison par saison.
-- Commit seulement si l'utilisateur le demande.
+## Étape 3 — présenter et proposer (rien sans accord)
+
+Un tableau : type, titre, sortie, dernière recherche auto, constat,
+action possible. Les écartés tiennent en une ligne chacun (titre, date).
+
+Aucune recherche, aucun grab, aucun changement de suivi sans accord,
+titre par titre. Commit seulement si l'utilisateur le demande.
 
 ## Pièges
 
+- **Les packs de saison échappent à la recherche par épisode** : *Man vs.
+  Baby* le 2026-10-14, 1 résultat par épisode contre 25 en recherche de
+  saison. Corrigé dans `search-missing.py` pour une saison diffusée sans
+  aucun fichier (`SeasonSearch`). Une saison partiellement présente reste
+  cherchée épisode par épisode : y vérifier à la main par saison.
+- **Un grab sans import ni échec** peut disparaître de la file sans laisser
+  de trace côté arr (*Man vs. Baby*, pack Amen grabé le 2026-09-22, absent
+  de Transmission). Le titre redevient « manquant » mais n'est recherché
+  qu'au passage suivant de `search-missing`.
+- **Radarr ne reconnaît pas un titre enrichi** : `Gimme.Danger.(The
+  Stooges).2016…` → `Unknown Movie`, score 0. Pas d'alias possible côté
+  Radarr : seul un grab manuel le prend.
 - **Une saison suivie ne veut pas dire des épisodes suivis.** Sonarr suit
   par épisode : une saison cochée dont les épisodes déjà diffusés sont
   décochés ne cherche rien (cas *Frieren* S2 le 2026-10-14). Le script

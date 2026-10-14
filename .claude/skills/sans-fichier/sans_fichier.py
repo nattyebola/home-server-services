@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # Inventaire, en LECTURE SEULE, des séries/animés (Sonarr) et films (Radarr)
 # qui n'ont AUCUN fichier en bibliothèque, débarrassé de ce qui n'est pas
-# encore sorti ou sorti depuis moins de GRACE_DAYS. N'envoie aucune recherche
-# et ne change aucun suivi : les actions restent à proposer (voir SKILL.md).
+# encore sorti ou sorti depuis moins de GRACE_DAYS. Le rapport ne garde que
+# les titres suivis (ceux que rien ne suit sont un choix, hors sujet) ; --json
+# garde toutes les catégories. N'envoie aucune recherche et ne change aucun
+# suivi : les actions restent à proposer (voir SKILL.md).
 #
 #   python3 .claude/skills/sans-fichier/sans_fichier.py [--json] [--grace N]
 import argparse
@@ -154,7 +156,6 @@ def main():
 
     sections = (
         ("cherché", "Suivis, sortis, aucun fichier trouvé"),
-        ("rien de suivi", "Sortis, mais rien de suivi : jamais cherchés"),
         ("en file", "Dans la file de téléchargement (voir skill manual-import)"),
     )
     for category, heading in sections:
