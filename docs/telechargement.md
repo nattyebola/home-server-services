@@ -263,7 +263,7 @@ unique : retirer le tag ne repasse pas en VOSTFR.
 | Ratio 1.5 sur les indexeurs publics | `PUBLIC_INDEXER_SEED_RATIO` | un tracker public ne compte pas le ratio ; les privés ne sont pas touchés |
 | Repacks | `downloadPropersAndRepacks: doNotPrefer` | un REPACK ne passe pas devant le score (et sans upgrade, ne remplace jamais un fichier) |
 | Rejet des archives/exécutables | `failDownloads` | une « release » `.exe`/`.zipx` est marquée en échec et remplacée automatiquement |
-| Recherche des manquants | `search-missing.py`, lundi 5 h | Sonarr/Radarr **ne re-cherchent jamais** seuls un manquant raté au RSS ; plafonné à 12 recherches, rotation par ancienneté ; tâche en rouge si l'arr fait échouer la commande de recherche |
+| Recherche des manquants | `search-missing.py`, lundi 5 h | Sonarr/Radarr **ne re-cherchent jamais** seuls un manquant raté au RSS ; plafonné à 12 recherches, rotation par ancienneté ; une saison diffusée sans aucun fichier est cherchée d'un bloc (packs) ; tâche en rouge si l'arr fait échouer la commande de recherche |
 | Marqueurs de fin de saison | `mark-finale.sh`, hook + cron 2 h | `†` fin de saison, `‡` fin de série, `½` mi-saison devant le titre d'épisode (visible dans Kodi) |
 
 Pas de recyclarr (retiré le 2026-10-07) : sur nos trackers français, les
@@ -292,9 +292,15 @@ folders, tags…) peut être ajusté librement dans les UI.
   se purge via le skill `manual-import`.
 - **Une série ajoutée en « épisodes futurs » n'est jamais cherchée** :
   ses épisodes déjà diffusés restent non suivis, même si la saison est
-  cochée (Sonarr suit par épisode). Le skill `sans-fichier` liste ces
-  titres, avec ceux que Sonarr/Radarr cherchent sans rien trouver. Il
-  écarte ce qui n'est pas sorti (un film seulement en salle n'est pas
+  cochée (Sonarr suit par épisode). C'est souvent voulu.
+- **Une série sortie d'un bloc n'existe souvent qu'en packs de saison**,
+  que la recherche d'un épisode ne remonte pas. `search-missing` cherche
+  donc par saison une saison diffusée sans aucun fichier (depuis le
+  2026-10-14). Pour une saison partiellement présente, lancer une
+  recherche de saison à la main.
+- Le skill `sans-fichier` liste les titres suivis que Sonarr/Radarr
+  cherchent sans rien trouver, et vérifie pour chacun ce qui est possible.
+  Il écarte ce qui n'est pas sorti (un film seulement en salle n'est pas
   sorti) et ce qui est sorti depuis moins de 2 semaines.
 - **Fichiers posés en vrac** à la racine d'un dossier scanné : ignorés sans
   log. Utiliser *Manual Import*.

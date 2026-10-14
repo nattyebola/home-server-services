@@ -35,6 +35,11 @@
 #     Sonarr n'a pas besoin de l'équivalent, son endpoint `wanted/missing` ne
 #     renvoie que des épisodes déjà diffusés.
 #
+# Saison entière manquante = recherche de SAISON, pas d'épisodes : une série
+# sortie d'un bloc n'existe souvent qu'en packs, que la recherche d'un épisode
+# ne remonte pas (Man vs. Baby, 2026-10-14 : 1 résultat par épisode, 25 pour
+# la saison). Voir sonarr_candidates().
+#
 # Best-effort par arr, comme scripts/apply-arr-overrides.py : un Sonarr
 # injoignable n'empêche pas la passe Radarr. Sortie non nulle si l'un des deux
 # a échoué — y compris quand la commande de recherche, acceptée (201), finit en
@@ -179,27 +184,35 @@ def save_state(data_root, state):
     os.replace(tmp, path)
 
 
+def last_searched(seen, ids):
+    """Date de dernière recherche d'un candidat. Un candidat « saison » couvre
+    plusieurs épisodes : un seul jamais cherché (ou date illisible) suffit à le
+    rendre prioritaire, sinon on retient la plus ancienne."""
+    dates = []
+    for key in ids:
+        try:
+            dates.append(datetime.date.fromisoformat(seen[str(key)]))
+        except (KeyError, ValueError):
+            return datetime.date.min
+    return min(dates)
+
+
 def pick_candidates(items, seen, today, limit):
     """Ordonne les candidats du moins récemment cherché au plus récent (jamais
     cherché d'abord), écarte ceux vus il y a moins de MIN_RESEARCH_INTERVAL_DAYS
-    et tronque au plafond. Renvoie (à_chercher, nb_écartés_trop_récents)."""
+    et tronque au plafond. Un candidat est (ids, libellé, saison) : `ids` sont
+    les clés du fichier d'état qu'il couvre, `saison` vaut (seriesId, n° de
+    saison) pour une recherche de saison, None sinon. Renvoie (à_chercher,
+    nb_écartés_trop_récents)."""
     ready, skipped = [], 0
-    for key, label in items:
-        last = seen.get(str(key))
-        if last is None:
-            ready.append((datetime.date.min, key, label))
-            continue
-        try:
-            last_date = datetime.date.fromisoformat(last)
-        except ValueError:
-            ready.append((datetime.date.min, key, label))
-            continue
-        if (today - last_date).days < MIN_RESEARCH_INTERVAL_DAYS:
+    for item in items:
+        last = last_searched(seen, item[0])
+        if last != datetime.date.min and (today - last).days < MIN_RESEARCH_INTERVAL_DAYS:
             skipped += 1
             continue
-        ready.append((last_date, key, label))
+        ready.append((last, item))
     ready.sort(key=lambda t: t[0])
-    return [(k, lbl) for _, k, lbl in ready[:limit]], skipped
+    return [item for _, item in ready[:limit]], skipped
 
 
 def queued_ids(container, base_url, api_key, id_field, unknown_param):
@@ -221,18 +234,38 @@ def queued_ids(container, base_url, api_key, id_field, unknown_param):
 
 def sonarr_candidates(api_key):
     """Épisodes monitored, déjà diffusés, sans fichier — l'endpoint
-    `wanted/missing` applique lui-même le filtre « déjà diffusé »."""
+    `wanted/missing` applique lui-même le filtre « déjà diffusé ».
+
+    Une saison entièrement diffusée, sans aucun fichier, dont il manque au
+    moins deux épisodes devient UN candidat « saison » (SeasonSearch) : c'est le
+    cas où seuls des packs existent, et une requête par indexeur au lieu d'une
+    par épisode. La recherche de saison remonte aussi les épisodes isolés. Une
+    saison en cours de diffusion reste épisode par épisode : un pack n'y
+    passerait pas (Sonarr refuse un pack dont tout n'est pas diffusé)."""
     missing = api_get(SONARR_CONTAINER, SONARR_URL, api_key,
                       "/wanted/missing?page=1&pageSize=1000&monitored=true&includeSeries=true")
     in_queue = queued_ids(SONARR_CONTAINER, SONARR_URL, api_key, "episodeId",
                           "includeUnknownSeriesItems=true")
-    items = []
+    # `includeSeries` ne porte pas les statistiques des saisons, d'où /series.
+    season_stats = {(s["id"], season["seasonNumber"]): season.get("statistics") or {}
+                    for s in api_get(SONARR_CONTAINER, SONARR_URL, api_key, "/series")
+                    for season in s.get("seasons", [])}
+    by_season = {}
     for episode in missing.get("records", []):
         if episode["id"] in in_queue:
             continue
-        series = episode.get("series") or {}
-        items.append((episode["id"],
-                      f"{series.get('title', '?')} S{episode['seasonNumber']:02d}E{episode['episodeNumber']:02d}"))
+        by_season.setdefault((episode["seriesId"], episode["seasonNumber"]), []).append(episode)
+    items = []
+    for season, episodes in by_season.items():
+        title = (episodes[0].get("series") or {}).get("title", "?")
+        stats = season_stats.get(season, {})
+        if (len(episodes) >= 2 and stats.get("episodeFileCount", 1) == 0
+                and not stats.get("nextAiring")):
+            items.append(([e["id"] for e in episodes],
+                          f"{title} S{season[1]:02d} (saison, {len(episodes)} ép.)", season))
+            continue
+        for e in episodes:
+            items.append(([e["id"]], f"{title} S{e['seasonNumber']:02d}E{e['episodeNumber']:02d}", None))
     return items
 
 
@@ -250,7 +283,7 @@ def radarr_candidates(api_key):
             continue
         if movie["id"] in in_queue:
             continue
-        items.append((movie["id"], f"{movie.get('title', '?')} ({movie.get('year', '?')})"))
+        items.append(([movie["id"]], f"{movie.get('title', '?')} ({movie.get('year', '?')})", None))
     return items
 
 
@@ -264,29 +297,43 @@ def run_arr(name, container, base_url, api_key, candidates, command_name,
     lines = [f"{name} : {len(candidates)} manquant(s) éligible(s), "
              f"{skipped} écarté(s) (cherché(s) il y a moins de {MIN_RESEARCH_INTERVAL_DAYS} j), "
              f"{len(picked)} recherché(s)"]
-    for _, label in picked:
+    for _, label, _ in picked:
         lines.append(f"  - {label}")
     if not picked:
         return lines, 0, None
     if dry_run:
         lines.append("  (dry-run : aucune recherche envoyée)")
         return lines, 0, None
-    command = api_command(container, base_url, api_key,
-                          {"name": command_name, ids_field: [key for key, _ in picked]})
-    status, message = wait_command(container, base_url, api_key, command)
-    lines.append(f"  commande {command.get('id')} : {status}")
-    # Échec = items NON marqués : les marquer les aurait sortis de la rotation
-    # 14 jours pour une recherche qui n'a jamais eu lieu.
-    if status in COMMAND_FAILED_STATES:
-        return lines, 0, f"commande {command_name} {command.get('id')} : {status} — {message[:200] or 'sans message'}"
-    for key, _ in picked:
-        seen[str(key)] = today.isoformat()
+    # Les items simples partent en une seule commande ; chaque saison a la
+    # sienne (SeasonSearch ne prend qu'une saison).
+    batches = []
+    singles = [item for item in picked if item[2] is None]
+    if singles:
+        batches.append(({"name": command_name, ids_field: [i for item in singles for i in item[0]]}, singles))
+    for item in picked:
+        if item[2] is not None:
+            batches.append(({"name": "SeasonSearch", "seriesId": item[2][0],
+                             "seasonNumber": item[2][1]}, [item]))
+    searched, errors = 0, []
+    for payload, items in batches:
+        command = api_command(container, base_url, api_key, payload)
+        status, message = wait_command(container, base_url, api_key, command)
+        lines.append(f"  commande {payload['name']} {command.get('id')} : {status}")
+        # Échec = items NON marqués : les marquer les aurait sortis de la rotation
+        # 14 jours pour une recherche qui n'a jamais eu lieu.
+        if status in COMMAND_FAILED_STATES:
+            errors.append(f"commande {payload['name']} {command.get('id')} : {status} — {message[:200] or 'sans message'}")
+            continue
+        for ids, _, _ in items:
+            for key in ids:
+                seen[str(key)] = today.isoformat()
+        searched += len(items)
     # Purge des ids qui ne sont plus manquants (importés, ou titre retiré) :
     # sans ça le fichier d'état grossit indéfiniment et garde des dates qui ne
     # correspondent plus à rien.
-    still_missing = {str(key) for key, _ in candidates}
+    still_missing = {str(key) for ids, _, _ in candidates for key in ids}
     state[name] = {k: v for k, v in seen.items() if k in still_missing}
-    return lines, len(picked), None
+    return lines, searched, "; ".join(errors) or None
 
 
 def main():

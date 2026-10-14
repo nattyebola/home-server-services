@@ -12,7 +12,8 @@ touchent toutes les stacks.
 |---|---|---|
 | Téléchargement fini, **jamais importé**, aucune erreur | remote path mapping absent, ou entrée `importBlocked`/`importPending` dans la file | [Téléchargement](telechargement.md#pièges-connus-1) |
 | REPACK grabé puis refusé à l'import (« Not a Custom Format upgrade ») | `downloadPropersAndRepacks` revenu à `preferAndUpgrade` ; relancer `make arr-overrides` | [Téléchargement](telechargement.md#pièges-connus-1) |
-| Un titre « manquant » depuis des semaines | Sonarr/Radarr ne re-cherchent jamais seuls ; ou il est bloqué dans la file | [Téléchargement](telechargement.md#ce-que-le-dépôt-configure) |
+| Un titre « manquant » depuis des semaines | Sonarr/Radarr ne re-cherchent jamais seuls ; ou il est bloqué dans la file. Skill `sans-fichier` | [Téléchargement](telechargement.md#ce-que-le-dépôt-configure) |
+| Série sortie d'un bloc, **aucun épisode** | seules des releases en pack de saison existent, la recherche par épisode ne les voit pas ; `search-missing` cherche la saison au passage suivant | [Téléchargement](telechargement.md#pièges-connus-1) |
 | Imports **en copie** au lieu de hardlinks, disque qui se remplit | deux bind-mounts séparés, ou `library/` sur un autre disque | [Téléchargement](telechargement.md#hardlinks--un-fichier-deux-chemins) |
 | Le **même torrent regrabé** en boucle | custom format qui matche le titre du post mais pas le nom de fichier | [Téléchargement](telechargement.md#pièges-connus-1) |
 | Torrent **ABS** dans clearr juste après un import manuel | `ManualImport` sans `downloadId` : fichier déplacé, pas hardlinké | [Téléchargement](telechargement.md#pièges-connus-1) |

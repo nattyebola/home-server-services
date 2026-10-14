@@ -511,6 +511,14 @@ ou aux connexions arr → Jellyfin.
   l'équivalent : son `wanted/missing` ne renvoie que des épisodes déjà diffusés.
   `--dry-run` liste la sélection sans rien envoyer aux indexeurs — le réflexe
   avant de toucher aux plafonds.
+  **Saison entièrement diffusée, sans aucun fichier, ≥ 2 épisodes manquants =
+  une `SeasonSearch`** (2026-10-14), un seul item du plafond, dont la date
+  s'inscrit sur chaque épisode couvert. Avant, tout partait en
+  `EpisodeSearch` : une série sortie d'un bloc n'existe souvent qu'en packs,
+  que la recherche d'un épisode ne remonte pas (*Man vs. Baby* : 1 résultat
+  par épisode, 25 pour la saison, restée vide trois semaines). Saison en
+  cours de diffusion exclue : Sonarr y refuse les packs, l'épisode par
+  épisode reste le bon outil.
   **Un `201` sur `POST /command` ne vaut pas recherche faite** (2026-09-29) :
   `wait_command()` relit `GET /command/{id}` pendant au plus
   `COMMAND_WATCH_SECONDS` (60 s). En `failed`/`aborted`/`cancelled`/`orphaned`,
