@@ -290,6 +290,12 @@ folders, tags…) peut être ajusté librement dans les UI.
   `preferAndUpgrade`, qui fait passer le repack avant le score. Réglé à
   `doNotPrefer` par `make arr-overrides` (2026-10-01). L'entrée restée en file
   se purge via le skill `manual-import`.
+- **Une série ajoutée en « épisodes futurs » n'est jamais cherchée** :
+  ses épisodes déjà diffusés restent non suivis, même si la saison est
+  cochée (Sonarr suit par épisode). Le skill `sans-fichier` liste ces
+  titres, avec ceux que Sonarr/Radarr cherchent sans rien trouver. Il
+  écarte ce qui n'est pas sorti (un film seulement en salle n'est pas
+  sorti) et ce qui est sorti depuis moins de 2 semaines.
 - **Fichiers posés en vrac** à la racine d'un dossier scanné : ignorés sans
   log. Utiliser *Manual Import*.
 - **Un import manuel par l'API sans `downloadId` déplace le fichier** au lieu
