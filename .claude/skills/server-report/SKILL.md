@@ -1,6 +1,6 @@
 ---
 name: server-report
-description: Passe en revue l'état complet du serveur (containers, cron, disque, sauvegarde, imports arr en attente, logs de tous les services) et rapporte en français uniquement ce qui ne va pas, en écartant le bruit déjà résolu. À utiliser quand l'utilisateur demande un rapport d'état, un check de santé du serveur, ou de repasser sur les logs/l'état du projet.
+description: Passe en revue l'état complet du serveur (containers, cron, disque, sauvegarde, imports arr en attente, montées de version en attente, logs de tous les services) et rapporte en français uniquement ce qui ne va pas, en écartant le bruit déjà résolu. À utiliser quand l'utilisateur demande un rapport d'état, un check de santé du serveur, ou de repasser sur les logs/l'état du projet.
 ---
 
 # server-report — audit d'état + logs du serveur
@@ -201,7 +201,22 @@ git status --porcelain=v1
 git status -sb   # confirme l'alignement avec origin/<branche>
 ```
 
-## 7. Format du rapport — anomalies seulement
+## 7. Montées de version en attente
+
+```bash
+python3 scripts/image-versions.py pending
+```
+
+Liste vide → « aucune montée de version en attente » dans la ligne de
+couverture, rien d'autre. Sinon, **une fois le rapport rendu**, lancer le
+skill **`changelogs`** dans la foulée, sans attendre la demande de
+l'utilisateur (demandé le 2026-10-16). Son résumé vient **après** le
+rapport, sous son propre titre. Il ne remplace pas le tableau
+d'anomalies : une montée de version n'est pas une anomalie et n'y a pas de
+ligne, sauf si elle a cassé quelque chose (constat de logs, rangé comme
+tout autre constat).
+
+## 8. Format du rapport — anomalies seulement
 
 Structure :
 
