@@ -35,7 +35,9 @@ Serveur multimédia, public sur `jellyfin.<DOMAIN>` (avec `rate-limit`).
 |---|---|
 | Bibliothèques **Films / Séries / Animés** | créées par `make provision` sur `/library/{film,series,anime}` (montage `:ro` de `${DATA_ROOT}/library`) |
 | Bibliothèques personnelles (musique, photos, téléchargements bruts…) | `jellyfin/docker-compose.override.yml`, propre à la machine |
+| Anciens téléchargements (`/media/*` = `completed/*`) | antérieurs au projet, ajoutés aux bibliothèques à la main. **Un chemin vide se retire de sa bibliothèque** (voir les pièges) |
 | Transcodage matériel | `/dev/dri/renderD128` + groupe `render` ; **VAAPI s'active à la main** (Tableau de bord → Lecture) |
+| Tonemapping HDR → SDR | **à activer à la main** (même page, « Activer le tone mapping », réglages par défaut ; activé le 2026-10-18). GPU AMD : passe par Vulkan/libplacebo. Sans lui, un HDR transcodé vers un écran SDR sort délavé, un Dolby Vision profil 5 violet/vert. Sans effet sur le SDR ni sur la lecture directe |
 | Plugins | à installer à la main ; `Kodi Sync Queue` est requis pour que Kodi voie les suppressions |
 | Compte admin | assistant de 1re connexion, puis identifiants recopiés dans `jellyfin/.env` (voir [installation](installation.md#9-jellyfin)) |
 
@@ -158,6 +160,17 @@ Fonctionnement, limites et délais mesurés : [`kodi/README.md`](../kodi/README.
   `sqlite3 <copie>.db ".recover"`, réimport dans une base neuve,
   `PRAGMA integrity_check`. En dernier recours seulement, repartir de zéro
   avec `IsStartupWizardCompleted=false`.
+- **Un dossier de bibliothèque vide n'est jamais nettoyé** (2026-10-17).
+  Jellyfin le prend pour un disque démonté et le saute à chaque scan
+  (`Library folder "/media/series" is inaccessible or empty, skipping`) : les
+  titres qu'il contenait restent dans la base, donc dans Kodi, alors que les
+  fichiers sont partis. Vu avec *The Last of Us* S2, dernier torrent de
+  `completed/series` supprimé par clearr. Fix : retirer le chemin de sa
+  bibliothèque (Tableau de bord → Médiathèques, ou
+  `DELETE /Library/VirtualFolders/Paths?name=…&path=…&refreshLibrary=true`) ;
+  Jellyfin purge alors ses titres et KodiSyncQueue propage. Restent concernés
+  `/media/film`, `/media/anime` (bibliothèques Films, Animés) et `/media/kids`
+  (seul chemin de la bibliothèque Kids : la supprimer entière).
 - **`data/SQLiteBackups/` vide est normal** : copie temporaire avant une
   migration, effacée si elle réussit. La seule sauvegarde de `jellyfin.db` est
   le snapshot restic hebdomadaire.

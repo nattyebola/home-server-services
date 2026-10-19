@@ -29,6 +29,7 @@ touchent toutes les stacks.
 | Certificat resté en échec | Traefik ne retente pas seul | [Traefik](traefik.md#pièges-connus) |
 | Titre mal identifié dans Jellyfin/Kodi, ou insupprimable depuis Kodi | `.nfo` absent ou ancien : rescan côté arr, puis « Identifier » dans Jellyfin | [Médias](medias.md#des-titres-bien-identifiés--les-nfo) |
 | Épisode rangé dans la **mauvaise saison** | Jellyfin lit la saison dans le nom de fichier | [Médias](medias.md#des-titres-bien-identifiés--les-nfo) |
+| Titre ou saison supprimé du disque, **toujours dans Jellyfin/Kodi** | c'était le dernier contenu d'un dossier de bibliothèque : Jellyfin saute les dossiers vides | [Médias](medias.md#pièges-connus-jellyfin) |
 | Jellyfin : toutes les connexions notées depuis `172.18.0.x` | `KnownProxies` résolu sur une ancienne IP de Traefik | [Médias](medias.md#pièges-connus-jellyfin) |
 | Jellyfin mal rafraîchi après un import, `401` dans les logs arr | forme d'authentification refusée par Jellyfin 12 | [Médias](medias.md#pièges-connus-jellyfin) |
 | Seerr en crash `EACCES` en boucle | dossier de config créé en root | [Médias](medias.md#pièges-connus) |
