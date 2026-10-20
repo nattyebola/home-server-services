@@ -65,9 +65,15 @@ puis les releases numérotées `#n`, classées `candidate`, `rejetée`,
 `identique` (même release que le fichier en place). `--all` montre aussi
 les releases `hors cible` (autre épisode, pack sur une demande d'épisode).
 
-Coût : une requête par indexeur actif. Ne pas la relancer en boucle (voir
-skill `indexer-quota`). L'arr oublie la liste au bout de **30 min** : passé
-ce délai, `grab` refuse, relancer `releases`.
+Coût, par indexeur interrogé (historique Prowlarr, sept.–oct. 2026) :
+**1 à 3 requêtes pour un film**, **5 à 12 pour un épisode d'anime**,
+jusqu'à 24 pour un anime à nombreux titres alternatifs (*One Punch Man*).
+Sonarr croise chaque variante du titre (anglais, romaji, avec et sans
+ponctuation) avec deux modes (`S01E02` et numéro absolu `<titre> 02`) :
+un épisode d'anime sur 7 indexeurs ≈ **60 requêtes**. Lancer `releases`
+**une seule fois** par cible (voir skill `indexer-quota`) : l'arr garde la
+liste **30 min**, `grab` s'en sert. Passé ce délai, `grab` refuse, et là
+seulement relancer `releases`.
 
 ## Étape 4 — choisir et grabber
 
