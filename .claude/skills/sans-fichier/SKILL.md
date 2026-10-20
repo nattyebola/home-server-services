@@ -72,7 +72,7 @@ Classer chaque titre :
 |---|---|
 | Release `approved` disponible | recherche ciblée (`MoviesSearch` / `SeasonSearch`), qui grabera la meilleure. Expliquer pourquoi l'auto l'a ratée (voir Pièges) |
 | Releases FR rejetées à tort (`Unknown Movie`/`Unknown Series`, nom alternatif) | grab manuel de la release précise, en nommant taille, langue, seeders : `POST /release` avec `guid`, `indexerId` et `movieId` (rattache la release au film), dans les 30 min qui suivent la recherche (cache Radarr) |
-| Releases rejetées à raison (pas de FR, taille, 0 seeder) | rien : `search-missing` le repasse toutes les 2 semaines |
+| Releases rejetées à raison (pas de FR, taille, 0 seeder) | rien : `search-missing` le repasse chaque lundi |
 | Aucune release, même en texte libre (`GET` Prowlarr `/search?type=search&query=`) | rien à faire chez nos indexeurs ; proposer de le laisser ou de ne plus le suivre |
 
 ## Étape 3 — présenter et proposer (rien sans accord)
@@ -103,7 +103,7 @@ titre par titre. Commit seulement si l'utilisateur le demande.
   regarde le suivi de chaque épisode, pas celui de la saison.
 - **`isAvailable` de Radarr n'est pas « sorti »** : avec
   `minimumAvailability: inCinemas`, un film en salle est « disponible ».
-  `search-missing.py` le cherche donc, en vain, jusqu'à sa sortie
-  numérique. Le skill, lui, l'écarte.
+  Le skill et `search-missing.py` (depuis le 2026-10-20) l'écartent tous
+  deux, avec la même fonction `movie_release()`.
 - Un titre absent du catalogue n'apparaît évidemment pas ici. Pour un
   téléchargement fini mais non importé, voir `manual-import`.
