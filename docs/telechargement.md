@@ -123,6 +123,15 @@ remote be3.vpn.airdns.org 443
   puis relancent Transmission à chaque chute du tunnel. Un redémarrage ne
   perd que les compteurs de **session** : le ratio cumulé (`stats.json`) et
   le temps de seed par torrent survivent.
+- **Changer d'IP de sortie plusieurs fois de suite bloque Gemini** (ou tout
+  tracker qui plafonne les pairs par compte). Gemini accepte **3 pairs par
+  compte et par torrent**, et garde ceux des anciennes IP jusqu'à expiration.
+  Le 2026-10-20, 4 serveurs AirVPN en 2 h 30 (un `vpn-bench`) : les 14
+  torrents Gemini en erreur `You already have 3 peers on this torrent.
+  Ignoring.`, plus aucun seed vers Gemini. Aucune donnée touchée. Cause
+  déduite (seul Gemini touché, ce message précis), pas confirmée côté
+  tracker. Ça se résorbe seul en une à deux annonces (intervalle de 90 min) ;
+  sinon `transmission-remote -t <ids> --reannounce` plus tard.
 - **Ne jamais attacher `transmission-vpn` à un second réseau Docker.** L'image
   pousse une route `redirect-gateway def1`, qui couvre aussi `172.16.0.0/12`,
   la plage des réseaux Docker. Un second réseau casse tout le routage sortant

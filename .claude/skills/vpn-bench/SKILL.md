@@ -69,6 +69,11 @@ seed à chaque redémarrage.
   reversible mais avec un effet de bord réel sur un service en cours
   d'usage, à confirmer avant de lancer si ce n'est pas déjà explicitement
   demandé.
+- **Prévenir aussi que Gemini va refuser nos annonces** pendant 1 h 30 à
+  3 h après le run : chaque serveur testé est une nouvelle IP, Gemini en
+  garde 3 par compte et par torrent (`You already have 3 peers on this
+  torrent`, vécu le 2026-10-20). Rien à réparer, ça expire seul (voir
+  `docs/telechargement.md`, pièges VPN).
 - Vérifier qu'aucun fichier `vpn/custom/.default.ovpn.bench-backup` ne
   traîne déjà (`ls vpn/custom/`) — s'il y en a un, un run précédent a été
   interrompu sans pouvoir restaurer proprement ; l'inspecter et restaurer
