@@ -263,7 +263,7 @@ unique : retirer le tag ne repasse pas en VOSTFR.
 | Ratio 1.5 sur les indexeurs publics | `PUBLIC_INDEXER_SEED_RATIO` | un tracker public ne compte pas le ratio ; les privés ne sont pas touchés |
 | Repacks | `downloadPropersAndRepacks: doNotPrefer` | un REPACK ne passe pas devant le score (et sans upgrade, ne remplace jamais un fichier) |
 | Rejet des archives/exécutables | `failDownloads` | une « release » `.exe`/`.zipx` est marquée en échec et remplacée automatiquement |
-| Recherche des manquants | `search-missing.py`, lundi 5 h | Sonarr/Radarr **ne re-cherchent jamais** seuls un manquant raté au RSS ; plafonné à 12 recherches, rotation par ancienneté ; une saison diffusée sans aucun fichier est cherchée d'un bloc (packs) ; tâche en rouge si l'arr fait échouer la commande de recherche |
+| Recherche des manquants | `search-missing.py`, lundi 5 h | Sonarr/Radarr **ne re-cherchent jamais** seuls un manquant raté au RSS ; chaque manquant retenté chaque semaine, plafonné à 30 recherches par arr, rotation par ancienneté ; un film seulement en salle n'est pas cherché (il attend sa sortie numérique ou physique) ; une saison diffusée sans aucun fichier est cherchée d'un bloc (packs) ; tâche en rouge si l'arr fait échouer la commande de recherche |
 | Marqueurs de fin de saison | `mark-finale.sh`, hook + cron 2 h | `†` fin de saison, `‡` fin de série, `½` mi-saison devant le titre d'épisode (visible dans Kodi) |
 
 Pas de recyclarr (retiré le 2026-10-07) : sur nos trackers français, les

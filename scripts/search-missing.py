@@ -29,11 +29,13 @@
 #     l'import comme les 5 titres débloqués à la main le 2026-08-29) — la
 #     release est déjà trouvée, la rechercher ne ferait que consommer du quota
 #     et risquer un doublon ;
-#   - un film dont Radarr dit `isAvailable == False`, c'est-à-dire pas encore
-#     sorti selon sa `minimumAvailability` (le catalogue en contient toujours
-#     une dizaine : sorties à venir, ou sorties en salle sans sortie numérique).
-#     Sonarr n'a pas besoin de l'équivalent, son endpoint `wanted/missing` ne
-#     renvoie que des épisodes déjà diffusés.
+#   - un film sans sortie numérique ou physique passée (movie_release()).
+#     `isAvailable` ne suffit pas : nos films sont en `minimumAvailability:
+#     inCinemas`, donc « disponibles » dès la salle, où il n'existe que des
+#     CAM que les profils refusent. Le 2026-10-19, les 7 recherches Radarr
+#     sont toutes parties sur des films seulement en salle. Sonarr n'a pas
+#     besoin de l'équivalent, son endpoint `wanted/missing` ne renvoie que
+#     des épisodes déjà diffusés.
 #
 # Saison entière manquante = recherche de SAISON, pas d'épisodes : une série
 # sortie d'un bloc n'existe souvent qu'en packs, que la recherche d'un épisode
@@ -66,13 +68,18 @@ RADARR_URL = "http://localhost:7878/api/v3"
 # la donnée d'exécution propre à ce déploiement, pas de la configuration.
 STATE_FILE_NAME = ".search-missing-state.json"
 
-# Plafond volontairement bas. Chaque item déclenche une requête par indexeur
-# activé (5 ici), donc 12 items ~ 60 requêtes par exécution hebdomadaire.
-MAX_SEARCHES_PER_RUN = 12
-# Un item cherché il y a moins de deux semaines ne l'est pas à nouveau : s'il
-# est resté manquant, c'est qu'aucune release acceptable n'existe, et le stock
-# des indexeurs ne bouge pas assez vite pour que réessayer plus tôt paie.
-MIN_RESEARCH_INTERVAL_DAYS = 14
+# Plafond par arr. Chaque item déclenche une requête par indexeur activé
+# (5 ici), donc 30 items ~ 150 requêtes par arr et par exécution
+# hebdomadaire. Relevé de 12 à 30 le 2026-10-20 pour couvrir chaque semaine
+# tous les manquants (26 côté Sonarr le 2026-10-19) ; reste un garde-fou
+# contre une rafale (C411, 2026-07-28). Si les manquants dépassent durablement
+# ce plafond, la rotation par ancienneté reprend le relais.
+MAX_SEARCHES_PER_RUN = 30
+# Chaque manquant est retenté à chaque passage hebdomadaire (2026-10-20 ; 14 j
+# auparavant, soit un lundi sur deux). 6 et pas 7 : un lancement manuel en
+# cours de semaine ne fait pas sauter le passage du lundi suivant. Seul le
+# plafond ci-dessus peut encore repousser un item d'une semaine.
+MIN_RESEARCH_INTERVAL_DAYS = 6
 
 
 def load_env_file(path):
@@ -131,7 +138,7 @@ def api_command(container, base_url, api_key, payload):
 
 # Relecture de l'état d'une commande après son POST : un 201 veut seulement
 # dire « mise en file », pas « recherche faite ». Délai court et borné — une
-# recherche de 12 items sur 5 indexeurs dure couramment plus longtemps, et ce
+# recherche de 30 items sur 5 indexeurs dure couramment plus longtemps, et ce
 # script n'a pas à attendre la fin : il doit seulement attraper l'échec
 # immédiat (indexeurs tous désactivés, exception au démarrage de la commande).
 COMMAND_WATCH_SECONDS = 60
@@ -215,6 +222,29 @@ def pick_candidates(items, seen, today, limit):
     return [item for _, item in ready[:limit]], skipped
 
 
+def parse_date(value):
+    if not value:
+        return None
+    return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def movie_release(movie):
+    """Date de sortie utile = première sortie numérique ou physique. Sans elle,
+    on s'en remet au statut Radarr (« released » sans date = sortie ancienne,
+    ex. un documentaire de 1997). Une sortie en salle seule ne compte pas :
+    il n'en existe que des CAM, que les profils refusent. Partagée avec
+    .claude/skills/sans-fichier/sans_fichier.py, pour que les deux s'accordent
+    sur ce qui est « sorti »."""
+    dates = [parse_date(movie.get(k)) for k in ("digitalRelease", "physicalRelease")]
+    dates = [d for d in dates if d]
+    if dates:
+        return min(dates)
+    if movie.get("status") == "released":
+        return parse_date(movie.get("inCinemas")) or datetime.datetime(
+            movie.get("year") or 1900, 1, 1, tzinfo=datetime.timezone.utc)
+    return None
+
+
 def queued_ids(container, base_url, api_key, id_field, unknown_param):
     """Ids présents dans la file de téléchargement, quel qu'en soit l'état :
     un `importBlocked` compte autant qu'un `downloading`, la release est
@@ -274,12 +304,12 @@ def radarr_candidates(api_key):
                       "/wanted/missing?page=1&pageSize=1000&monitored=true")
     in_queue = queued_ids(RADARR_CONTAINER, RADARR_URL, api_key, "movieId",
                           "includeUnknownMovieItems=true")
+    now = datetime.datetime.now(datetime.timezone.utc)
     items = []
     for movie in missing.get("records", []):
-        # Le seul filtre que Radarr n'applique pas lui-même : sans lui on
-        # chercherait chaque semaine des films dont la sortie numérique est
-        # dans plusieurs mois.
-        if not movie.get("isAvailable"):
+        # Le seul filtre que Radarr n'applique pas lui-même (voir l'en-tête).
+        release = movie_release(movie)
+        if not release or release > now:
             continue
         if movie["id"] in in_queue:
             continue

@@ -505,10 +505,19 @@ ou aux connexions arr → Jellyfin.
   avec elle, tout finit couvert en étalant la charge.
   N'est **jamais** recherché : un item **déjà dans la file** (y compris
   `importBlocked` — la release est trouvée, la rechercher ne ferait que
-  consommer du quota et risquer un doublon), et un film à
-  `isAvailable == False` (pas encore sorti selon sa `minimumAvailability` — le
-  catalogue en contient en permanence une dizaine). Sonarr n'a pas besoin de
-  l'équivalent : son `wanted/missing` ne renvoie que des épisodes déjà diffusés.
+  consommer du quota et risquer un doublon), et un film **sans sortie
+  numérique ou physique passée** (`movie_release()`, 2026-10-20). Pas
+  `isAvailable` : en `minimumAvailability: inCinemas`, un film est
+  « disponible » dès la salle, où il n'existe que des CAM refusées ; le
+  2026-10-19, les 7 recherches Radarr étaient toutes des films seulement en
+  salle. `movie_release()` est partagée avec `sans_fichier.py` (une seule
+  définition de « sorti »). Sonarr n'a pas besoin de l'équivalent : son
+  `wanted/missing` ne renvoie que des épisodes déjà diffusés.
+  **`MIN_RESEARCH_INTERVAL_DAYS = 6`** (2026-10-20, 14 auparavant = un lundi
+  sur deux) : chaque manquant est retenté à chaque passage hebdomadaire ;
+  6 et pas 7 pour qu'un lancement manuel en semaine ne fasse pas sauter le
+  lundi suivant. Seul `MAX_SEARCHES_PER_RUN` (relevé de 12 à **30** le même jour, ~150
+  requêtes par arr et par passage) peut encore repousser un item.
   `--dry-run` liste la sélection sans rien envoyer aux indexeurs — le réflexe
   avant de toucher aux plafonds.
   **Saison entièrement diffusée, sans aucun fichier, ≥ 2 épisodes manquants =
@@ -522,10 +531,10 @@ ou aux connexions arr → Jellyfin.
   **Un `201` sur `POST /command` ne vaut pas recherche faite** (2026-09-29) :
   `wait_command()` relit `GET /command/{id}` pendant au plus
   `COMMAND_WATCH_SECONDS` (60 s). En `failed`/`aborted`/`cancelled`/`orphaned`,
-  les items **ne sont pas** marqués cherchés (sinon sortis de la rotation 14 j
+  les items **ne sont pas** marqués cherchés (sinon sortis de la rotation
   pour rien) et le script sort en **exit 1** (marqueur cron non écrit, tâche
   rouge au dashboard). Encore `queued`/`started` au bout du délai = acceptée :
-  une recherche de 12 items dure souvent plus, et attendre la fin bloquerait
+  une recherche de 30 items dure souvent plus, et attendre la fin bloquerait
   cron pour un échec tardif rare. La file Sonarr est lue avec
   `includeUnknownSeriesItems` (le script passait la variante Radarr, ignorée).
 - **Limite de ratio 1.5 sur les indexeurs marqués publics**

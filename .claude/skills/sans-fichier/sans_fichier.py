@@ -29,10 +29,7 @@ sm = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sm)
 
 
-def parse_date(value):
-    if not value:
-        return None
-    return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+parse_date = sm.parse_date
 
 
 def day(value):
@@ -83,19 +80,7 @@ def series_items(api, state, now):
     return items
 
 
-def movie_release(movie):
-    """Date de sortie utile = première sortie numérique ou physique. Sans elle,
-    on s'en remet au statut Radarr (« released » sans date = sortie ancienne,
-    ex. un documentaire de 1997). Une sortie en salle seule ne compte pas :
-    il n'en existe que des CAM, que les profils refusent."""
-    dates = [parse_date(movie.get(k)) for k in ("digitalRelease", "physicalRelease")]
-    dates = [d for d in dates if d]
-    if dates:
-        return min(dates)
-    if movie.get("status") == "released":
-        return parse_date(movie.get("inCinemas")) or datetime.datetime(
-            movie.get("year") or 1900, 1, 1, tzinfo=datetime.timezone.utc)
-    return None
+movie_release = sm.movie_release
 
 
 def movie_items(api, state, now):
