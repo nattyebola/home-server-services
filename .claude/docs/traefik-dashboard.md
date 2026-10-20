@@ -204,6 +204,19 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
     qu'un compte agrégé, pour voir directement LEQUEL est en échec sans
     changer d'écran. `/api/v1/indexer` croisé avec `/api/v1/indexerstatus`
     (vide si tout va bien).
+- **Carte « Tunnel VPN » (2026-10-20, `render_tunnel_card()`)**, en tête du
+  Monitoring, après un tunnel tombé à ~90 Ko/s sans que rien ne le montre
+  (route dégradée vers la Belgique, voir `docs/telechargement.md`). Mesures
+  par `docker exec` dans `vpn-transmission-vpn-1` : ping, `transmission-remote
+  -pt`, API `airvpn.org/api/whatismyip`, âge du processus `openvpn`. Seuils
+  dans `TUNNEL_LOSS_PCT`/`TUNNEL_RTT_MS`. **Jamais omise** quand le VPN
+  tourne : un ping sans réponse vaut 100 % de pertes, pas une inconnue.
+  **N'afficher que le pays, jamais `server_name`** de l'API : la page est
+  publique et le nom du serveur donne l'IP de sortie qui seede. Pas
+  d'auto-remédiation derrière (décision du socle), la carte est le signal.
+  **Ordre des cartes refait pour la mettre en tête** (13 slots, rangées de 4,
+  la dernière incomplète) : Tunnel, Débits, Indexeurs / Ratios, Torrents /
+  Tracker, Tâches / Disque. Tracker et Tâches restent sur une même rangée.
 - **Une section vide n'est pas affichée** (plus de placeholder « aucun ») ; la
   section Monitoring ne s'affiche que si `vpn/transmission-vpn` tourne, pas
   seulement si `transmission-stats.py` a réussi — évite un message d'erreur

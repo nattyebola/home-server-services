@@ -80,11 +80,39 @@ flowchart LR
 - **Invisible des moteurs et des crawlers**, par trois voies redondantes :
   `<meta name="robots">`, `dashboard/assets/robots.txt` et l'en-tête
   `X-Robots-Tag`.
-- **Section Monitoring** (dépliable) : ratios et débits Transmission par
-  tracker, torrents en erreur ou absents, **imports bloqués / en attente**
+- **Section Monitoring** (dépliable) : **santé du tunnel VPN** (voir
+  ci-dessous), ratios et débits Transmission par tracker, torrents en erreur ou absents, **imports bloqués / en attente**
   (comptés par téléchargement, un pack compte pour un),
   santé de chaque indexeur Prowlarr, âge de la dernière sauvegarde,
   **tâches planifiées** (vert si la tâche a réussi dans son intervalle).
+
+**Carte « Tunnel VPN »** (première du Monitoring). Mesures prises dans le
+conteneur VPN, donc à travers le tunnel, à chaque régénération (5 min) :
+
+| Ligne | Mesure |
+|---|---|
+| Voyant (à droite du titre) | synthèse ci-dessous ; état en clair au survol |
+| Pays | pays de sortie, selon l'API d'AirVPN (`airvpn.org/api/whatismyip`) |
+| Latence, Pertes | 10 pings vers `1.1.1.1` |
+| Port | `transmission-remote -pt` (port entrant de Transmission) |
+| Connecté | âge du processus OpenVPN (le tunnel ne se reconnecte jamais sans redémarrer le conteneur) |
+
+| Voyant | État | Condition |
+|---|---|---|
+| 🟢 | Sain | pertes < 5 % et latence < 150 ms |
+| 🟠 | Ralenti | pertes ≥ 5 % ou latence ≥ 150 ms |
+| 🔴 | Dégradé | pertes ≥ 20 % ou latence ≥ 500 ms |
+| 🔴 | Coupé / Port fermé / Hors AirVPN | aucun ping ne passe ; port 40125 fermé ; trafic qui ne sort pas par AirVPN (affiché à la place du pays) |
+
+Tout état rouge pulse ; la ligne en cause est aussi en rouge.
+
+> [!WARNING]
+> La page est publique : seul le **pays** est affiché. L'API renvoie aussi le
+> nom du serveur AirVPN, jamais affiché : il donne l'IP de sortie, celle qui
+> seede.
+
+Un tunnel « Dégradé » qui le reste après un redémarrage : voir
+[Choix du serveur AirVPN](telechargement.md#choix-du-serveur-airvpn).
 
 > [!TIP]
 > Une carte grisée alors que le conteneur est `healthy` ne vient pas forcément

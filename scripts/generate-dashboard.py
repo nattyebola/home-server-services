@@ -945,6 +945,149 @@ def fetch_transmission_stats(running):
     return stats if stats and "error" not in stats else None
 
 
+TUNNEL_CONTAINER = "vpn-transmission-vpn-1"
+TUNNEL_PING_TARGET = "1.1.1.1"
+# Seuils (orange, rouge) de la carte Tunnel VPN. Repères du 2026-10-20 : sain
+# vers les Pays-Bas ~30 ms / 0 %, route dégradée vers la Belgique 3,4 s et
+# 40-90 % de pertes (voir docs/telechargement.md#choix-du-serveur-airvpn).
+TUNNEL_LOSS_PCT = (5, 20)
+TUNNEL_RTT_MS = (150, 500)
+# Codes renvoyés par l'API AirVPN ; un pays absent s'affiche en code brut.
+COUNTRY_NAMES = {
+    "at": "Autriche", "be": "Belgique", "ch": "Suisse", "de": "Allemagne",
+    "es": "Espagne", "fr": "France", "gb": "Royaume-Uni", "it": "Italie",
+    "nl": "Pays-Bas", "se": "Suède",
+}
+
+
+def tunnel_exec(cmd, timeout):
+    """stdout d'une commande dans le conteneur VPN, None si elle échoue."""
+    try:
+        res = subprocess.run(["docker", "exec", TUNNEL_CONTAINER, "sh", "-c", cmd],
+                             capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return None
+    return res.stdout if res.returncode == 0 else None
+
+
+def tunnel_health():
+    """Mesures prises DANS le conteneur VPN, donc à travers le tunnel. Chaque
+    valeur vaut None quand sa mesure échoue, sauf `loss` : un ping qui ne sort
+    pas du tout, c'est 100 % de pertes, pas une inconnue."""
+    health = {"loss": 100, "rtt": None, "port_open": None,
+              "airvpn": None, "country": None, "uptime": None}
+
+    out = tunnel_exec(f"ping -q -c 10 -i 0.2 -W 2 {TUNNEL_PING_TARGET}", 15) or ""
+    m = re.search(r"([\d.]+)% packet loss", out)
+    if m:
+        health["loss"] = round(float(m.group(1)))
+    m = re.search(r"= [\d.]+/([\d.]+)/", out)
+    if m:
+        health["rtt"] = float(m.group(1))
+
+    out = tunnel_exec("transmission-remote -pt", 15)
+    if out and "Port is open" in out:
+        health["port_open"] = "Yes" in out
+
+    # API d'AirVPN plutôt qu'un service de géolocalisation tiers : elle dit en
+    # plus si le trafic sort bien par AirVPN. Elle renvoie aussi le nom du
+    # serveur, volontairement jamais affiché : la page est publique, et ce nom
+    # donne l'IP de sortie, celle qui seede.
+    out = tunnel_exec("curl -s -m 8 https://airvpn.org/api/whatismyip/", 12)
+    try:
+        info = json.loads(out) if out else {}
+    except json.JSONDecodeError:
+        info = {}
+    if info.get("result") == "ok":
+        health["airvpn"] = bool(info.get("airvpn"))
+        health["country"] = (info.get("geo") or {}).get("code")
+
+    # Âge du processus OpenVPN = âge du tunnel : l'image arrête le conteneur à
+    # chaque chute du tunnel (remap-usr1 SIGTERM, ping-exit), jamais de
+    # reconnexion dans le même processus.
+    out = tunnel_exec('ps -o etimes= -p "$(pidof openvpn)"', 5)
+    if out and out.strip().isdigit():
+        health["uptime"] = int(out.strip())
+    return health
+
+
+def tunnel_state(h):
+    """(classe, libellé) de l'état global du tunnel, porté par le voyant."""
+    if h["loss"] >= 100:
+        return "critical", "Coupé"
+    if h["airvpn"] is False:
+        return "critical", "Hors AirVPN"
+    if h["port_open"] is False:
+        return "critical", "Port fermé"
+    rtt = h["rtt"] or 0
+    if h["loss"] >= TUNNEL_LOSS_PCT[1] or rtt >= TUNNEL_RTT_MS[1]:
+        return "critical", "Dégradé"
+    if h["loss"] >= TUNNEL_LOSS_PCT[0] or rtt >= TUNNEL_RTT_MS[0]:
+        return "warning", "Ralenti"
+    return "good", "Sain"
+
+
+def human_uptime(seconds):
+    if seconds < 3600:
+        return f"{seconds // 60} min"
+    if seconds < 86400:
+        return f"{seconds // 3600} h"
+    return f"{seconds // 86400} j"
+
+
+def render_tunnel_card(running):
+    """Toujours rendue quand le VPN tourne, jamais omise : un tunnel qui ne
+    répond plus est précisément ce que la carte doit montrer (même logique
+    que les compteurs d'imports, voir render_torrents_files_card)."""
+    if "vpn/transmission-vpn" not in running:
+        return render_stat_placeholder("Tunnel VPN")
+    h = tunnel_health()
+    cls, label = tunnel_state(h)
+
+    def level(value, thresholds):
+        if value is None:
+            return ""
+        if value >= thresholds[1]:
+            return "stat-value-critical"
+        return "stat-value-warning" if value >= thresholds[0] else "stat-value-good"
+
+    # « Hors AirVPN » à la place du pays : le voyant n'est qu'une couleur, une
+    # ligne doit dire en clair chaque état rouge (les autres le font déjà :
+    # pertes à 100 %, port « Fermé »).
+    country = h["country"]
+    if h["airvpn"] is False:
+        country_value, country_class = "Hors AirVPN", "stat-value-critical"
+    else:
+        country_value = COUNTRY_NAMES.get(country, country.upper()) if country else "—"
+        country_class = ""
+    rows = [
+        render_stat_item(
+            country_value, "Pays", value_class=country_class,
+            title="Pays de sortie du tunnel, selon l'API d'AirVPN",
+        ),
+        render_stat_item(
+            f"{h['rtt']:.0f} ms" if h["rtt"] is not None else "—", "Latence",
+            value_class=level(h["rtt"], TUNNEL_RTT_MS),
+            title=f"Ping moyen vers {TUNNEL_PING_TARGET} à travers le tunnel (10 paquets)",
+        ),
+        render_stat_item(
+            f"{h['loss']} %", "Pertes", value_class=level(h["loss"], TUNNEL_LOSS_PCT),
+            title="Part des 10 pings restés sans réponse",
+        ),
+        render_stat_item(
+            {True: "Ouvert", False: "Fermé", None: "—"}[h["port_open"]], "Port",
+            value_class={True: "stat-value-good", False: "stat-value-critical", None: ""}[h["port_open"]],
+            title="Port entrant de Transmission, testé par transmission-remote -pt ; "
+                  "fermé, plus aucun pair ne peut se connecter à nous",
+        ),
+        render_stat_item(
+            human_uptime(h["uptime"]) if h["uptime"] is not None else "—", "Connecté",
+            title="Depuis le dernier (re)démarrage du tunnel",
+        ),
+    ]
+    return render("tunnel-card.html", state_class=cls, state=label, rows="\n".join(rows))
+
+
 def build_stats_section(running, data_root, backup_dir):
     """Visible WAN et LAN, pas de gating card-lan-blocked (chiffres agrégés
     en snapshot, pas un accès de contrôle au client — voir CLAUDE.md).
@@ -969,30 +1112,25 @@ def build_stats_section(running, data_root, backup_dir):
     vpn_running = "vpn/transmission-vpn" in running
     stats = fetch_transmission_stats(running)
 
-    cards = []
-    tracker_card = ""
+    speed_card = ratio_card = torrents_card = tracker_card = ""
 
     if not vpn_running:
-        cards += [
-            render_stat_placeholder("Débits", "stat-span-2"),
-            render_stat_placeholder("Ratios", "stat-span-2"),
-            render_stat_placeholder("Torrents", "stat-span-2"),
-        ]
+        speed_card = render_stat_placeholder("Débits", "stat-span-2")
+        ratio_card = render_stat_placeholder("Ratios", "stat-span-2")
+        torrents_card = render_stat_placeholder("Torrents", "stat-span-2")
         tracker_card = render_stat_placeholder("Ratio par tracker", "stat-span-3")
     elif stats:
-        cards += [
-            render_dual_gauge_card("Débits", [
-                render_speed_gauge_column("Descendant", stats["download_speed"],
-                                          stats["download_speed_human"], stats["speed_scale"]["download_max"]),
-                render_speed_gauge_column("Montant", stats["upload_speed"],
-                                          stats["upload_speed_human"], stats["speed_scale"]["upload_max"]),
-            ]),
-            render_dual_gauge_card("Ratios", [
-                render_ratio_gauge_column("Total", stats["total"]["ratio_display"], stats["total"]["ratio"]),
-                render_ratio_gauge_column(f"Session ({stats['session']['uptime_human']})",
-                                          stats["session"]["ratio_display"], stats["session"]["ratio"]),
-            ]),
-        ]
+        speed_card = render_dual_gauge_card("Débits", [
+            render_speed_gauge_column("Descendant", stats["download_speed"],
+                                      stats["download_speed_human"], stats["speed_scale"]["download_max"]),
+            render_speed_gauge_column("Montant", stats["upload_speed"],
+                                      stats["upload_speed_human"], stats["speed_scale"]["upload_max"]),
+        ])
+        ratio_card = render_dual_gauge_card("Ratios", [
+            render_ratio_gauge_column("Total", stats["total"]["ratio_display"], stats["total"]["ratio"]),
+            render_ratio_gauge_column(f"Session ({stats['session']['uptime_human']})",
+                                      stats["session"]["ratio_display"], stats["session"]["ratio"]),
+        ])
         if stats.get("trackers"):
             rows = "\n".join(render_tracker_row(t) for t in stats["trackers"])
             tracker_card = render("tracker-card.html", rows=rows)
@@ -1007,27 +1145,25 @@ def build_stats_section(running, data_root, backup_dir):
         # Corollaire assumé du rattachement à cette carte : vpn/transmission-vpn
         # arrêté remplace tout le bloc par un placeholder, compteurs d'imports
         # compris, alors qu'ils ne dépendent que des arr.
-        cards.append(render_torrents_files_card(stats, arr_stuck_imports(running)))
+        torrents_card = render_torrents_files_card(stats, arr_stuck_imports(running))
 
-    indexers_card = render_indexers_card(running)
-    if indexers_card:
-        cards.append(indexers_card)
-
-    disk_card = render_disk_card(data_root, backup_dir)
-    if disk_card:
-        cards.append(disk_card)
-
-    # Carte tracker (span 3) placée juste avant "Tâches planifiées" (span 1) :
-    # les cartes précédentes remplissent exactement les rangées précédentes
-    # (4 slots chacune), donc ces deux-là tombent naturellement sur la même
-    # rangée, tracker en 1re position et tâches planifiées en 2e — demandé
-    # par l'utilisateur le 2026-07-30, voir CLAUDE.md.
-    if tracker_card:
-        cards.append(tracker_card)
-
-    scheduled_tasks_card = render_scheduled_tasks_card(data_root, running)
-    if scheduled_tasks_card:
-        cards.append(scheduled_tasks_card)
+    # Ordre calé sur des rangées de 4 slots (span entre parenthèses), refait
+    # le 2026-10-20 pour mettre le tunnel en tête, à la demande :
+    #   Tunnel(1) Débits(2) Indexeurs(1) / Ratios(2) Torrents(2) /
+    #   Tracker(3) Tâches(1) / Disque(1)
+    # 13 slots : une rangée reste forcément incomplète, autant la dernière.
+    # Tracker et tâches planifiées restent sur la même rangée (demandé le
+    # 2026-07-30, voir CLAUDE.md). Une carte omise (best-effort) décale la suite.
+    cards = [c for c in (
+        render_tunnel_card(running),
+        speed_card,
+        render_indexers_card(running),
+        ratio_card,
+        torrents_card,
+        tracker_card,
+        render_scheduled_tasks_card(data_root, running),
+        render_disk_card(data_root, backup_dir),
+    ) if c]
 
     if not cards:
         return ""

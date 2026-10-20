@@ -116,6 +116,7 @@ a.card:hover { transform: translateY(-2px); }
 .stat-placeholder { opacity: .45; }
 .stat-down { font-size: .85rem; }
 .stat-value-critical { color: var(--status-critical); }
+.stat-value-warning { color: var(--status-warning); }
 .stat-label { font-size: .75rem; opacity: .6; text-align: center; }
 
 /* Carte liste (indexeurs Prowlarr, tâches planifiées) : contenu variable en
@@ -264,8 +265,25 @@ a.card:hover { transform: translateY(-2px); }
    à plat dans le flux, plus un accordéon replié : mini-barre par ligne,
    plus adaptée qu'une jauge à la taille d'une cellule de tableau. */
 .stat-tracker { align-items: stretch; justify-content: flex-start; }
-.stat-tracker > .stat-header-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .25rem; }
-.stat-tracker > .stat-header-row > .stat-label { margin: 0; }
+.stat-tracker > .stat-header-row,
+.stat-tunnel > .stat-header-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .25rem; }
+.stat-tracker > .stat-header-row > .stat-label,
+.stat-tunnel > .stat-header-row > .stat-label { margin: 0; }
+/* Voyant de la carte Tunnel VPN (render_tunnel_card()) : pastille + halo de
+   la même couleur. Seule la couleur porte l'état ici, mais pas seule
+   (WCAG 1.4.1) : infobulle, aria-label, et les valeurs des lignes disent
+   déjà pourquoi (pertes, port « Fermé », « Hors AirVPN »). */
+.tunnel-light {
+  width: 10px; height: 10px; border-radius: 50%; flex: none; margin-right: 3px;
+  background: currentColor; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 25%, transparent);
+}
+.tunnel-light-good { color: var(--status-good); }
+.tunnel-light-warning { color: var(--status-warning); }
+.tunnel-light-critical { color: var(--status-critical); animation: tunnel-pulse 1.6s ease-in-out infinite; }
+@keyframes tunnel-pulse {
+  50% { box-shadow: 0 0 0 6px color-mix(in srgb, currentColor 10%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) { .tunnel-light-critical { animation: none; } }
 .stat-tracker .switch-label { font-size: .75rem; opacity: .75; }
 /* Trackers publics bruts (pas un indexeur configuré dans Prowlarr) masqués
    par défaut — voir render_tracker_row()/dashboard.js, switch "Tous les
