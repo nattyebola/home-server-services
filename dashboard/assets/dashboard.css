@@ -77,14 +77,31 @@ a.card:hover { transform: translateY(-2px); }
 .card-down { opacity: .45; }
 .card-lan-blocked { opacity: .45; pointer-events: none; }
 .logo { width: 40px; height: 40px; object-fit: contain; }
-.logo-unhealthy {
-  outline: 3px solid #ef4444; outline-offset: 3px; border-radius: 8px;
-}
 .warning {
   font-size: .7rem; font-weight: 600; color: #ef4444; text-align: center;
 }
 .name { font-weight: 600; font-size: .95rem; }
-.host { font-size: .75rem; opacity: .6; word-break: break-all; text-align: center; }
+/* Nom du service en bandeau d'en-tête, en haut à gauche ; logo, alerte et
+   adresse centrés en dessous (2026-10-20, même traitement que les cartes du
+   Monitoring, voir la fin du fichier), avec le voyant de healthcheck à
+   droite. L'en-tête doit donc rester le 1er enfant de la carte
+   (card-clickable.html/card-down.html). overflow: hidden pour que
+   le fond du bandeau suive l'arrondi des coins. */
+.card { overflow: hidden; }
+.card > .card-header > .name { font-size: inherit; }
+.card > .card-header {
+  align-self: stretch; display: flex; align-items: center; justify-content: space-between; gap: .5rem;
+  text-align: left; font-size: .85rem;
+  margin: -1.25rem -1rem .5rem; padding: .5rem 1rem;
+  background: rgba(0,0,0,.035); border-bottom: 1px solid rgba(0,0,0,.06);
+}
+@media (prefers-color-scheme: dark) {
+  .card > .card-header { background: rgba(255,255,255,.04); border-bottom-color: rgba(255,255,255,.07); }
+}
+/* overflow-wrap: anywhere et pas word-break: break-all, qui coupait aussi les
+   mots ordinaires (« accessible en LAN unique-ment ») : ne coupe qu'un mot qui
+   ne tient pas, typiquement un long sous-domaine. */
+.host { font-size: .75rem; opacity: .6; overflow-wrap: anywhere; text-align: center; }
 /* Toutes les cartes de stats (Débits/Ratio/Torrents/Disque/Indexeurs) à
    plat dans un seul flux — pas de grille CSS, pas de sous-groupes/titres de
    sous-section : chaque carte porte son propre libellé (voir
@@ -187,7 +204,6 @@ a.card:hover { transform: translateY(-2px); }
    de défilement propre : il poussait la page entière. */
 .tracker-table-wrap { overflow-x: auto; }
 .stat-torrents-files { align-items: stretch; justify-content: flex-start; gap: .6rem; }
-.stat-torrents-files > .stat-label { text-align: left; margin-bottom: -.15rem; }
 .stat-columns-row { display: flex; flex-direction: row; align-items: flex-start; justify-content: space-between; gap: 1.5rem; }
 /* La carte Torrents porte 3 colonnes depuis l'ajout des compteurs d'imports
    coincés (2026-08-31) : à 460px de contenu et 1.5rem de gouttière, chacune
@@ -195,23 +211,10 @@ a.card:hover { transform: translateY(-2px); }
    mais sans marge. flex-wrap + min-width font passer la 3e colonne sous les
    deux autres dès que la carte rétrécit (elle a bien un flex-shrink, voir
    .stat-span-2) plutôt que de tronquer les libellés. Ciblé sur cette carte :
-   .stat-columns-row sert aussi aux cartes à 2 jauges (.stat-dual-gauge). */
+   .stat-columns-row sert aussi à d'autres cartes. */
 .stat-torrents-files .stat-columns-row { flex-wrap: wrap; }
 .stat-torrents-files .stat-multi-col { min-width: 120px; }
 
-/* Carte à 2 jauges (débits descendant/montant, ratios total/session) — même
-   .stat-span-2/.stat-columns-row que la carte Torrents, mais chaque colonne
-   est une jauge complète (icône + valeur + libellé) plutôt qu'une liste
-   label/valeur : voir render_dual_gauge_card()/gauge-column.html.
-   align-items: stretch (comme .stat-torrents-files) pour que .stat-columns-row
-   occupe toute la largeur de la carte — sans ça le .stat de base (align-items:
-   center) laisse la ligne se resserrer à la largeur de son contenu, et
-   justify-content dessus n'a alors plus aucun espace à répartir : les 2
-   colonnes restaient collées au centre plutôt qu'étalées jusqu'aux bords. */
-.stat-dual-gauge { align-items: stretch; justify-content: flex-start; }
-.stat-dual-gauge > .stat-label { text-align: left; margin-bottom: -.15rem; }
-.stat-dual-gauge .stat-columns-row { align-items: center; justify-content: space-evenly; }
-.stat-gauge-col { display: flex; flex-direction: column; align-items: center; gap: .4rem; }
 .stat-multi-col { display: flex; flex-direction: column; align-items: stretch; gap: .5rem; flex: 1; min-width: 0; }
 .stat-multi-row {
   display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; font-size: .85rem;
@@ -229,19 +232,16 @@ a.card:hover { transform: translateY(-2px); }
    mini-meter du tableau par tracker) — la valeur seule ("935.9Go") ne
    disait pas ce qu'elle représentait. */
 .stat-disk { align-items: stretch; justify-content: center; gap: .75rem; }
-.stat-disk .stat-label { text-align: left; margin-bottom: -.15rem; }
 .disk-row { display: flex; flex-direction: column; align-items: center; gap: .35rem; }
 .disk-row-label { font-size: .75rem; opacity: .7; }
 .disk-row .meter-track { width: 100%; }
 .disk-row-value { font-size: .8rem; font-variant-numeric: tabular-nums; }
 
-/* Jauge de débit : arc de fond + arc coloré proportionnel + aiguille. */
-.gauge-track, .gauge-fill { fill: none; stroke-width: 8; stroke-linecap: round; }
-.gauge-track { stroke: #cde2fb; }
-.gauge-fill { stroke: #2a78d6; }
+/* Jauge de débit : arc de fond + aiguilles (plus d'arc de remplissage
+   depuis le passage à 2 aiguilles, voir gauge_svg). */
+.gauge-track { fill: none; stroke-width: 8; stroke-linecap: round; stroke: #cde2fb; }
 @media (prefers-color-scheme: dark) {
   .gauge-track { stroke: rgba(57,135,229,.18); }
-  .gauge-fill { stroke: #3987e5; }
 }
 .gauge-needle { stroke: currentColor; stroke-width: 3; stroke-linecap: round; opacity: .75; }
 .gauge-hub { fill: currentColor; opacity: .75; }
@@ -261,29 +261,54 @@ a.card:hover { transform: translateY(-2px); }
 .gauge-zone-warning { stroke: var(--status-warning); }
 .gauge-zone-good { stroke: var(--status-good); }
 
+/* Carte d'une case à une jauge et 2 aiguilles (Débits, Ratios — voir
+   render_needle_gauge_card/needle-gauge-card.html). 2e aiguille en bleu, hors
+   des 3 couleurs de zone de la jauge de ratio pour ne jamais s'y confondre,
+   et assez foncé pour ressortir sur l'arc bleu clair de la jauge de débit ;
+   la pastille devant chaque valeur reprend la couleur de son aiguille. */
+.gauge-needle-second { stroke: #1d5fb0; opacity: 1; }
+.stat-needles { align-items: stretch; justify-content: flex-start; }
+.stat-needles svg { align-self: center; width: 96px; height: 56px; }
+.needle-legend { display: flex; justify-content: space-evenly; gap: .5rem; }
+.needle-legend-item { display: flex; flex-direction: column; align-items: center; gap: .2rem; min-width: 0; }
+.needle-swatch {
+  display: inline-block; width: .6rem; height: .6rem; border-radius: 50%;
+  margin-right: .3rem; vertical-align: .05rem;
+}
+.needle-swatch-first { background: currentColor; opacity: .75; }
+.needle-swatch-second { background: #1d5fb0; }
+@media (prefers-color-scheme: dark) {
+  .gauge-needle-second { stroke: #5aa2f0; }
+  .needle-swatch-second { background: #5aa2f0; }
+}
+
+/* Indexeurs sur 2 cases (stat-span-2) : liste en 2 colonnes, remplies de
+   haut en bas (ordre alphabétique lu colonne par colonne). */
+.stat-indexers .status-list { display: block; columns: 2; column-gap: 1rem; }
+.stat-indexers .status-list li { break-inside: avoid; margin-bottom: .3rem; }
+
 /* Carte "Ratio par tracker" (span 3, voir tracker-card.html) — simple carte
    à plat dans le flux, plus un accordéon replié : mini-barre par ligne,
    plus adaptée qu'une jauge à la taille d'une cellule de tableau. */
 .stat-tracker { align-items: stretch; justify-content: flex-start; }
-.stat-tracker > .stat-header-row,
-.stat-tunnel > .stat-header-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .25rem; }
-.stat-tracker > .stat-header-row > .stat-label,
-.stat-tunnel > .stat-header-row > .stat-label { margin: 0; }
-/* Voyant de la carte Tunnel VPN (render_tunnel_card()) : pastille + halo de
+.stat-header-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .25rem; }
+.stat-header-row > .stat-label { margin: 0; }
+/* Voyant d'état global d'une carte (render_status_light(), né sur la carte
+   Tunnel VPN, généralisé le 2026-10-20) : pastille + halo de
    la même couleur. Seule la couleur porte l'état ici, mais pas seule
    (WCAG 1.4.1) : infobulle, aria-label, et les valeurs des lignes disent
    déjà pourquoi (pertes, port « Fermé », « Hors AirVPN »). */
-.tunnel-light {
+.status-light {
   width: 10px; height: 10px; border-radius: 50%; flex: none; margin-right: 3px;
   background: currentColor; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 25%, transparent);
 }
-.tunnel-light-good { color: var(--status-good); }
-.tunnel-light-warning { color: var(--status-warning); }
-.tunnel-light-critical { color: var(--status-critical); animation: tunnel-pulse 1.6s ease-in-out infinite; }
-@keyframes tunnel-pulse {
+.status-light-good { color: var(--status-good); }
+.status-light-warning { color: var(--status-warning); }
+.status-light-critical { color: var(--status-critical); animation: status-pulse 1.6s ease-in-out infinite; }
+@keyframes status-pulse {
   50% { box-shadow: 0 0 0 6px color-mix(in srgb, currentColor 10%, transparent); }
 }
-@media (prefers-reduced-motion: reduce) { .tunnel-light-critical { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .status-light-critical { animation: none; } }
 .stat-tracker .switch-label { font-size: .75rem; opacity: .75; }
 /* Trackers publics bruts (pas un indexeur configuré dans Prowlarr) masqués
    par défaut — voir render_tracker_row()/dashboard.js, switch "Tous les
@@ -309,3 +334,36 @@ a.card:hover { transform: translateY(-2px); }
 .tracker-table th, .tracker-table td { padding: .5rem .75rem; text-align: left; }
 .tracker-table th { font-size: .7rem; text-transform: uppercase; opacity: .6; }
 .tracker-table tr:nth-child(even) { background: rgba(127,127,127,.08); }
+
+/* Cartes du Monitoring (demandé le 2026-10-20) : le titre (1er enfant —
+   .stat-label ou .stat-header-row) reste en haut à gauche, le reste du
+   contenu est centré horizontalement ET verticalement dans l'espace restant.
+   Centrage vertical par marges auto (1er élément après le titre en haut,
+   dernier en bas) plutôt qu'un conteneur en plus dans chaque template : les
+   cartes d'une même rangée sont étirées à la hauteur de la plus haute (voir
+   .stats-flow), c'est cet espace en plus qui se répartit. Placé en fin de
+   fichier et plus spécifique que .stat-list/.stat-disk/... qui ancraient le
+   contenu en haut. */
+.stats-flow > .stat { align-items: center; justify-content: flex-start; }
+.stats-flow > .stat > :first-child { align-self: stretch; text-align: left; }
+/* Petit bandeau d'en-tête qui porte le titre (même demande) : fond teinté
+   pleine largeur, collé aux bords de la carte par des marges négatives égales
+   à son padding (1.25rem 1rem, voir .stat) ; overflow: hidden sur la carte
+   pour que le fond suive l'arrondi des coins. */
+.stats-flow > .stat { overflow: hidden; }
+.stats-flow > .stat > :first-child {
+  margin: -1.25rem -1rem .35rem; padding: .5rem 1rem;
+  background: rgba(0,0,0,.035); border-bottom: 1px solid rgba(0,0,0,.06);
+}
+.stats-flow > .stat > .stat-label:first-child,
+.stats-flow > .stat > .stat-header-row > .stat-label { font-weight: 600; opacity: .7; }
+@media (prefers-color-scheme: dark) {
+  .stats-flow > .stat > :first-child { background: rgba(255,255,255,.04); border-bottom-color: rgba(255,255,255,.07); }
+}
+.stats-flow > .stat > :nth-child(2) { margin-top: auto; }
+.stats-flow > .stat > :last-child:not(:first-child) { margin-bottom: auto; }
+/* Contenus faits pour occuper toute la largeur (colonnes réparties, barres,
+   tableau, lignes libellé/valeur) : étirés, ils se centrent d'eux-mêmes. */
+.stats-flow > .stat > :is(.stat-columns-row, .tracker-table-wrap, .disk-row, .needle-legend, .stat-multi-col) {
+  align-self: stretch;
+}

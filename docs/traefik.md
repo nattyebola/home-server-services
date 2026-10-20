@@ -71,7 +71,10 @@ flowchart LR
   le logo (`scripts/generate-dashboard.py`, `dashboard/assets/logos/`).
   Une stack jamais configurée (`.env.example` sans `.env`) figure dans
   « Stack non lancée ».
-- **Contour rouge** autour d'un service `unhealthy`.
+- **Nom du service en bandeau**, avec un **voyant** de healthcheck à droite
+  (🟢 OK, 🟡 en cours juste après un démarrage, 🔴 en échec, avec
+  « ⚠ healthcheck en échec » sous l'adresse). Pas de voyant sur une stack
+  arrêtée.
 - **Cartes LAN grisées pour un visiteur WAN** : chaque carte sonde une image
   du service avec `<img>` (un `fetch` échouerait pareil qu'il soit bloqué ou
   non, à cause de CORS). Le chemin sondé est dans `PROBE_PATH` et doit
@@ -85,6 +88,23 @@ flowchart LR
   (comptés par téléchargement, un pack compte pour un),
   santé de chaque indexeur Prowlarr, âge de la dernière sauvegarde,
   **tâches planifiées** (vert si la tâche a réussi dans son intervalle).
+- **Chaque carte a son titre en bandeau et un voyant d'état global** quand il
+  a un sens (état en clair au survol ; tout rouge pulse) :
+
+  | Carte | 🔴 | 🟡 | 🟢 |
+  |---|---|---|---|
+  | Tunnel VPN | voir ci-dessous | ralenti | sain |
+  | Indexeurs | un indexeur en échec | — | tous répondent |
+  | Tâches planifiées | une tâche en retard ou en échec | — | toutes à temps |
+  | Disques | un disque plein à 90 % ou plus | à 80 % ou plus | sinon |
+  | Torrents | torrents en erreur ou absents, imports bloqués ou en attente | imports inconnus (« — ») | aucune anomalie |
+  | Ratios | ratio total < 1 | entre 1 et 2 | ≥ 2 |
+
+  Pas de voyant sur **Débits** (un débit n'est ni bon ni mauvais) ni sur
+  **Ratio par tracker** (seuils génériques, pas les règles de chaque
+  tracker). **Débits** et **Ratios** tiennent sur une jauge à deux aiguilles :
+  descendant / montant (chacune relative à son plus haut débit sur ~25 h),
+  total / session.
 
 **Carte « Tunnel VPN »** (première du Monitoring). Mesures prises dans le
 conteneur VPN, donc à travers le tunnel, à chaque régénération (5 min) :
@@ -100,7 +120,7 @@ conteneur VPN, donc à travers le tunnel, à chaque régénération (5 min) :
 | Voyant | État | Condition |
 |---|---|---|
 | 🟢 | Sain | pertes < 5 % et latence < 150 ms |
-| 🟠 | Ralenti | pertes ≥ 5 % ou latence ≥ 150 ms |
+| 🟡 | Ralenti | pertes ≥ 5 % ou latence ≥ 150 ms |
 | 🔴 | Dégradé | pertes ≥ 20 % ou latence ≥ 500 ms |
 | 🔴 | Coupé / Port fermé / Hors AirVPN | aucun ping ne passe ; port 40125 fermé ; trafic qui ne sort pas par AirVPN (affiché à la place du pays) |
 

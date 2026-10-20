@@ -419,14 +419,45 @@ def extract_traefik_services(config, lan_names):
         yield name, host_match.group(1), lan
 
 
-def render_card(key, host, unhealthy, probe_path):
+def render_status_light(state_class, state):
+    """Voyant d'état global d'une carte (généralisé depuis la carte Tunnel VPN
+    le 2026-10-20) : good/warning/critical, mêmes couleurs que les valeurs de
+    la carte. La couleur n'est jamais seule (WCAG 1.4.1) : `state` dit en
+    clair pourquoi, en infobulle et pour les lecteurs d'écran."""
+    return render("status-light.html", state_class=state_class, state=html.escape(state))
+
+
+def render_stat_header(title, state=None):
+    """En-tête de carte du Monitoring : titre + voyant facultatif. `state` :
+    (classe, libellé) ou None quand la carte n'a pas d'état global (Débits)."""
+    return render("stat-header.html", title=title,
+                  light=render_status_light(*state) if state else "")
+
+
+# Voyant d'une carte de service selon l'état du healthcheck Docker (voir
+# build_cards). « starting » à part : juste après un `make up`, rien n'est
+# encore vérifié, l'afficher vert serait affirmer un état inconnu.
+HEALTH_LIGHT = {
+    "healthy": ("good", "Healthcheck OK"),
+    "starting": ("warning", "Healthcheck en cours"),
+    "unhealthy": ("critical", "Healthcheck en échec"),
+}
+
+
+def render_card(key, host, health, probe_path):
+    """`health` : clé de HEALTH_LIGHT."""
     name = DISPLAY_NAME.get(key, key)
     logo = LOGO_FILE.get(key)
-    logo_class = "logo logo-unhealthy" if unhealthy else "logo"
-    img = f'<img src="/assets/logos/{logo}" alt="" class="{logo_class}">' if logo else ""
-    warning = '<span class="warning">⚠ healthcheck en échec</span>' if unhealthy else ""
+    # Plus de contour rouge autour du logo (retiré le 2026-10-20, jugé de
+    # trop) : le voyant rouge + l'avertissement en clair suffisent.
+    img = f'<img src="/assets/logos/{logo}" alt="" class="logo">' if logo else ""
+    warning = '<span class="warning">⚠ healthcheck en échec</span>' if health == "unhealthy" else ""
     probe_attr = f' data-probe="https://{host}{probe_path}"' if probe_path else ""
-    return render("card-clickable.html", host=host, probe_attr=probe_attr, img=img, warning=warning, name=name)
+    # Voyant = healthcheck Docker. Pas de voyant sur une carte arrêtée
+    # (render_down_card) : déjà grisée, et un arrêt peut être volontaire.
+    light = render_status_light(*HEALTH_LIGHT[health])
+    return render("card-clickable.html", host=host, probe_attr=probe_attr, img=img, warning=warning,
+                  name=name, light=light)
 
 
 def render_down_card(key):
@@ -436,17 +467,17 @@ def render_down_card(key):
     return render("card-down.html", img=img, name=name)
 
 
-def build_cards(running, unhealthy):
+def build_cards(running, unhealthy, starting):
     public_cards, local_cards, down_cards = [], [], []
     lan_names = lan_middleware_names()
     for stack in STACKS:
         config = docker_compose_config(stack)
         for service, host, lan in extract_traefik_services(config, lan_names):
             key = f"{stack}/{service}"
-            is_unhealthy = key in unhealthy
+            health = "unhealthy" if key in unhealthy else "starting" if key in starting else "healthy"
             if key in running:
                 probe_path = PROBE_PATH.get(key, "/favicon.ico") if lan else None
-                card = render_card(key, host, is_unhealthy, probe_path)
+                card = render_card(key, host, health, probe_path)
                 (local_cards if lan else public_cards).append(card)
             else:
                 down_cards.append(render_down_card(key))
@@ -499,37 +530,44 @@ def gauge_point(pct, radius):
     return GAUGE_CX + radius * math.cos(theta), GAUGE_CY - radius * math.sin(theta)
 
 
-def gauge_svg(pct):
-    """Jauge de débit (voir gauge.html) : arc de fond fixe, arc coloré +
-    aiguille positionnés au même angle proportionnel à pct (0-100, voir
-    speed_pct). Le sweep total ne dépasse jamais 180°, donc le
-    large-arc-flag SVG reste toujours 0 (codé en dur dans le template)."""
-    pct = max(0, min(100, pct))
-    fill_x, fill_y = gauge_point(pct, GAUGE_R)
-    needle_x, needle_y = gauge_point(pct, GAUGE_NEEDLE_R)
-    return render(
-        "gauge.html",
-        fill_x=f"{fill_x:.1f}", fill_y=f"{fill_y:.1f}",
-        needle_x=f"{needle_x:.1f}", needle_y=f"{needle_y:.1f}",
-    )
+def gauge_needles_svg(needles):
+    """Aiguilles d'une jauge (voir gauge-needle.html). `needles` : liste de
+    (pct 0-100, classe CSS en plus de gauge-needle), dessinées dans l'ordre
+    (la dernière passe au-dessus). Le sweep total ne dépasse jamais 180°,
+    donc le large-arc-flag SVG des arcs reste toujours 0 (codé en dur dans
+    les templates)."""
+    lines = []
+    for pct, extra_class in needles:
+        needle_x, needle_y = gauge_point(max(0, min(100, pct)), GAUGE_NEEDLE_R)
+        lines.append(render(
+            "gauge-needle.html",
+            classes=" ".join(c for c in ("gauge-needle", extra_class) if c),
+            needle_x=f"{needle_x:.1f}", needle_y=f"{needle_y:.1f}",
+        ))
+    return "\n".join(lines)
 
 
-def zone_gauge_svg(pct, zone_pct, zone_classes):
+def gauge_svg(needles):
+    """Jauge de débit (voir gauge.html) : arc de fond fixe + aiguilles. Plus
+    d'arc de remplissage depuis le passage à 2 aiguilles sur une même jauge
+    (2026-10-20, voir render_speed_card) : deux remplissages superposés ne
+    se liraient pas."""
+    return render("gauge.html", needles=gauge_needles_svg(needles))
+
+
+def zone_gauge_svg(needles, zone_pct, zone_classes):
     """Jauge à 3 zones de sévérité fixes (voir gauge-zones.html) : pas d'arc
     de remplissage, le fond est lui-même divisé en zones (rouge/jaune/vert
-    ou l'inverse selon `zone_classes`), l'aiguille pointe juste sa position
-    dessus. Remplace une balance à bascule (log2(ratio)) jugée peu lisible à
-    l'usage pour le ratio — réutilisée aussi pour l'espace disque (mêmes
-    zones, ordre inverse) pour n'avoir qu'un seul type d'icône sur tout le
-    dashboard plutôt qu'un anneau de progression en plus de la jauge."""
+    ou l'inverse selon `zone_classes`), les aiguilles pointent juste leur
+    position dessus. Remplace une balance à bascule (log2(ratio)) jugée peu
+    lisible à l'usage pour le ratio. `needles` : voir gauge_needles_svg."""
     p1x, p1y = gauge_point(zone_pct[0], GAUGE_R)
     p2x, p2y = gauge_point(zone_pct[1], GAUGE_R)
-    needle_x, needle_y = gauge_point(pct, GAUGE_NEEDLE_R)
     return render(
         "gauge-zones.html",
         p1x=f"{p1x:.1f}", p1y=f"{p1y:.1f}", p2x=f"{p2x:.1f}", p2y=f"{p2y:.1f}",
         zone1_class=zone_classes[0], zone2_class=zone_classes[1], zone3_class=zone_classes[2],
-        needle_x=f"{needle_x:.1f}", needle_y=f"{needle_y:.1f}",
+        needles=gauge_needles_svg(needles),
     )
 
 
@@ -641,33 +679,88 @@ def render_torrents_files_card(stats, imports):
                   "rattacher le fichier ; ne se débloque pas tout seul",
         ),
     ])
-    return render("multi-stat-columns-card.html", title="Torrents",
+    return render("multi-stat-columns-card.html", header=render_stat_header("Torrents", torrents_state(stats, imports)),
                   columns="\n".join([torrents_col, files_col, imports_col]))
 
 
-def render_gauge_column(icon, value, label, value_class=""):
-    return render("gauge-column.html", icon=icon, value=value, label=label, value_class=value_class)
+def torrents_state(stats, imports):
+    """Rouge dès qu'une des valeurs colorées en rouge dans la carte est > 0 ;
+    jaune si les imports sont inconnus (« — ») sans autre anomalie : rien ne
+    permet alors d'annoncer « tout va bien »."""
+    counts = [
+        ("En erreur", stats["torrents_errored"]),
+        ("Absents", stats["torrents_missing"]),
+    ]
+    if imports:
+        counts += [("Imports bloqués", imports["importBlocked"]),
+                   ("Imports en attente", imports["importPending"])]
+    # « Libellé : n » plutôt que « n libellé » : pas d'accord singulier/pluriel à gérer.
+    anomalies = [f"{label} : {n}" for label, n in counts if n]
+    if anomalies:
+        return "critical", " · ".join(anomalies)
+    if not imports:
+        return "warning", "Imports inconnus (Sonarr ou Radarr injoignable)"
+    return "good", "Aucune anomalie"
 
 
-def render_dual_gauge_card(title, columns):
-    """Débits (descendant/montant) et Ratios (total/session) fusionnés
-    chacun en une seule carte à 2 colonnes de jauges (voir .stat-span-2,
-    même principe que render_torrents_files_card) — 4 cartes séparées sur
-    une même ligne prenaient trop de place pour des paires d'infos
-    étroitement liées, demandé par l'utilisateur le 2026-07-30. Un titre de
-    carte ("Débits"/"Ratios", pas seulement le libellé de chaque jauge) et
-    les 2 colonnes étalées sur toute la largeur de la carte (pas resserrées
-    au centre) — même traitement que render_torrents_files_card."""
-    return render("dual-gauge-card.html", title=title, columns="\n".join(columns))
+def render_needle_gauge_card(title, icon, first, second, state=None):
+    """Carte d'une case : une seule jauge à 2 aiguilles (Débits
+    descendant/montant, Ratios total/session), au lieu de 2 jauges côte à
+    côte en stat-span-2 — demandé le 2026-10-20 pour libérer de la place
+    dans le flux (voir build_stats_section). 1re aiguille neutre, 2e bleue ;
+    la pastille devant chaque valeur reprend la couleur de son aiguille.
+    `first`/`second` : (valeur affichée, libellé, définition en title=) ;
+    `state` : voyant d'état global, voir render_stat_header."""
+    items = [
+        render("needle-legend-item.html", value=value, label=label, tooltip=tooltip,
+               swatch_class=swatch_class)
+        for (value, label, tooltip), swatch_class in
+        ((first, "needle-swatch-first"), (second, "needle-swatch-second"))
+    ]
+    return render("needle-gauge-card.html", header=render_stat_header(title, state), icon=icon,
+                  items="\n".join(items))
 
 
-def render_ratio_gauge_column(label, value_human, r):
-    icon = zone_gauge_svg(ratio_pct(r), RATIO_ZONE_PCT, RATIO_ZONE_CLASSES)
-    return render_gauge_column(icon, value_human, label)
+def render_speed_card(stats):
+    """Chaque aiguille reste sur SA propre échelle (maximum observé sur ~25 h
+    dans ce sens, voir historical_max_speed) comme les 2 jauges d'avant : à
+    échelle commune, l'aiguille montante resterait collée à 0 la plupart du
+    temps. La jauge se lit donc « près de son max habituel », pas comme une
+    comparaison descendant/montant."""
+    scale = stats["speed_scale"]
+    icon = gauge_svg([
+        (speed_pct(stats["download_speed"], scale["download_max"]), ""),
+        (speed_pct(stats["upload_speed"], scale["upload_max"]), "gauge-needle-second"),
+    ])
+    return render_needle_gauge_card(
+        "Débits", icon,
+        (stats["download_speed_human"], "Descendant",
+         "Débit descendant instantané ; aiguille relative au plus haut débit descendant observé sur ~25 h"),
+        (stats["upload_speed_human"], "Montant",
+         "Débit montant instantané ; aiguille relative au plus haut débit montant observé sur ~25 h"),
+    )
 
 
-def render_speed_gauge_column(label, value, value_human, max_value):
-    return render_gauge_column(gauge_svg(speed_pct(value, max_value)), value_human, label)
+def render_ratio_card(stats):
+    """Session dessinée en dernier (au-dessus) : c'est elle qui bouge, le
+    total varie à peine d'un jour à l'autre."""
+    total, session = stats["total"], stats["session"]
+    icon = zone_gauge_svg(
+        [(ratio_pct(total["ratio"]), ""), (ratio_pct(session["ratio"]), "gauge-needle-second")],
+        RATIO_ZONE_PCT, RATIO_ZONE_CLASSES,
+    )
+    return render_needle_gauge_card(
+        "Ratios", icon,
+        (total["ratio_display"], "Total",
+         "Ratio cumulé de tous les torrents présents (envoyé / reçu)"),
+        (session["ratio_display"], f"Session ({session['uptime_human']})",
+         "Ratio depuis le dernier démarrage de Transmission"),
+        # Voyant sur le total seul : la session repart de zéro à chaque
+        # redémarrage, son ratio n'a de sens qu'après des jours.
+        state={"good": ("good", "Ratio total ≥ 2"),
+               "warning": ("warning", "Ratio total entre 1 et 2"),
+               "critical": ("critical", "Ratio total < 1")}[ratio_zone(total["ratio"])],
+    )
 
 
 def disk_fill_zone(used_pct):
@@ -687,7 +780,7 @@ def render_disk_row(path, label):
     l'ambiguïté sur ce que représente la valeur) est placé sous la barre,
     pas à côté (voir disk-row.html, demandé le 2026-07-29). Best-effort :
     None si le chemin est absent/illisible (pour que l'autre ligne
-    s'affiche quand même, voir render_disk_card)."""
+    s'affiche quand même, voir render_disk_card). Renvoie (html, zone)."""
     if not path:
         return None
     try:
@@ -695,10 +788,11 @@ def render_disk_row(path, label):
     except OSError:
         return None
     used_pct = usage.used / usage.total * 100
+    zone = disk_fill_zone(used_pct)
     return render(
-        "disk-row.html", label=label, fill_class=f"meter-fill-{disk_fill_zone(used_pct)}",
+        "disk-row.html", label=label, fill_class=f"meter-fill-{zone}",
         pct=round(used_pct, 1), value=f"{human_size_rounded(usage.free)} restant",
-    )
+    ), zone
 
 
 def render_disk_card(data_root, backup_dir):
@@ -719,7 +813,16 @@ def render_disk_card(data_root, backup_dir):
     ) if r]
     if not rows:
         return None
-    return render("disk-card.html", title="Disques", rows="\n".join(rows))
+    # Voyant = le disque le plus plein des deux (mêmes seuils que disk_fill_zone).
+    zones = {zone for _, zone in rows}
+    if "critical" in zones:
+        state = ("critical", f"Un disque est occupé à {DISK_ZONE_PCT[1]} % ou plus")
+    elif "warning" in zones:
+        state = ("warning", f"Un disque est occupé à {DISK_ZONE_PCT[0]} % ou plus")
+    else:
+        state = ("good", "Espace disque suffisant")
+    return render("disk-card.html", header=render_stat_header("Disques", state),
+                  rows="\n".join(html_row for html_row, _ in rows))
 
 
 # scripts/crontab lance `make backup` le dimanche 3h (hebdomadaire) — rouge
@@ -867,7 +970,10 @@ def render_scheduled_tasks_card(data_root, running):
         )
         for label, ok in items
     )
-    return render("scheduled-tasks-card.html", items=lis)
+    failed = [label for label, ok in items if not ok]
+    state = (("critical", f"En retard ou en échec : {', '.join(failed)}") if failed
+             else ("good", "Toutes les tâches ont tourné à temps"))
+    return render("scheduled-tasks-card.html", header=render_stat_header("Tâches planifiées", state), items=lis)
 
 
 def render_indexers_card(running):
@@ -878,7 +984,7 @@ def render_indexers_card(running):
     (carte omise, comportement best-effort inchangé) si Prowlarr tourne mais
     reste injoignable/clé API absente pour une autre raison."""
     if "arr/prowlarr" not in running:
-        return render_stat_placeholder("Indexeurs")
+        return render_stat_placeholder("Indexeurs", "stat-span-2")
     indexers = prowlarr_indexer_health()
     if indexers is None:
         return None
@@ -895,7 +1001,10 @@ def render_indexers_card(running):
         )
         for i in indexers
     )
-    return render("indexers-card.html", items=items)
+    failed = [i["name"] for i in indexers if not i["ok"]]
+    state = (("critical", f"En échec : {', '.join(failed)}") if failed
+             else ("good", "Tous les indexeurs répondent"))
+    return render("indexers-card.html", header=render_stat_header("Indexeurs", state), items=items)
 
 
 def render_tracker_row(tracker):
@@ -1085,7 +1194,7 @@ def render_tunnel_card(running):
             title="Depuis le dernier (re)démarrage du tunnel",
         ),
     ]
-    return render("tunnel-card.html", state_class=cls, state=label, rows="\n".join(rows))
+    return render("tunnel-card.html", header=render_stat_header("Tunnel VPN", (cls, label)), rows="\n".join(rows))
 
 
 def build_stats_section(running, data_root, backup_dir):
@@ -1115,22 +1224,13 @@ def build_stats_section(running, data_root, backup_dir):
     speed_card = ratio_card = torrents_card = tracker_card = ""
 
     if not vpn_running:
-        speed_card = render_stat_placeholder("Débits", "stat-span-2")
-        ratio_card = render_stat_placeholder("Ratios", "stat-span-2")
+        speed_card = render_stat_placeholder("Débits")
+        ratio_card = render_stat_placeholder("Ratios")
         torrents_card = render_stat_placeholder("Torrents", "stat-span-2")
         tracker_card = render_stat_placeholder("Ratio par tracker", "stat-span-3")
     elif stats:
-        speed_card = render_dual_gauge_card("Débits", [
-            render_speed_gauge_column("Descendant", stats["download_speed"],
-                                      stats["download_speed_human"], stats["speed_scale"]["download_max"]),
-            render_speed_gauge_column("Montant", stats["upload_speed"],
-                                      stats["upload_speed_human"], stats["speed_scale"]["upload_max"]),
-        ])
-        ratio_card = render_dual_gauge_card("Ratios", [
-            render_ratio_gauge_column("Total", stats["total"]["ratio_display"], stats["total"]["ratio"]),
-            render_ratio_gauge_column(f"Session ({stats['session']['uptime_human']})",
-                                      stats["session"]["ratio_display"], stats["session"]["ratio"]),
-        ])
+        speed_card = render_speed_card(stats)
+        ratio_card = render_ratio_card(stats)
         if stats.get("trackers"):
             rows = "\n".join(render_tracker_row(t) for t in stats["trackers"])
             tracker_card = render("tracker-card.html", rows=rows)
@@ -1148,21 +1248,23 @@ def build_stats_section(running, data_root, backup_dir):
         torrents_card = render_torrents_files_card(stats, arr_stuck_imports(running))
 
     # Ordre calé sur des rangées de 4 slots (span entre parenthèses), refait
-    # le 2026-10-20 pour mettre le tunnel en tête, à la demande :
-    #   Tunnel(1) Débits(2) Indexeurs(1) / Ratios(2) Torrents(2) /
-    #   Tracker(3) Tâches(1) / Disque(1)
-    # 13 slots : une rangée reste forcément incomplète, autant la dernière.
-    # Tracker et tâches planifiées restent sur la même rangée (demandé le
-    # 2026-07-30, voir CLAUDE.md). Une carte omise (best-effort) décale la suite.
+    # le 2026-10-20 pour mettre le tunnel en tête, puis le disque entre
+    # Ratios et Torrents (Débits et Ratios ramenés à une case, Indexeurs
+    # passé à 2 colonnes sur 2 cases), à la demande :
+    #   Tunnel(1) Débits(1) Indexeurs(2) / Ratios(1) Disque(1) Torrents(2) /
+    #   Tracker(3) Tâches(1)
+    # 12 slots, 3 rangées pleines. Tracker et tâches planifiées restent sur
+    # la même rangée (demandé le 2026-07-30, voir CLAUDE.md). Une carte omise
+    # (best-effort) décale la suite.
     cards = [c for c in (
         render_tunnel_card(running),
         speed_card,
         render_indexers_card(running),
         ratio_card,
+        render_disk_card(data_root, backup_dir),
         torrents_card,
         tracker_card,
         render_scheduled_tasks_card(data_root, running),
-        render_disk_card(data_root, backup_dir),
     ) if c]
 
     if not cards:
@@ -1242,8 +1344,9 @@ def main():
     domain = env_shared.get("DOMAIN", "")
     running = docker_ps_set()
     unhealthy = docker_ps_set(["health=unhealthy"])
+    starting = docker_ps_set(["health=starting"])
 
-    public_cards, local_cards, down_cards = build_cards(running, unhealthy)
+    public_cards, local_cards, down_cards = build_cards(running, unhealthy, starting)
 
     # Chaque section n'est incluse que si elle a du contenu — pas de
     # placeholder "aucun"/"indisponible" pour une section vide.

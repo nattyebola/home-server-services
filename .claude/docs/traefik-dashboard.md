@@ -214,9 +214,53 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   **N'afficher que le pays, jamais `server_name`** de l'API : la page est
   publique et le nom du serveur donne l'IP de sortie qui seede. Pas
   d'auto-remédiation derrière (décision du socle), la carte est le signal.
-  **Ordre des cartes refait pour la mettre en tête** (13 slots, rangées de 4,
-  la dernière incomplète) : Tunnel, Débits, Indexeurs / Ratios, Torrents /
-  Tracker, Tâches / Disque. Tracker et Tâches restent sur une même rangée.
+  **Ordre des cartes refait pour la mettre en tête**, puis Disque placé entre
+  Ratios et Torrents à la demande : Tunnel, Débits, Indexeurs (2 cases) /
+  Ratios, Disque, Torrents / Tracker, Tâches — 12 slots, 3 rangées de 4
+  pleines. Tracker et Tâches restent sur une même rangée.
+- **Débits et Ratios sur une case chacun (2026-10-20,
+  `render_needle_gauge_card()`)** : **une seule jauge à 2 aiguilles** au lieu
+  de 2 jauges en `stat-span-2` (1re aiguille neutre, 2e bleue, la pastille
+  devant chaque valeur reprend sa couleur). La jauge de débit a perdu son arc
+  de remplissage (deux remplissages superposés ne se lisent pas). **Chaque
+  aiguille de débit garde sa propre échelle** (max observé sur ~25 h dans ce
+  sens) : à échelle commune, l'aiguille montante resterait collée à 0. La
+  jauge se lit « près de son max habituel », pas comme une comparaison
+  descendant/montant. Indexeurs passés en `stat-span-2`, liste sur 2
+  colonnes (`columns: 2`, remplies de haut en bas).
+- **Titre en bandeau, contenu centré (2026-10-20, demandé)** : dans chaque
+  carte du Monitoring, le 1er enfant (`.stat-label` ou `.stat-header-row`)
+  devient un petit bandeau teinté pleine largeur, en haut à gauche ; tout le
+  reste est centré horizontalement et verticalement dans l'espace restant
+  (marges `auto`, règles `.stats-flow > .stat …` en fin de `dashboard.css`,
+  aucun template touché). **Toute nouvelle carte doit donc avoir son titre
+  en 1er enfant direct.** Les contenus pleine largeur (colonnes, barres,
+  tableau, lignes libellé/valeur) sont listés dans le `:is(...)` qui les
+  étire.
+  **Même traitement pour les cartes de service Public/Local** : le nom en
+  bandeau (`.card > .card-header`), logo, alerte healthcheck et adresse centrés
+  dessous. Le nom est donc le 1er enfant de `card-clickable.html` et
+  `card-down.html`.
+- **Voyant d'état global généralisé (2026-10-20, `render_status_light()` /
+  `render_stat_header()`)**, né sur la carte Tunnel VPN. Même échelle
+  partout (vert / jaune / rouge pulsé), règle = les couleurs déjà affichées
+  dans la carte, libellé en clair en `title=`/`aria-label` :
+
+  | Carte | Rouge | Jaune | Vert |
+  |---|---|---|---|
+  | Service (Public/Local) | healthcheck en échec | healthcheck en cours (`starting`) | healthcheck OK |
+  | Tunnel VPN | voir `tunnel_state()` | ralenti | sain |
+  | Indexeurs | un indexeur en échec | — | tous OK |
+  | Tâches planifiées | une tâche en retard/échec | — | toutes à temps |
+  | Disques | un disque ≥ 90 % | un disque ≥ 80 % | sinon |
+  | Torrents | erreur, absent, import bloqué/en attente > 0 | imports inconnus (« — ») | aucune anomalie |
+  | Ratios | total < 1 | total 1–2 | total ≥ 2 |
+
+  **Pas de voyant** sur Débits (un débit n'est ni bon ni mauvais), Ratio par
+  tracker (seuils génériques, pas les règles réelles de chaque tracker) ni
+  sur une carte de service arrêtée ou un placeholder (arrêt possiblement
+  volontaire). Ratios : le total seul, la session repart de zéro à chaque
+  redémarrage.
 - **Une section vide n'est pas affichée** (plus de placeholder « aucun ») ; la
   section Monitoring ne s'affiche que si `vpn/transmission-vpn` tourne, pas
   seulement si `transmission-stats.py` a réussi — évite un message d'erreur
@@ -229,7 +273,8 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   (carte omise). `render_indexers_card()` prend donc `running` en argument,
   pour court-circuiter avant tout appel si `arr/prowlarr` est arrêté.
 - **Le dashboard reflète l'état `unhealthy`** (`docker ps --filter
-  health=unhealthy`, contour rouge `.logo-unhealthy` + avertissement) et est
+  health=unhealthy`, voyant rouge + avertissement ; le contour rouge du logo a
+  été retiré le 2026-10-20, jugé de trop) et est
   régénéré **par cron toutes les 5 min**, pas seulement par `make
   dashboard-refresh` — sinon un service devenu unhealthy resterait affiché
   comme sain arbitrairement longtemps.
