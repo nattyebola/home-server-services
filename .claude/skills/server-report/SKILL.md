@@ -1,6 +1,6 @@
 ---
 name: server-report
-description: Passe en revue l'état complet du serveur (containers, cron, disque, sauvegarde, imports arr en attente, montées de version en attente, logs de tous les services) et rapporte en français uniquement ce qui ne va pas, en écartant le bruit déjà résolu. À utiliser quand l'utilisateur demande un rapport d'état, un check de santé du serveur, ou de repasser sur les logs/l'état du projet.
+description: Passe en revue l'état complet du serveur (containers, cron, disque, sauvegarde, imports arr en attente, titres suivis sans fichier, montées de version en attente, logs de tous les services) et rapporte en français uniquement ce qui ne va pas, en écartant le bruit déjà résolu. À utiliser quand l'utilisateur demande un rapport d'état, un check de santé du serveur, ou de repasser sur les logs/l'état du projet.
 ---
 
 # server-report — audit d'état + logs du serveur
@@ -151,7 +151,7 @@ Un téléchargement à 100 % qui n'est pas importé ne se voit nulle part
 ailleurs : container healthy, aucune erreur dans les logs, aucune carte du
 dashboard. Seule la file de l'arr le montre. On lance donc le diagnostic du
 skill **`manual-import`**, **en lecture seule** : jamais `apply`, `assign`
-ni purge depuis ce rapport.
+ni purge depuis ce rapport, on liste seulement.
 
 ```bash
 python3 scripts/manual-import.py list --json | python3 -c '
@@ -208,15 +208,34 @@ python3 scripts/image-versions.py pending
 ```
 
 Liste vide → « aucune montée de version en attente » dans la ligne de
-couverture, rien d'autre. Sinon, **une fois le rapport rendu**, lancer le
-skill **`changelogs`** dans la foulée, sans attendre la demande de
-l'utilisateur (demandé le 2026-10-16). Son résumé vient **après** le
-rapport, sous son propre titre. Il ne remplace pas le tableau
-d'anomalies : une montée de version n'est pas une anomalie et n'y a pas de
-ligne, sauf si elle a cassé quelque chose (constat de logs, rangé comme
-tout autre constat).
+couverture, rien d'autre. Sinon, lister chaque entrée (`service from → to`,
+plusieurs entrées d'un même service fusionnées) dans le bloc « À traiter »
+(section 9). **Ne pas lancer le skill `changelogs`** ni lire les notes de
+version, et ne jamais marquer une entrée traitée : l'utilisateur lancera
+`/changelogs` (décidé le 2026-10-20, remplace l'enchaînement automatique
+du 2026-10-16). Une montée de version n'est pas une anomalie et n'a pas de
+ligne dans le tableau, sauf si elle a cassé quelque chose (constat de logs,
+rangé comme tout autre constat).
 
-## 8. Format du rapport — anomalies seulement
+## 8. Titres suivis sans aucun fichier
+
+```bash
+python3 .claude/skills/sans-fichier/sans_fichier.py
+```
+
+Lecture seule, aucune requête aux indexeurs. On ne garde que la section
+« Suivis, sortis, aucun fichier trouvé » ; la section « Dans la file » est
+déjà couverte par la section 5, et les écartés (pas sortis, trop récents)
+ne sont pas des manques. **Ne pas faire l'étape 2 du skill `sans-fichier`**
+(recherche interactive, historique) : elle coûte du quota d'indexeur et
+c'est le travail de `/sans-fichier`.
+
+Aucun titre → « aucun titre suivi sans fichier » dans la ligne de
+couverture. Sinon, une ligne par titre dans le bloc « À traiter » :
+`[type] titre (année) — sorti le …`. Une ligne `ERREUR` sur stderr (arr
+injoignable) est une anomalie, avec une ligne dans le tableau.
+
+## 9. Format du rapport — anomalies seulement
 
 Structure :
 
@@ -229,7 +248,12 @@ Structure :
 2. **Un tableau `Service | Constat | Statut`** des anomalies uniquement
    (Statut = résolu / à surveiller / action requise). Un service sans
    anomalie n'a pas de ligne.
-3. **Le résumé final**, une phrase : soit la liste des actions réellement
+3. **Le bloc « À traiter »**, seulement s'il y a quelque chose : une liste
+   par skill, chacune sous le nom de la commande à lancer (`/sans-fichier`,
+   `/changelogs`). Rien n'y est traité ni approfondi : on liste, l'utilisateur
+   décide. Les imports bloqués restent dans le tableau (section 5), avec
+   `/manual-import` en statut.
+4. **Le résumé final**, une phrase : soit la liste des actions réellement
    nécessaires, soit « rien qui demande une action ».
 
 Règles de restitution :
