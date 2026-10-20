@@ -302,6 +302,12 @@ folders, tags…) peut être ajusté librement dans les UI.
   cherchent sans rien trouver, et vérifie pour chacun ce qui est possible.
   Il écarte ce qui n'est pas sorti (un film seulement en salle n'est pas
   sorti) et ce qui est sorti depuis moins de 2 semaines.
+- **Un fichier mauvais n'est jamais remplacé seul** (mauvais épisode,
+  sous-titres décalés) : sans upgrade, toute release d'un titre présent est
+  rejetée, REPACK correctif compris. Cas du 2026-10-19 : l'E01 de *Reborn as
+  a Goblin* était l'E02 (erreur Crunchyroll), le REPACK de tous les groupes
+  est resté ignoré. Le skill `remplacer-release` cherche une autre release,
+  la grabe, force l'import et vérifie le contenu.
 - **Fichiers posés en vrac** à la racine d'un dossier scanné : ignorés sans
   log. Utiliser *Manual Import*.
 - **Un import manuel par l'API sans `downloadId` déplace le fichier** au lieu
