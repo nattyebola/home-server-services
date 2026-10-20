@@ -216,7 +216,7 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   d'auto-remédiation derrière (décision du socle), la carte est le signal.
   **Ordre des cartes refait pour la mettre en tête**, puis Disque placé entre
   Ratios et Torrents à la demande : Tunnel, Débits, Indexeurs (2 cases) /
-  Ratios, Disque, Torrents / Tracker, Tâches — 12 slots, 3 rangées de 4
+  Ratios, Disque, Torrents / Tâches, Tracker — 12 slots, 3 rangées de 4
   pleines. Tracker et Tâches restent sur une même rangée.
 - **Débits et Ratios sur une case chacun (2026-10-20,
   `render_needle_gauge_card()`)** : **une seule jauge à 2 aiguilles** au lieu

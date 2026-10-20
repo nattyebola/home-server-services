@@ -1252,8 +1252,8 @@ def build_stats_section(running, data_root, backup_dir):
     # Ratios et Torrents (Débits et Ratios ramenés à une case, Indexeurs
     # passé à 2 colonnes sur 2 cases), à la demande :
     #   Tunnel(1) Débits(1) Indexeurs(2) / Ratios(1) Disque(1) Torrents(2) /
-    #   Tracker(3) Tâches(1)
-    # 12 slots, 3 rangées pleines. Tracker et tâches planifiées restent sur
+    #   Tâches(1) Tracker(3)
+    # 12 slots, 3 rangées pleines (Tâches passé devant Tracker, à la demande). Tracker et tâches planifiées restent sur
     # la même rangée (demandé le 2026-07-30, voir CLAUDE.md). Une carte omise
     # (best-effort) décale la suite.
     cards = [c for c in (
@@ -1263,8 +1263,8 @@ def build_stats_section(running, data_root, backup_dir):
         ratio_card,
         render_disk_card(data_root, backup_dir),
         torrents_card,
-        tracker_card,
         render_scheduled_tasks_card(data_root, running),
+        tracker_card,
     ) if c]
 
     if not cards:

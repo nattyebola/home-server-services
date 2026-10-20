@@ -5,6 +5,11 @@
   --status-critical: #d03b3b;
   --status-warning: #fab219;
   --status-good: #0ca30c;
+  /* Bandeau d'en-tête des cartes (services et Monitoring). Teinté du bleu des
+     jauges et pas gris : un gris léger sur carte blanche (~#f6f6f6) se
+     confondait avec le fond de page (#f4f4f5) en thème clair. */
+  --card-header-bg: rgba(42,120,214,.15);
+  --card-header-border: rgba(42,120,214,.28);
 }
 body {
   margin: 0; padding: 2.5rem 1.5rem; font-family: system-ui, sans-serif;
@@ -12,6 +17,7 @@ body {
 }
 @media (prefers-color-scheme: dark) {
   body { background: #18181b; color: #f4f4f5; }
+  :root { --card-header-bg: rgba(255,255,255,.04); --card-header-border: rgba(255,255,255,.07); }
 }
 h1 { font-size: 1.4rem; margin: 0 0 1.5rem; }
 
@@ -93,10 +99,7 @@ a.card:hover { transform: translateY(-2px); }
   align-self: stretch; display: flex; align-items: center; justify-content: space-between; gap: .5rem;
   text-align: left; font-size: .85rem;
   margin: -1.25rem -1rem .5rem; padding: .5rem 1rem;
-  background: rgba(0,0,0,.035); border-bottom: 1px solid rgba(0,0,0,.06);
-}
-@media (prefers-color-scheme: dark) {
-  .card > .card-header { background: rgba(255,255,255,.04); border-bottom-color: rgba(255,255,255,.07); }
+  background: var(--card-header-bg); border-bottom: 1px solid var(--card-header-border);
 }
 /* overflow-wrap: anywhere et pas word-break: break-all, qui coupait aussi les
    mots ordinaires (« accessible en LAN unique-ment ») : ne coupe qu'un mot qui
@@ -353,17 +356,23 @@ a.card:hover { transform: translateY(-2px); }
 .stats-flow > .stat { overflow: hidden; }
 .stats-flow > .stat > :first-child {
   margin: -1.25rem -1rem .35rem; padding: .5rem 1rem;
-  background: rgba(0,0,0,.035); border-bottom: 1px solid rgba(0,0,0,.06);
+  background: var(--card-header-bg); border-bottom: 1px solid var(--card-header-border);
 }
 .stats-flow > .stat > .stat-label:first-child,
 .stats-flow > .stat > .stat-header-row > .stat-label { font-weight: 600; opacity: .7; }
-@media (prefers-color-scheme: dark) {
-  .stats-flow > .stat > :first-child { background: rgba(255,255,255,.04); border-bottom-color: rgba(255,255,255,.07); }
-}
 .stats-flow > .stat > :nth-child(2) { margin-top: auto; }
 .stats-flow > .stat > :last-child:not(:first-child) { margin-bottom: auto; }
 /* Contenus faits pour occuper toute la largeur (colonnes réparties, barres,
    tableau, lignes libellé/valeur) : étirés, ils se centrent d'eux-mêmes. */
 .stats-flow > .stat > :is(.stat-columns-row, .tracker-table-wrap, .disk-row, .needle-legend, .stat-multi-col) {
   align-self: stretch;
+}
+
+/* Mobile (2026-10-20) : sous la largeur où deux cartes d'une case ne tiennent
+   plus côte à côte (2 × 190px + padding + gap ≈ 460px, plus le padding du
+   body), chaque carte du Monitoring prend toute la largeur au lieu de rester
+   à 190px avec un vide à droite. border-box pour que le padding reste dans
+   les 100 %. */
+@media (max-width: 540px) {
+  .stats-flow > .stat { flex: 1 1 100%; max-width: none; box-sizing: border-box; }
 }
