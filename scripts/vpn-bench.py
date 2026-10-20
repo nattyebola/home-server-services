@@ -5,7 +5,7 @@ Usage:
     python3 scripts/vpn-bench.py nl de ch
     python3 scripts/vpn-bench.py nl de --tracker tracker.yggreborn.org
 
-Ne touche qu'à la ligne `remote` de vpn/custom/default.ovpn (le certificat
+Ne touche qu'aux lignes `remote` de vpn/custom/default.ovpn (le certificat
 client AirVPN est lié au compte, pas au serveur — même fichier réutilisable
 pour n'importe quel `[pays].vpn.airdns.org`). Restaure systématiquement la
 config d'origine à la fin, même en cas d'erreur ou de Ctrl+C.
@@ -72,11 +72,14 @@ def wait_healthy(timeout=180, interval=3):
 
 
 def swap_remote(country_code):
+    # Toutes les lignes `remote`, pas la première seule : avec un fichier
+    # multi-serveurs (repli nl3 → de3 → be3), un pays testé qui ne répond pas
+    # ferait basculer OpenVPN sur le suivant, mesuré sous le mauvais nom.
     text = OVPN_PATH.read_text()
     new_text, n = re.subn(
         r"^remote \S+ (\d+)",
         lambda m: f"remote {country_code}.vpn.airdns.org {m.group(1)}",
-        text, count=1, flags=re.MULTILINE,
+        text, flags=re.MULTILINE,
     )
     if n == 0:
         raise BenchError("Ligne 'remote' introuvable dans default.ovpn — format inattendu, abandon.")

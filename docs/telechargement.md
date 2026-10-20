@@ -76,8 +76,53 @@ flowchart LR
 > désactiver WebRTC (il révèle l'IP réelle) et n'y connecter aucun compte
 > personnel : l'IP de sortie est celle qui seede.
 
+### Choix du serveur AirVPN
+
+`vpn/custom/default.ovpn` (gitignoré) liste **plusieurs serveurs**, essayés
+dans l'ordre :
+
+```
+remote nl3.vpn.airdns.org 443
+remote de3.vpn.airdns.org 443
+remote be3.vpn.airdns.org 443
+```
+
+| Qui choisit | Comment |
+|---|---|
+| Le serveur, dans un pays | le DNS d'AirVPN (`nl3.vpn.airdns.org`), selon **sa** charge. Il ignore la route depuis chez nous. |
+| Le pays | OpenVPN prend le premier `remote` qui **accepte la connexion**, puis s'y tient. |
+
+- Le certificat client est lié au **compte**, pas au serveur : un fichier
+  généré pour un pays marche pour tous. Seules les lignes `remote` changent.
+  Le port 40125 est réservé sur le compte, valable sur tous les serveurs.
+- **Mettre en tête le pays qui marche le mieux depuis chez nous.** Depuis le
+  2026-10-20 : Pays-Bas (la Belgique était en tête, voir les pièges).
+- Comparer des pays : skill `vpn-bench` (`scripts/vpn-bench.py`).
+- Pas de `rcvbuf`/`sndbuf` : présents dans l'ancien fichier sans raison
+  connue, retirés le 2026-10-20 sans perte de débit (~35 Mo/s dans le tunnel).
+
 ### Pièges connus
 
+- **Plusieurs `remote` ne protègent que d'une panne franche, pas d'une
+  dégradation.** Un serveur joignable mais à 60 % de pertes accepte la
+  connexion : OpenVPN y reste. Le 2026-10-20, tunnel et proxy à ~90 Ko/s,
+  ping de 3,4 s : un transitaire entre le FAI et la Belgique perdait 40 à
+  90 % des paquets. Redémarrer n'y changeait rien (autre serveur belge,
+  même route). Diagnostic : pinger les serveurs **depuis l'hôte, hors
+  tunnel**, et `mtr -n -r -c 10 <ip>` pour situer le saut fautif.
+
+  ```sh
+  for c in be nl de ch; do
+    ip=$(getent ahostsv4 $c.vpn.airdns.org | head -1 | cut -d' ' -f1)
+    echo "$c $ip"; ping -c 10 -i 0.3 -W 2 $ip | tail -2
+  done
+  ```
+- **Impossible de relancer le tunnel sans redémarrer le conteneur.** L'image
+  ajoute `remap-usr1 SIGTERM` au `.ovpn` : un `SIGUSR1` à OpenVPN l'arrête,
+  donc le conteneur entier. De toute façon, les scripts de l'image arrêtent
+  puis relancent Transmission à chaque chute du tunnel. Un redémarrage ne
+  perd que les compteurs de **session** : le ratio cumulé (`stats.json`) et
+  le temps de seed par torrent survivent.
 - **Ne jamais attacher `transmission-vpn` à un second réseau Docker.** L'image
   pousse une route `redirect-gateway def1`, qui couvre aussi `172.16.0.0/12`,
   la plage des réseaux Docker. Un second réseau casse tout le routage sortant

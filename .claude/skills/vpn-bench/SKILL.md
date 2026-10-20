@@ -10,10 +10,15 @@ description: Compare latence/débit descendant/débit montant entre le serveur A
 Le container `vpn/transmission-vpn` (image `haugene/transmission-openvpn`,
 `OPENVPN_PROVIDER=CUSTOM`) utilise `vpn/custom/default.ovpn`, un fichier
 AirVPN dont le certificat client (`<cert>`/`<key>`) est lié au **compte**,
-pas au serveur — seule la ligne `remote <pays>.vpn.airdns.org <port>` cible
-un pays précis (AirVPN route ce hostname vers un serveur recommandé dans ce
-pays). Changer de serveur pour tester revient donc à changer cette seule
-ligne et redémarrer le container, sans rien régénérer depuis le site AirVPN.
+pas au serveur — seules les lignes `remote <pays>.vpn.airdns.org <port>`
+ciblent un pays précis (AirVPN route ce hostname vers un serveur recommandé
+dans ce pays). Le fichier en liste plusieurs (repli `nl3` → `de3` → `be3`,
+voir `docs/telechargement.md#choix-du-serveur-airvpn`) : le script les
+remplace **toutes** par le pays testé, pour qu'un pays qui ne répond pas ne
+soit pas mesuré sur le serveur de repli. Changer de serveur pour tester
+revient donc à changer ces lignes et redémarrer le container, sans rien
+régénérer depuis le site AirVPN. La baseline s'affiche sous le premier
+`remote` (ex. `nl3`).
 
 `scripts/vpn-bench.py` automatise ça : bascule la config, redémarre,
 attend que le container soit `healthy`, mesure latence (ping vers un

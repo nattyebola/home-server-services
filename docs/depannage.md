@@ -21,6 +21,7 @@ touchent toutes les stacks.
 | Recherches cross-seed toujours à `Found 0 torrents` | ID d'indexeur obsolète dans `CROSS_SEED_INDEXER_IDS` | [Téléchargement](telechargement.md#cross-seed) |
 | Indexeur en `429` / « API Request Limit reached » | souvent le backoff d'échec de Prowlarr, pas un quota | skill `indexer-quota` |
 | Plus de DNS ni de ping dans `transmission-vpn`, `rtnl: generic error (-101)` | conteneur attaché à un 2e réseau, ou `LOCAL_NETWORK` mal réglé | [Téléchargement](telechargement.md#vpn--transmission) |
+| Tunnel VPN (Transmission, proxy `:8118`) **très lent**, ping de plusieurs secondes, `bad packet ID` dans les logs | route dégradée entre le FAI et le pays AirVPN : redémarrer ne suffit pas, changer l'ordre des `remote` | [Téléchargement](telechargement.md#choix-du-serveur-airvpn) |
 | `transmission-vpn` ne démarre pas / ne route rien | module `ip_tables` absent sur l'hôte | [Installation](installation.md#prérequis) |
 | `Connection refused` vers un tracker qui répond ailleurs | DNS du FAI qui renvoie `127.0.0.1` | [plus bas](#dns-du-fai-menteur) |
 | Dashboard surligné **« périmé »** | régénération en échec (`docker ps` ou `docker compose config`), voir `dashboard/refresh.log` | [Traefik](traefik.md#pièges-connus) |

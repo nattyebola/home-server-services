@@ -580,7 +580,8 @@ ou aux connexions arr → Jellyfin.
 - **`scripts/vpn-bench.py` (skill `vpn-bench`)** compare latence/débit entre
   le serveur AirVPN configuré (`vpn/custom/default.ovpn`) et d'autres pays.
   Marche parce que le certificat client AirVPN est lié au **compte**, pas au
-  serveur : seule la ligne `remote [pays].vpn.airdns.org <port>` change, rien
+  serveur : seules les lignes `remote [pays].vpn.airdns.org <port>` changent
+  (toutes remplacées, le fichier liste plusieurs serveurs de repli), rien
   à regénérer depuis le site. **Restaure systématiquement la config d'origine
   à la fin** (backup sur disque en plus de la copie en mémoire, pour survivre
   à un kill dur) — jamais de changement permanent sans le redemander.
