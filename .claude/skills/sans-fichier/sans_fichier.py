@@ -17,9 +17,14 @@ import sys
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 # Délai laissé aux groupes pour sortir une version FR après la diffusion ou la
-# sortie numérique : en deçà, un titre sans fichier n'est pas encore anormal
-# (le délai de grab de 24 h et l'attente d'une VF suffisent à l'expliquer).
-GRACE_DAYS = 14
+# sortie numérique : en deçà, un titre sans fichier n'est pas encore anormal.
+# Mesuré le 2026-10-23 sur l'historique (144 grabs, sorties du 25/07 au 22/10,
+# titres ajoutés avant leur sortie) : premier grab à J+1 en médiane (le délai
+# de 24 h des profils), 4,1 j au pire. Au-delà, l'absence de fichier veut dire
+# qu'il n'existe rien chez nos indexeurs, pas « pas encore ». 7 j = marge sur
+# ce maximum, et un passage de search-missing (lundi) en général. 14 j avant
+# la mesure : « attendre une VF » ne tenait plus depuis la VOSTFR minimum.
+GRACE_DAYS = 7
 
 # Mêmes accès API que search-missing.py (clé par STDIN, docker exec), et son
 # fichier d'état donne la date de dernière recherche automatique par item.

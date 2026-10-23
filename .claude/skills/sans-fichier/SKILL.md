@@ -1,6 +1,6 @@
 ---
 name: sans-fichier
-description: Fait l'inventaire des séries, animés et films suivis qui n'ont aucun fichier en bibliothèque, en écartant ce qui n'est pas encore sorti (ou seulement en salle) et ce qui est sorti depuis moins de 2 semaines, puis vérifie titre par titre ce qu'il est possible de faire (release acceptable disponible, rejetée, ou inexistante). À utiliser quand l'utilisateur demande ce qui manque dans la bibliothèque, les titres sans fichier, pourquoi une série ou un film n'a jamais été téléchargé, ou lance /sans-fichier.
+description: Fait l'inventaire des séries, animés et films suivis qui n'ont aucun fichier en bibliothèque, en écartant ce qui n'est pas encore sorti (ou seulement en salle) et ce qui est sorti depuis moins de 7 jours, puis vérifie titre par titre ce qu'il est possible de faire (release acceptable disponible, rejetée, ou inexistante). À utiliser quand l'utilisateur demande ce qui manque dans la bibliothèque, les titres sans fichier, pourquoi une série ou un film n'a jamais été téléchargé, ou lance /sans-fichier.
 ---
 
 # sans-fichier — titres suivis, sortis et toujours absents
@@ -26,7 +26,7 @@ présenter ni proposer de le suivre.
 | Rien de suivi | aucun épisode voulu déjà diffusé, ou film non suivi (visible seulement en `--json`) |
 | Pas encore sorti (série) | aucun épisode voulu déjà diffusé, et une saison suivie attend sa diffusion |
 | Pas encore sorti (film) | pas de sortie numérique ou physique passée. **Une sortie en salle seule ne compte pas** (il n'en existe que des CAM, refusées par les profils), même si Radarr dit `isAvailable` (`minimumAvailability: inCinemas`) |
-| Trop récent | sorti depuis moins de **14 jours** (`GRACE_DAYS`, `--grace N`) : délai de grab de 24 h + attente d'une VF |
+| Trop récent | sorti depuis moins de **7 jours** (`GRACE_DAYS`, `--grace N`). Mesuré le 2026-10-23 : une release qui existe est grabée à J+1 (délai de 24 h), 4,1 j au pire. Au-delà, rien n'existe chez nos indexeurs. Était 14 j (« attendre une VF », caduc depuis la VOSTFR minimum) |
 | Dans la file | listé à part, renvoyer au skill `manual-import` |
 
 Dates de référence :

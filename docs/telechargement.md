@@ -355,7 +355,8 @@ folders, tags…) peut être ajusté librement dans les UI.
 - Le skill `sans-fichier` liste les titres suivis que Sonarr/Radarr
   cherchent sans rien trouver, et vérifie pour chacun ce qui est possible.
   Il écarte ce qui n'est pas sorti (un film seulement en salle n'est pas
-  sorti) et ce qui est sorti depuis moins de 2 semaines.
+  sorti) et ce qui est sorti depuis moins de 7 jours : une release qui
+  existe est grabée en un jour (4 jours au pire, mesuré le 2026-10-23).
 - **Un fichier mauvais n'est jamais remplacé seul** (mauvais épisode,
   sous-titres décalés) : sans upgrade, toute release d'un titre présent est
   rejetée, REPACK correctif compris. Cas du 2026-10-19 : l'E01 de *Reborn as
