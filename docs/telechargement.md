@@ -222,7 +222,7 @@ titrées VOSTFR, la règle « VOSTFR minimum » donne d'elle-même la VOF.
 > que pour une **liste blanche de groupes vérifiés** : Tsundere-Raws,
 > Manostro, BYOR, ToonsHub, KAF, TenmaLand, SUPPLY, BATGirl, FW, GL0P
 > (181 fichiers MULTi en bibliothèque, tous avec l'audio français, au
-> 2026-10-07). Un groupe n'y entre qu'après lecture de ses fichiers : le skill
+> 2026-10-07), puis FDRY le 2026-10-25 (8 fichiers FR sur 2 œuvres). Un groupe n'y entre qu'après lecture de ses fichiers : le skill
 > Claude `multi-groupes` propose les ajouts et retraits.
 
 #### Comment les profils les appliquent

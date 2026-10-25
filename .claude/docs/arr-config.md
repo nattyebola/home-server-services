@@ -275,7 +275,9 @@ ou aux connexions arr → Jellyfin.
     Python sur 4 973 titres anime, groupe pris du parse .NET. Étendue le
     même soir à SUPPLY, BATGirl, FW, GL0P (seuil du skill : ≥ 5 fichiers FR
     sur ≥ 2 œuvres, 0 sans FR ; 181 fichiers MULTi, 0 sans FR, pour les 10
-    groupes ; `--verifier` : 0 désaccord sur 101 titres). Liste tenue
+    groupes ; `--verifier` : 0 désaccord sur 101 titres). FDRY ajouté le
+    2026-10-25 (8 fichiers FR, 0 sans FR, 2 œuvres hors anime ; `--verifier` :
+    0 désaccord sur 116 titres). Liste tenue
     par le skill `multi-groupes` (preuve = audio des fichiers en
     bibliothèque ; `EXCLUDED_GROUPS` garde la mémoire des exclusions, la
     base d'analyse n'existant plus). Les

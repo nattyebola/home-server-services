@@ -38,7 +38,7 @@
         "implementation": "ReleaseGroupSpecification",
         "negate": false,
         "required": true,
-        "value": "^(Tsundere-?Raws|Manostro|BYOR|ToonsHub|KAF|TenmaLand|SUPPLY|BATGirl|FW|GL0P)$"
+        "value": "^(Tsundere-?Raws|Manostro|BYOR|ToonsHub|KAF|TenmaLand|SUPPLY|BATGirl|FW|GL0P|FDRY)$"
       },
       {
         "name": "Pas déjà compté par Langue : VF (hors MULTi)",
