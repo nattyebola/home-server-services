@@ -222,8 +222,8 @@ def choose_seasons(preview):
 def confirm(label, preview, dbtype, allow_purge):
     """-1 annulé, 0 supprimer, 1 purger.
 
-    Trois boutons plutôt que deux : la purge (retrait de la série de Sonarr +
-    exclusion de liste) est une action distincte, pas une case à cocher qu'on
+    Trois boutons plutôt que deux : la purge (retrait de la série de Sonarr)
+    est une action distincte, pas une case à cocher qu'on
     peut avoir laissée dans un état oublié. Elle n'est proposée que si TOUTES
     les saisons sont sélectionnées — une purge partielle laisserait les saisons
     gardées dans library/ sans plus aucun arr pour les revendiquer."""

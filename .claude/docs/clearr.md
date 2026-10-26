@@ -449,13 +449,13 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   monitored, il vient d'être remplacé par une meilleure release, pas retiré.
   Sortie JSON sur stdout pour un appelant scripté.
 - **Synchronisation arr à la suppression**, pour éviter qu'un titre encore
-  monitored soit re-téléchargé : film Radarr → retiré complètement (+ import
-  exclusion) ; épisode/saison Sonarr → saison désactivée seulement si elle
+  monitored soit re-téléchargé : film Radarr → retiré complètement (sans import
+  exclusion, cf. plus bas) ; épisode/saison Sonarr → saison désactivée seulement si elle
   est *terminée* (`totalEpisodeCount == episodeCount`) et entièrement
   supprimée, sinon seuls les épisodes concernés — pour ne jamais couper le
   monitoring d'une saison en cours de diffusion. Depuis les vues
   Séries/Films, retrait complet du titre (`DELETE /api/v3/series/{id}`,
-  `addImportListExclusion=true`), sans la condition « saison terminée » :
+  `addImportListExclusion=false`), sans la condition « saison terminée » :
   ici on supprime tout. Matching par chemin, pas par nom — fiable même si le
   titre affiché diffère (VO/VF, ponctuation).
   Best-effort : un arr injoignable ou un fichier jamais importé ne bloque
@@ -477,11 +477,13 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   - **normal** (`purge=False`, le défaut) : les saisons choisies partent, la
     série **reste dans Sonarr**, ses saisons supprimées passent en
     `monitored: false` et `monitorNewItems` est **forcé à `"all"`** — c'est
-    tout l'intérêt : une saison future arrive quand même. Pas d'exclusion de
-    liste, donc une saison redemandée depuis Seerr revient : différence
-    voulue entre les deux boutons, pas un oubli.
-  - **purge** (`execute_delete_series`, inchangé) : tout part, série retirée
-    + exclusion. **La sélection de saisons est alors ignorée** — purger une
+    tout l'intérêt : une saison future arrive quand même.
+  - **purge** (`execute_delete_series`, inchangé) : tout part, série retirée.
+    **Aucune exclusion de liste, ni ici ni pour un film** (retirée le
+    2026-10-26) : aucune liste d'import n'est configurée, elle ne protégeait
+    de rien et laissait des dizaines d'entrées oubliées dans les arr. Si une
+    liste d'import est un jour ajoutée, les titres purgés pourront revenir.
+    **La sélection de saisons est alors ignorée** — purger une
     partie laisserait les saisons gardées dans `library/` sans plus aucun arr
     pour les revendiquer, donc invisibles des trois vues.
   Les deux chemins sont **deux fonctions séparées** (`execute_delete_seasons`

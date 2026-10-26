@@ -432,7 +432,7 @@ def plan_radarr_deletion(paths):
         if mf and mf.get("path") in paths:
             matched.add(mf["path"])
             plan.append({
-                "description": f'Radarr : "{m["title"]}" retiré complètement (+ exclusion de liste)',
+                "description": f'Radarr : "{m["title"]}" retiré complètement',
                 "kind": "radarr_delete",
                 "movie_id": m["id"],
                 "title": m["title"],
@@ -539,8 +539,8 @@ def arr_write(base_url, api_key, method, path, params=None, json_body=None, what
     leur retour puis loguaient un succès inconditionnel. Une série pouvait donc
     être effacée du disque, affichée « supprimée » en vert et journalisée comme
     retirée, tout en restant suivie par Sonarr — donc re-téléchargée
-    intégralement à la recherche suivante, ce que le retrait avec exclusion
-    existe précisément pour empêcher. arr_api reste best-effort pour les
+    intégralement à la recherche suivante, ce que le retrait existe
+    précisément pour empêcher. arr_api reste best-effort pour les
     LECTURES, où dégrader est le bon comportement ; une écriture, non."""
     if arr_api(base_url, api_key, method, path, params=params, json_body=json_body) is None:
         logger.error("écriture arr ÉCHOUÉE (%s %s)%s — état arr inchangé",
@@ -561,7 +561,7 @@ def execute_arr_plan(plan):
             elif action["kind"] == "radarr_delete":
                 if arr_write(RADARR_URL, RADARR_API_KEY, "DELETE",
                              f"/api/v3/movie/{action['movie_id']}",
-                             params={"deleteFiles": "false", "addImportExclusion": "true"},
+                             params={"deleteFiles": "false", "addImportExclusion": "false"},
                              what=f"retrait du film {action['title']!r}"):
                     logger.info("Radarr: film retiré id=%s (%s)", action["movie_id"], action["title"])
                 else:
@@ -1450,7 +1450,7 @@ def series_orphan_files(matched, series_path):
 # Deux modes, exposés par execute_delete_series(purge=) :
 #
 #   purge=True  : comportement historique — tout part, la série est retirée de
-#                 Sonarr avec exclusion de liste. La sélection de saisons est
+#                 Sonarr, sans exclusion de liste. La sélection de saisons est
 #                 alors IGNORÉE (purger une partie d'une série laisserait les
 #                 saisons gardées dans library/ sans plus aucun arr pour les
 #                 revendiquer : invisibles des trois vues, hors « Fichiers
@@ -1458,8 +1458,8 @@ def series_orphan_files(matched, series_path):
 #   purge=False : les saisons choisies partent, la série RESTE dans Sonarr en
 #                 monitorNewItems="all" — c'est ce qui permet à une saison
 #                 future d'être téléchargée alors qu'on vient d'effacer les
-#                 précédentes. Pas d'exclusion de liste : une saison redemandée
-#                 depuis Seerr sera re-téléchargée, et c'est voulu.
+#                 précédentes. Une saison redemandée depuis Seerr sera
+#                 re-téléchargée, et c'est voulu.
 #
 # LE PLAN PART DES episodefile, PAS DES TORRENTS NI DES DOSSIERS « Season XX ».
 #   - Pas des dossiers : leur format est configurable dans Sonarr, vaut
@@ -2064,8 +2064,9 @@ def execute_delete_series(client, series, matched, all_torrents, cross_seed_grou
     avoir appelé series_grabbed_torrents AVANT d'arriver ici : le DELETE plus
     bas emporte l'historique qui porte ce rattachement.
     (deleteFiles=false : les fichiers ont déjà été supprimés ici même, comme
-    pour un film via plan_radarr_deletion) avec exclusion de liste pour ne
-    jamais la voir revenir via un import list sync.
+    pour un film via plan_radarr_deletion). Sans exclusion de liste depuis le
+    2026-10-26 : aucune liste d'import n'est configurée, et l'exclusion ne
+    faisait qu'encombrer Sonarr/Radarr d'entrées qu'on ne relit jamais.
 
     C'est le chemin de PURGE, et il reste inchangé — la suppression partielle
     passe par plan_season_deletion() + execute_delete_seasons(), volontairement
@@ -2082,7 +2083,7 @@ def execute_delete_series(client, series, matched, all_torrents, cross_seed_grou
     still_covered = {p for _t, _hf, lib_matches in failed_entries for p, _s in lib_matches}
     orphan_removed, _orphan_freed = cleanup_orphan_files(host_path, covered=still_covered)
     arr_ok = arr_write(SONARR_URL, SONARR_API_KEY, "DELETE", f"/api/v3/series/{series['id']}",
-                       params={"deleteFiles": "false", "addImportListExclusion": "true"},
+                       params={"deleteFiles": "false", "addImportListExclusion": "false"},
                        what=f"retrait de la série {series['title']!r}")
     logger.info("Sonarr: série %r (id=%s) — retrait arr %s, %d torrent(s) supprimé(s), "
                 "%d échec(s), %d fichier(s) orphelin(s)",
@@ -2100,7 +2101,7 @@ def execute_delete_movie_no_torrent(movie):
     script via lib_matches)."""
     arr_ok = arr_write(RADARR_URL, RADARR_API_KEY, "DELETE", f"/api/v3/movie/{movie['id']}",
                        params={"deleteFiles": "true" if movie.get("hasFile") else "false",
-                               "addImportExclusion": "true"},
+                               "addImportExclusion": "false"},
                        what=f"retrait du film {movie['title']!r}")
     logger.info("Radarr: film %r (id=%s) — retrait arr %s (sans torrent correspondant)",
                 movie["title"], movie["id"], "OK" if arr_ok else "ÉCHOUÉ")

@@ -124,7 +124,7 @@ notification.
 - **Deux comportements sur une série**, choisis dans la boîte de confirmation :
   « Supprimer » retire les saisons cochées et **laisse la série dans Sonarr**
   (en `monitorNewItems: "all"`), pour qu'une saison future soit quand même
-  téléchargée ; « Purger » retire la série complètement, avec exclusion de liste.
+  téléchargée ; « Purger » retire la série complètement de Sonarr.
   « Purger » n'apparaît que si toutes les saisons sont sélectionnées — une purge
   partielle laisserait les saisons gardées dans `library/` sans plus aucun arr
   pour les revendiquer.

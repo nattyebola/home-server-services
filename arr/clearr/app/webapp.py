@@ -939,8 +939,8 @@ def torrent_delete(tid: int, sort: str = Form(DEFAULT_SORT["torrents"]), reverse
 def _delete_series(series, state, seasons=None, purge=False):
     """Deux chemins, choisis par l'appelant :
 
-    - purge=True : tout part, la série est retirée de Sonarr avec exclusion de
-      liste. `seasons` est alors IGNORÉ — purger une partie d'une série
+    - purge=True : tout part, la série est retirée de Sonarr (sans exclusion de
+      liste). `seasons` est alors IGNORÉ — purger une partie d'une série
       laisserait les saisons gardées dans library/ sans plus aucun arr pour les
       revendiquer, donc invisibles des trois vues.
     - purge=False : seules les saisons de `seasons` partent, la série reste
@@ -1307,8 +1307,8 @@ def _preview_arr_movie(movie, state, target=None):
         if movie_path else None
     host_files = core.torrent_host_files(torrent) if torrent else []
     # Ce que le torrent emporte EN PLUS de ce film : un pack de films supprime
-    # tous ses films, et _delete_movie les retire aussi de Radarr (avec
-    # exclusion). La modale web les listait déjà via arr_plan ; la boîte Kodi
+    # tous ses films, et _delete_movie les retire aussi de Radarr. La
+    # modale web les listait déjà via arr_plan ; la boîte Kodi
     # n'annonçait qu'un compte et une taille. Même plan que celui qu'exécutera
     # _delete_movie, pour que l'aperçu ne promette ni plus ni moins.
     also = []

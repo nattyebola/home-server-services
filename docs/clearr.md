@@ -27,7 +27,7 @@ flowchart TD
     Plan --> L["Fichiers library/<br>retrouvés par inode"]
     Plan --> O["Fichiers sans torrent<br>dans le dossier du titre"]
     Plan --> A{"Titre connu<br>d'un arr ?"}
-    A -->|"Film, ou série<br>purgée"| R["Retiré de Radarr / Sonarr<br>+ exclusion de liste"]
+    A -->|"Film, ou série<br>purgée"| R["Retiré de Radarr / Sonarr"]
     A -->|"Saison terminée,<br>tout supprimé"| S1["Saison non suivie"]
     A -->|"Saison en cours"| S2["Seuls les épisodes<br>supprimés non suivis"]
     A -->|"Non"| Skip["Volet sauté"]
@@ -86,7 +86,7 @@ série entière : des saisons non suivies se lisent dans la colonne SAISONS
 | Bouton | Effet |
 |---|---|
 | **Supprimer** | les saisons cochées partent ; la série **reste dans Sonarr** pour que les prochaines saisons arrivent. Redemandée depuis Seerr, une saison supprimée revient. |
-| **Purger** | tout part, série retirée de Sonarr avec exclusion de liste. Proposé seulement si toutes les saisons sont cochées. |
+| **Purger** | tout part, série retirée de Sonarr (sans exclusion de liste). Proposé seulement si toutes les saisons sont cochées. |
 
 **Actions groupées** (onglet Torrents) :
 
