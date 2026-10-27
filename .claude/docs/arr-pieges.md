@@ -171,6 +171,12 @@ score de profil, cross-seed ou Seerr.
   file d'attente, toujours `"importMode": "hardlink"` explicite. Réparation :
   `ln <fichier en bibliothèque> <ancien chemin sous completed/>`, puis
   `transmission-remote -t <id> --verify`.
+  **Le cas « matched by ID » est automatisé** (2026-10-27) : cron
+  `manual-import.py apply --by-id-only` toutes les 15 min, qui n'importe que
+  les candidats sans rejet dont TOUS les motifs de file sont ce message, et
+  jamais une langue douteuse. Pas de réglage arr pour lever ce garde-fou
+  (seul un grab en recherche interactive y échappe). Il bloque surtout des
+  titres français ou d'anime abrégés que l'indexeur rattache par TVDB/IMDb.
   Outillé par `scripts/manual-import.py` (`list`/`apply`/`assign`) et le skill
   `.claude/skills/manual-import/SKILL.md`. Le script **sépare quatre familles
   et n'en importe qu'une** — celle sans rejet ni ambiguïté : une cible devinée

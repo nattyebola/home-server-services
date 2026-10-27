@@ -40,6 +40,7 @@ import re
 import shlex
 import subprocess
 import sys
+from datetime import datetime
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -78,6 +79,15 @@ FRENCH_TAGS = re.compile(r"\b(MULTI|MULTi|VFF|VFQ|VF|VF2|TRUEFRENCH|FRENCH)\b")
 # est autonome) : la clé API passe par STDIN, jamais dans l'argv d'un
 # `docker exec`, lisible dans `ps` par n'importe quel processus local.
 CURL_WRITE_OUT = "\n%{http_code}"
+
+# Seul motif de file que `apply --by-id-only` (lancé par cron) importe sans
+# humain : une release que l'indexeur a rattachée par identifiant (TVDB/IMDb)
+# parce que son nom ne se parse pas (titre français, titre d'anime abrégé).
+# Sonarr/Radarr la téléchargent mais refusent de l'importer seuls, sans réglage
+# pour lever ce garde-fou. Décision du 2026-10-27 : sur 18 imports de ce type
+# depuis le 24/07 (6 releases, toutes C411), aucun mauvais fichier, et
+# jusqu'à 4 jours de blocage. Tout autre motif reste à la main.
+MATCHED_BY_ID = re.compile(r"matched to (series|movie) by ID")
 
 
 def load_env_file(path):
@@ -360,10 +370,19 @@ def cmd_apply(args, env):
         except Exception as e:
             errors.append(f"{name} : {e}")
             continue
+        if args.by_id_only:
+            # Langue douteuse exclue : elle demande un `assign --language` à
+            # la main, pas un import en l'état.
+            rows = [r for r in rows
+                    if r["queue_reasons"]
+                    and all(MATCHED_BY_ID.search(reason) for reason in r["queue_reasons"])
+                    and not r["suspiciousLanguage"]]
         if not rows:
             continue
         files = [build_file(arr, r["_candidate"], r["downloadId"]) for r in rows]
-        print(f"{name} : {len(files)} fichier(s) à importer")
+        # Horodaté en mode cron : le journal n'a sinon aucune date.
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M ") if args.by_id_only else ""
+        print(f"{stamp}{name} : {len(files)} fichier(s) à importer")
         for row in rows:
             print(f"  - {row['title']} — {row['target']}"
                   + ("   ⚠ langue détectée douteuse, voir `assign --language`" if row["suspiciousLanguage"] else ""))
@@ -379,7 +398,8 @@ def cmd_apply(args, env):
             errors.append(f"{name} : {e}")
     # Vaut aussi en dry-run : un silence complet se lit comme un échec du
     # script, pas comme « rien de la famille 1 en attente ».
-    if not imported and not errors:
+    # Muet en mode cron : une ligne tous les quarts d'heure noierait le journal.
+    if not imported and not errors and not args.by_id_only:
         print("rien à importer sans ambiguïté — voir `list` pour les autres familles")
     for error in errors:
         print(f"ERREUR {error}", file=sys.stderr)
@@ -453,6 +473,8 @@ def main():
     p_apply = sub.add_parser("apply", help="importe les fichiers sans rejet ni ambiguïté")
     p_apply.add_argument("--download-id", help="ne traiter que ce téléchargement")
     p_apply.add_argument("--dry-run", action="store_true")
+    p_apply.add_argument("--by-id-only", action="store_true",
+                         help="seulement les fichiers bloqués par « matched by ID » (mode cron)")
     p_apply.set_defaults(func=cmd_apply)
 
     p_assign = sub.add_parser("assign", help="force la cible d'un fichier non rattaché")

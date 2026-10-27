@@ -877,6 +877,7 @@ SCHEDULED_TASKS = [
     ("Config arr (overrides)", "arr-overrides", 24 * 3600, ["arr/sonarr", "arr/radarr"]),
     ("Recherche des manquants", "search-missing", 7 * 24 * 3600, ["arr/sonarr", "arr/radarr"]),
     ("Marqueurs de finale", "mark-finales", 24 * 3600, ["arr/sonarr"]),
+    ("Imports rattachés par ID", "manual-import", 15 * 60, ["arr/sonarr", "arr/radarr"]),
 ]
 
 

@@ -318,6 +318,7 @@ unique : retirer le tag ne repasse pas en VOSTFR.
 | Repacks | `downloadPropersAndRepacks: doNotPrefer` | un REPACK ne passe pas devant le score (et sans upgrade, ne remplace jamais un fichier) |
 | Rejet des archives/exécutables | `failDownloads` | une « release » `.exe`/`.zipx` est marquée en échec et remplacée automatiquement |
 | Recherche des manquants | `search-missing.py`, lundi 5 h | Sonarr/Radarr **ne re-cherchent jamais** seuls un manquant raté au RSS ; chaque manquant retenté chaque semaine, plafonné à 30 recherches par arr, rotation par ancienneté ; un film seulement en salle n'est pas cherché (il attend sa sortie numérique ou physique) ; une saison diffusée sans aucun fichier est cherchée d'un bloc (packs) ; tâche en rouge si l'arr fait échouer la commande de recherche |
+| Imports rattachés par ID | `manual-import.py apply --by-id-only`, toutes les 15 min | une release au nom non reconnu (titre français, titre d'anime abrégé) est téléchargée via l'identifiant TVDB/IMDb de l'indexeur, puis **refusée à l'import** par Sonarr/Radarr, sans réglage pour lever ce garde-fou ; ce cas, et lui seul, est importé automatiquement (décidé le 2026-10-27 : 18 imports de ce type en 3 mois, aucun mauvais fichier) |
 | Marqueurs de fin de saison | `mark-finale.sh`, hook + cron 2 h | `†` fin de saison, `‡` fin de série, `½` mi-saison devant le titre d'épisode (visible dans Kodi) |
 
 Pas de recyclarr (retiré le 2026-10-07) : sur nos trackers français, les
@@ -338,7 +339,8 @@ folders, tags…) peut être ajusté librement dans les UI.
   (`importBlocked`/`importPending`) : aucune erreur visible hors de la file.
   Le dashboard compte ces téléchargements (un pack compte pour un, même si
   Sonarr crée une entrée de file par épisode) ; `scripts/manual-import.py`
-  (skill `manual-import`) les débloque.
+  (skill `manual-import`) les débloque. Le cas « matched by ID » est importé
+  par cron toutes les 15 min : ce qui reste bloqué au-delà demande une décision.
 - **Un REPACK grabé puis refusé à l'import** (« Not a Custom Format upgrade »),
   sur un fichier déjà en place en mieux : symptôme du défaut
   `preferAndUpgrade`, qui fait passer le repack avant le score. Réglé à

@@ -102,3 +102,17 @@ MAILTO=""
 # the placeholders below are substituted by `make cron-install` with this
 # checkout's absolute path and DATA_ROOT — never hardcode literals here.
 0 2 * * * __REPO_ROOT__/scripts/require-running.sh arr/sonarr && docker exec arr-sonarr-1 sh /custom-scripts/mark-finale.sh --all >> __REPO_ROOT__/arr/mark-finales.log 2>&1 && date +\%s > __DATA_ROOT__/.cron-status/mark-finales
+
+# Import the finished downloads Sonarr/Radarr matched by ID only, every 15
+# minutes. A release whose name doesn't parse (French title, shortened anime
+# title) is grabbed through the indexer's TVDB/IMDb id, then refused at import
+# ("matched to series by ID, automatic import is not possible") and sits in the
+# queue until someone notices — up to 4 days observed. No setting lifts this
+# safeguard; decided on 2026-10-27 to do it here (18 such imports since 07/24,
+# none wrong). `--by-id-only` touches nothing else: real rejections, unresolved
+# targets and doubtful languages stay for /manual-import. Silent when there is
+# nothing to import. Guarded by require-running.sh (needs both arr), success
+# marker consumed by the "Tâches planifiées" card.
+# the placeholders below are substituted by `make cron-install` with this
+# checkout's absolute path and DATA_ROOT — never hardcode literals here.
+*/15 * * * * __REPO_ROOT__/scripts/require-running.sh arr/sonarr arr/radarr && python3 __REPO_ROOT__/scripts/manual-import.py apply --by-id-only >> __REPO_ROOT__/arr/manual-import.log 2>&1 && date +\%s > __DATA_ROOT__/.cron-status/manual-import

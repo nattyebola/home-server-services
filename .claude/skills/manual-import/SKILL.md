@@ -40,7 +40,10 @@ la même décision. **Ne jamais les traiter en bloc.**
    not possible »*, c'est-à-dire une release dont le titre ne se parse pas
    et que l'arr n'a rattachée qu'en relisant l'historique du grab. Import
    direct, sans risque. C'était le cas des trois *Tomb Raider King* et de
-   *La vie est un miracle*.
+   *La vie est un miracle*. **Depuis le 2026-10-27, un cron le fait toutes
+   les 15 min** (`apply --by-id-only`, journal `arr/manual-import.log`) : un
+   cas « matched by ID » encore en file veut dire que le cron n'a pas encore
+   tourné, que l'item a un autre motif en plus, ou une langue douteuse.
 
 2. **À RATTACHER** — le candidat revient avec `episodes: []` /
    `movie: null` : l'arr ne sait pas à quoi le fichier correspond. Deux
