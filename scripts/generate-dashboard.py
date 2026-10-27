@@ -861,6 +861,7 @@ LEGACY_RESTIC_PASSWORD_FILE = REPO_ROOT / "sauvegarde" / "restic-password"
 # plus dans ce cas (voir CLAUDE.md). Liste vide = pas de stack associée,
 # toujours affichée (rafraîchissement dashboard : c'est justement lui qui
 # doit tourner pour refléter qu'une stack est arrêtée).
+# 5e élément : description affichée au survol (attribut `title` de la ligne).
 CRON_STATUS_DIR_NAME = ".cron-status"
 # Marge appliquée à l'intervalle attendu de chaque tâche (voir
 # render_scheduled_tasks_card()) — sans marge, un marqueur comparé pile à
@@ -872,13 +873,30 @@ CRON_STATUS_DIR_NAME = ".cron-status"
 # dashboard" lui-même.
 CRON_MARKER_SLACK = 1.2
 SCHEDULED_TASKS = [
-    ("Nextcloud (cron.php)", "nextcloud-cron", 5 * 60, ["nextcloud/app"]),
-    ("Rafraîchissement dashboard", "dashboard-refresh", 5 * 60, []),
-    ("Config arr (overrides)", "arr-overrides", 24 * 3600, ["arr/sonarr", "arr/radarr"]),
-    ("Recherche des manquants", "search-missing", 7 * 24 * 3600, ["arr/sonarr", "arr/radarr"]),
-    ("Marqueurs de finale", "mark-finales", 24 * 3600, ["arr/sonarr"]),
-    ("Imports rattachés par ID", "manual-import", 15 * 60, ["arr/sonarr", "arr/radarr"]),
+    ("Nextcloud (cron.php)", "nextcloud-cron", 5 * 60, ["nextcloud/app"],
+     "Toutes les 5 min : tâches de fond de Nextcloud (synchronisation, "
+     "notifications, nettoyage, corbeille, versions…)."),
+    ("Rafraîchissement dashboard", "dashboard-refresh", 5 * 60, [],
+     "Toutes les 5 min : régénère cette page (état des conteneurs, "
+     "disques, torrents, tâches)."),
+    ("Config arr (overrides)", "arr-overrides", 24 * 3600, ["arr/sonarr", "arr/radarr"],
+     "Chaque nuit à 0 h : réapplique la config versionnée des arr (profils de "
+     "qualité, custom formats, tailles, délai, Jellyfin, .nfo) — toute "
+     "modification faite dans l'UI est annulée."),
+    ("Recherche des manquants", "search-missing", 7 * 24 * 3600, ["arr/sonarr", "arr/radarr"],
+     "Le lundi à 5 h : relance la recherche des épisodes et films déjà sortis "
+     "mais absents (ratés par le RSS), avec un plafond pour ménager les trackers."),
+    ("Marqueurs de finale", "mark-finales", 24 * 3600, ["arr/sonarr"],
+     "Chaque nuit à 2 h : repose les marqueurs de fin de saison/série dans "
+     "les .nfo des épisodes (affichés dans Kodi)."),
+    ("Imports rattachés par ID", "manual-import", 15 * 60, ["arr/sonarr", "arr/radarr"],
+     "Toutes les 15 min : importe les téléchargements finis que Sonarr/Radarr "
+     "n'ont rattachés que par ID (titre non reconnu) et laissent bloqués en file."),
 ]
+BACKUP_TASK_DESCRIPTION = (
+    "Le dimanche à 3 h : sauvegarde restic (dump de la base Nextcloud, données, "
+    "secrets .env, manifeste des images). Vert si le dernier snapshot a moins de 7 jours."
+)
 
 
 def cron_marker_age_seconds(data_root, marker_name):
@@ -947,13 +965,15 @@ def render_scheduled_tasks_card(data_root, running):
     items.append((
         "Sauvegarde restic",
         backup_age_days is not None and backup_age_days <= BACKUP_MAX_AGE_DAYS * CRON_MARKER_SLACK,
+        BACKUP_TASK_DESCRIPTION,
     ))
 
-    for label, marker_name, interval_seconds, required in SCHEDULED_TASKS:
+    for label, marker_name, interval_seconds, required, description in SCHEDULED_TASKS:
         if any(svc not in running for svc in required):
             continue
         age_seconds = cron_marker_age_seconds(data_root, marker_name)
-        items.append((label, age_seconds is not None and age_seconds <= interval_seconds * CRON_MARKER_SLACK))
+        items.append((label, age_seconds is not None and age_seconds <= interval_seconds * CRON_MARKER_SLACK,
+                      description))
 
     lis = "\n".join(
         # Glyphe + texte caché en plus de la pastille : l'état ne reposait QUE
@@ -961,17 +981,18 @@ def render_scheduled_tasks_card(data_root, running):
         # ou protan — ~8 % des hommes — alors que c'est la seule information de
         # la carte, et muet pour un lecteur d'écran (1.1.1), qui n'entendait
         # qu'une liste de noms. Le glyphe hérite de la couleur du point.
-        '<li><span class="status-dot status-dot-{cls}"></span>'
+        '<li title="{description}"><span class="status-dot status-dot-{cls}"></span>'
         '<span class="status-mark status-mark-{cls}" aria-hidden="true">{mark}</span>'
         '{label}<span class="visually-hidden"> — {state}</span></li>'.format(
             cls="good" if ok else "critical",
             mark="✓" if ok else "✕",
             label=html.escape(label),
             state="OK" if ok else "en échec",
+            description=html.escape(description),
         )
-        for label, ok in items
+        for label, ok, description in items
     )
-    failed = [label for label, ok in items if not ok]
+    failed = [label for label, ok, _ in items if not ok]
     state = (("critical", f"En retard ou en échec : {', '.join(failed)}") if failed
              else ("good", "Toutes les tâches ont tourné à temps"))
     return render("scheduled-tasks-card.html", header=render_stat_header("Tâches planifiées", state), items=lis)
