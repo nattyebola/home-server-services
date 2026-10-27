@@ -635,7 +635,7 @@ def render_torrents_files_card(stats, imports):
         ),
         render_stat_item(
             str(stats["torrents_errored"]), "En erreur",
-            value_class="stat-value-critical" if stats["torrents_errored"] else "stat-value-good",
+            value_class=share_value_class(stats["torrents_errored"], stats),
             title="Torrents signalés en erreur par Transmission : tracker "
                   "injoignable, données introuvables sur disque…",
         ),
@@ -643,7 +643,7 @@ def render_torrents_files_card(stats, imports):
     files_col = render_multi_stat_column([
         render_stat_item(
             str(stats["torrents_missing"]), "Absents",
-            value_class="stat-value-critical" if stats["torrents_missing"] else "stat-value-good",
+            value_class=share_value_class(stats["torrents_missing"], stats),
             title="Torrents dont plus aucun fichier n'existe sur disque "
                   "(marqueur ABS de clearr)",
         ),
@@ -658,10 +658,11 @@ def render_torrents_files_card(stats, imports):
                   ".cross-seed-links/ et non sous completed/",
         ),
     ])
-    # Colorées comme "En erreur"/"Absents" au-dessus (rouge si > 0, vert
-    # sinon) : un import coincé est une anomalie, pas une valeur de service.
-    # Aucune classe en revanche quand le compte est inconnu — "—" n'est ni bon
-    # ni mauvais.
+    # "Bloqués" rouge si > 0 : un import refusé ne se débloque pas sans
+    # intervention. "En attente" sans couleur : état normal, que le cron
+    # d'import par ID (toutes les 15 min) résorbe en grande partie — décidé
+    # le 2026-10-27. Aucune classe non plus quand le compte est inconnu — "—"
+    # n'est ni bon ni mauvais.
     imports_col = render_multi_stat_column([
         render_stat_item(
             str(imports["importBlocked"]) if imports else "—", "Bloqués",
@@ -673,8 +674,6 @@ def render_torrents_files_card(stats, imports):
         ),
         render_stat_item(
             str(imports["importPending"]) if imports else "—", "En attente",
-            value_class=(("stat-value-critical" if imports["importPending"] else "stat-value-good")
-                         if imports else ""),
             title="Imports en attente (importPending) — l'arr a renoncé à "
                   "rattacher le fichier ; ne se débloque pas tout seul",
         ),
@@ -683,24 +682,49 @@ def render_torrents_files_card(stats, imports):
                   columns="\n".join([torrents_col, files_col, imports_col]))
 
 
+# Part des torrents en erreur ou absents à partir de laquelle la carte passe
+# au rouge. En dessous c'est orange (décidé le 2026-10-27) : quelques erreurs
+# viennent presque toujours d'un tracker en panne, quelques absents d'un
+# ménage clearr à faire — rien d'urgent. La moitié des torrents d'un coup,
+# c'est un disque démonté, une suppression de masse ou le VPN coupé.
+TORRENTS_CRITICAL_SHARE = 0.5
+
+
+def share_severity(count, stats):
+    """"critical" si `count` atteint TORRENTS_CRITICAL_SHARE du total des
+    torrents, "warning" s'il est > 0, None sinon."""
+    if not count:
+        return None
+    total = stats["torrents_active"] + stats["torrents_paused"]
+    return "critical" if count >= total * TORRENTS_CRITICAL_SHARE else "warning"
+
+
+def share_value_class(count, stats):
+    return f"stat-value-{share_severity(count, stats) or 'good'}"
+
+
 def torrents_state(stats, imports):
-    """Rouge dès qu'une des valeurs colorées en rouge dans la carte est > 0 ;
-    jaune si les imports sont inconnus (« — ») sans autre anomalie : rien ne
-    permet alors d'annoncer « tout va bien »."""
-    counts = [
-        ("En erreur", stats["torrents_errored"]),
-        ("Absents", stats["torrents_missing"]),
+    """Rouge si un import est bloqué, ou si au moins la moitié des torrents
+    est en erreur ou absente ; orange s'il y a des erreurs ou des absents en
+    deçà, ou si les imports sont inconnus (« — ») : rien ne permet alors
+    d'annoncer « tout va bien ». Les imports en attente ne comptent pas
+    (état normal, voir render_torrents_files_card)."""
+    # (libellé, n, sévérité) — « Libellé : n » plutôt que « n libellé » : pas
+    # d'accord singulier/pluriel à gérer.
+    anomalies = [
+        ("En erreur", stats["torrents_errored"], share_severity(stats["torrents_errored"], stats)),
+        ("Absents", stats["torrents_missing"], share_severity(stats["torrents_missing"], stats)),
     ]
     if imports:
-        counts += [("Imports bloqués", imports["importBlocked"]),
-                   ("Imports en attente", imports["importPending"])]
-    # « Libellé : n » plutôt que « n libellé » : pas d'accord singulier/pluriel à gérer.
-    anomalies = [f"{label} : {n}" for label, n in counts if n]
-    if anomalies:
-        return "critical", " · ".join(anomalies)
-    if not imports:
-        return "warning", "Imports inconnus (Sonarr ou Radarr injoignable)"
-    return "good", "Aucune anomalie"
+        anomalies.append(("Imports bloqués", imports["importBlocked"],
+                          "critical" if imports["importBlocked"] else None))
+    else:
+        anomalies.append(("Imports inconnus (Sonarr ou Radarr injoignable)", None, "warning"))
+    anomalies = [a for a in anomalies if a[2]]
+    if not anomalies:
+        return "good", "Aucune anomalie"
+    level = "critical" if any(sev == "critical" for _, _, sev in anomalies) else "warning"
+    return level, " · ".join(label if n is None else f"{label} : {n}" for label, n, _ in anomalies)
 
 
 def render_needle_gauge_card(title, icon, first, second, state=None):

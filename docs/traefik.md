@@ -97,7 +97,7 @@ flowchart LR
   | Indexeurs | un indexeur en échec | — | tous répondent |
   | Tâches planifiées | une tâche en retard ou en échec | — | toutes à temps |
   | Disques | un disque plein à 90 % ou plus | à 80 % ou plus | sinon |
-  | Torrents | torrents en erreur ou absents, imports bloqués ou en attente | imports inconnus (« — ») | aucune anomalie |
+  | Torrents | un import bloqué, ou la moitié des torrents en erreur ou absents | quelques torrents en erreur ou absents, imports inconnus (« — ») | sinon (les imports en attente sont normaux) |
   | Ratios | ratio total < 1 | entre 1 et 2 | ≥ 2 |
 
   Pas de voyant sur **Débits** (un débit n'est ni bon ni mauvais) ni sur
