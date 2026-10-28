@@ -116,3 +116,16 @@ MAILTO=""
 # the placeholders below are substituted by `make cron-install` with this
 # checkout's absolute path and DATA_ROOT — never hardcode literals here.
 */15 * * * * __REPO_ROOT__/scripts/require-running.sh arr/sonarr arr/radarr && python3 __REPO_ROOT__/scripts/manual-import.py apply --by-id-only >> __REPO_ROOT__/arr/manual-import.log 2>&1 && date +\%s > __DATA_ROOT__/.cron-status/manual-import
+
+# Replace the torrents grabbed by Sonarr/Radarr that no longer progress, hourly
+# (tracker in 403, no seeder, metadata never received: the arr leaves them
+# "downloading" forever, see scripts/stalled-torrents.py). --fix decided by the
+# user on 2026-10-28: the arr removes, blocklists and re-searches, but only a
+# queued torrent with no data at all, neither paused nor waiting in
+# Transmission's queue; everything else is only reported. Minute 17 keeps it
+# off the other jobs' ticks. State written to a JSON under DATA_ROOT for the
+# dashboard. Guarded by require-running.sh (Transmission + both arr), success
+# marker consumed by the "Tâches planifiées" card.
+# the placeholders below are substituted by `make cron-install` with this
+# checkout's absolute path and DATA_ROOT — never hardcode literals here.
+17 * * * * __REPO_ROOT__/scripts/require-running.sh vpn/transmission-vpn arr/sonarr arr/radarr && python3 __REPO_ROOT__/scripts/stalled-torrents.py --fix >> __DATA_ROOT__/.stalled-torrents.log 2>&1 && date +\%s > __DATA_ROOT__/.cron-status/stalled-torrents

@@ -621,7 +621,8 @@ def render_multi_stat_column(items):
 
 def render_torrents_files_card(stats, imports):
     """Torrents (Actifs/En pause/En erreur), Fichiers (Absents/En
-    bibliothèque/En cross-seed) et Imports (Bloqués/En attente) fusionnés en
+    bibliothèque/En cross-seed) et Imports (Bloqués/En attente) + Figés à 0 %
+    (3e colonne pour équilibrer 3/3/3, 2026-10-28) fusionnés en
     une seule carte à 3 colonnes, qui prend la largeur de 2 cartes normales
     (voir .stat-span-2) — demandé par l'utilisateur le 2026-07-29 : 2 cartes
     séparées côte à côte prenaient trop de place pour des infos étroitement
@@ -634,7 +635,7 @@ def render_torrents_files_card(stats, imports):
     build_stats_section), un span-3 aurait décalé la carte tracker et les
     tâches planifiées. Les colonnes tombent donc à ~137px, d'où des libellés
     courts ("Bloqués"/"En attente") — sans titre de colonne, "Bloqués" seul se
-    lirait comme un état de torrent. Les 8 valeurs de la carte portent donc un
+    lirait comme un état de torrent. Les 9 valeurs de la carte portent donc un
     title natif donnant leur définition exacte (généralisé le 2026-08-31 : ces
     libellés tiennent en deux mots, mais aucun ne dit ce qui est réellement
     compté — "Actifs" est un status RPC, "Absents"/"En bibliothèque" les
@@ -697,6 +698,14 @@ def render_torrents_files_card(stats, imports):
             title="Imports en attente (importPending) — l'arr a renoncé à "
                   "rattacher le fichier ; ne se débloque pas tout seul",
         ),
+        render_stat_item(
+            str(stats["torrents_stalled_zero"]), "Figés à 0 %",
+            value_class=share_value_class(stats["torrents_stalled_zero"], stats),
+            title="Torrents non arrêtés toujours à 0 % (aucun octet reçu) plus "
+                  "d'une heure après leur ajout : tracker en erreur, aucun "
+                  "seeder, métadonnées jamais reçues… Au-delà de 24 h : "
+                  "scripts/stalled-torrents.py",
+        ),
     ])
     return render("multi-stat-columns-card.html", header=render_stat_header("Torrents", torrents_state(stats, imports)),
                   columns="\n".join([torrents_col, files_col, imports_col]))
@@ -725,7 +734,7 @@ def share_value_class(count, stats):
 
 def torrents_state(stats, imports):
     """Rouge si un import est bloqué, ou si au moins la moitié des torrents
-    est en erreur ou absente ; orange s'il y a des erreurs ou des absents en
+    est en erreur, absente ou figée à 0 % ; orange s'il y en a en
     deçà, ou si les imports sont inconnus (« — ») : rien ne permet alors
     d'annoncer « tout va bien ». Les imports en attente ne comptent pas
     (état normal, voir render_torrents_files_card)."""
@@ -734,6 +743,7 @@ def torrents_state(stats, imports):
     anomalies = [
         ("En erreur", stats["torrents_errored"], share_severity(stats["torrents_errored"], stats)),
         ("Absents", stats["torrents_missing"], share_severity(stats["torrents_missing"], stats)),
+        ("Figés à 0 %", stats["torrents_stalled_zero"], share_severity(stats["torrents_stalled_zero"], stats)),
     ]
     if imports:
         anomalies.append(("Imports bloqués", imports["importBlocked"],
@@ -936,6 +946,11 @@ SCHEDULED_TASKS = [
     ("Imports rattachés par ID", "manual-import", 15 * 60, ["arr/sonarr", "arr/radarr"],
      "Toutes les 15 min : importe les téléchargements finis que Sonarr/Radarr "
      "n'ont rattachés que par ID (titre non reconnu) et laissent bloqués en file."),
+    ("Torrents bloqués", "stalled-torrents", 3600, ["vpn/transmission-vpn", "arr/sonarr", "arr/radarr"],
+     "Toutes les heures : fait remplacer par Sonarr/Radarr (blocklist + nouvelle "
+     "recherche) les torrents sans aucune donnée ni activité depuis 24 h (tracker "
+     "en erreur, aucun seeder, métadonnées absentes), que les arr laissent "
+     "« en téléchargement » indéfiniment ; les autres sont seulement signalés."),
 ]
 BACKUP_TASK_DESCRIPTION = (
     "Le dimanche à 3 h : sauvegarde restic (dump de la base Nextcloud, données, "

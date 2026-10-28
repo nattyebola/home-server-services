@@ -34,6 +34,12 @@ PROWLARR_URL = "http://localhost:9696/api/v1/indexer"
 # dériver l'échelle des mètres sur un pic isolé trop ancien.
 HISTORY_RETENTION = 25 * 3600
 
+# Âge à partir duquel un torrent toujours à 0 % compte comme figé (carte
+# Torrents, demandé le 2026-10-28). Volontairement court, contrairement aux
+# 24 h de scripts/stalled-torrents.py qui, lui, peut retirer : ici ce n'est
+# qu'un signal, et un torrent sain reçoit ses premiers octets en minutes.
+STALLED_ZERO_SECONDS = 3600
+
 
 def load_env_file(path):
     values = {}
@@ -391,10 +397,21 @@ def has_partial_files(torrent):
     return False
 
 
+def is_stalled_at_zero(torrent, now):
+    """Toujours à 0 % (aucun octet, même non vérifié — haveUnchecked) plus de
+    STALLED_ZERO_SECONDS après l'ajout. Un torrent en pause est exclu : son
+    immobilité est voulue, et il est déjà compté « En pause »."""
+    return (torrent.get("status", 0) != 0
+            and torrent.get("percentDone", 0) == 0
+            and torrent.get("haveUnchecked", 0) == 0
+            and now - torrent.get("addedDate", now) >= STALLED_ZERO_SECONDS)
+
+
 def main():
     session = rpc("session-stats")
     torrents = rpc("torrent-get", {"fields": ["trackerStats", "uploadedEver", "downloadedEver",
-                                               "status", "error", "downloadDir", "files"]})["torrents"]
+                                               "status", "error", "downloadDir", "files",
+                                               "percentDone", "haveUnchecked", "addedDate"]})["torrents"]
 
     # status 0 = stopped/paused côté Transmission (spec RPC) — "actifs" =
     # tout le reste (en train de télécharger, de vérifier, ou en seed).
@@ -405,6 +422,7 @@ def main():
     torrents_paused = sum(1 for t in torrents if t.get("status", 0) == 0)
     torrents_errored = sum(1 for t in torrents if t.get("error", 0) != 0)
     torrents_cross_seed = sum(1 for t in torrents if is_cross_seed_entry(t))
+    torrents_stalled_zero = sum(1 for t in torrents if is_stalled_at_zero(t, time.time()))
 
     # BIB/ABS (voir arr/clearr/app/core.py) : mêmes marqueurs, une seule passe
     # resolved_stat() par torrent via analyze_torrent_files().
@@ -484,6 +502,7 @@ def main():
         "torrents_missing": torrents_missing,
         "torrents_linked": torrents_linked,
         "torrents_cross_seed": torrents_cross_seed,
+        "torrents_stalled_zero": torrents_stalled_zero,
         "session": {
             "uploaded": cur["uploadedBytes"],
             "uploaded_human": human_size(cur["uploadedBytes"]),

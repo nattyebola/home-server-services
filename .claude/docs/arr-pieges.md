@@ -238,6 +238,23 @@ score de profil, cross-seed ou Seerr.
   `importBlocked`. Ne pas revenir à `preferAndUpgrade`. Depuis le 2026-10-07
   (aucun upgrade), un repack ne remplace de toute façon jamais un fichier.
 
+- **Un torrent mort ne passe JAMAIS en échec côté arr** (2026-10-28, vécu
+  sur une autre instance : 3 releases C411 en 403 pendant 0 à 6 jours, une
+  release Astra sans seeder bloquée 18 jours). L'arr ne lit que l'état de
+  Transmission (« downloading ») : tracker en 403, 0 seeder ou métadonnées
+  jamais reçues ne déclenchent ni échec, ni blocklist, ni nouvelle recherche,
+  et `search-missing` saute ce qui est en file. **`minimumSeeders: 1`** (posé
+  par Prowlarr sur les 8 indexeurs des deux arr) **n'est vérifié qu'au grab**
+  et ne protège de rien ensuite. Filet : `scripts/stalled-torrents.py`
+  (cron horaire **avec `--fix`**, décidé le 2026-10-28) ; `--fix` passe par
+  `DELETE /api/v3/queue/bulk?removeFromClient=true&blocklist=true&skipRedownload=false`
+  avec **tous** les ids de file du hash (un pack = une entrée par épisode),
+  jamais par Transmission directement (l'arr ne blocklisterait rien). Garde-fous
+  de `action_for()` : hors file arr, données partielles (`percentDone` ou
+  `haveUnchecked` > 0), pause et file d'attente Transmission ne sont jamais
+  retirés. Ce n'est pas l'auto-remédiation Docker écartée par le socle
+  (pas de socket, rien sur les conteneurs) : un retrait de file arr.
+
 ## La boucle de regrab infini (`cutoffFormatScore` + regex)
 
 Le piège le plus coûteux du repo, diagnostiqué en trois passes. **Impossible

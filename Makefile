@@ -13,7 +13,7 @@ STACKS := traefik jellyfin nextcloud vpn arr seerr komga
 # reflète donc l'état d'après redémarrage.
 UPDATE_STACKS := nextcloud vpn jellyfin arr seerr komga traefik
 
-.PHONY: help require-env-shared network up down restart restart-all config logs update rebuild update-all backup restore cron-install dashboard-refresh clearr arr-overrides search-missing mark-finales kodi-install gnome-install api-keys provision switch-lan-only-middleware test
+.PHONY: help require-env-shared network up down restart restart-all config logs update rebuild update-all backup restore cron-install dashboard-refresh clearr arr-overrides search-missing stalled-torrents mark-finales kodi-install gnome-install api-keys provision switch-lan-only-middleware test
 
 # `make` sans argument affiche l'aide plutôt que de lancer la première cible
 # (c'était `network`, qui ne dit rien de ce que le reste sait faire).
@@ -337,6 +337,14 @@ mark-finales: ## — repose les marqueurs de fin de saison/série dans les .nfo 
 # envoyer aux indexeurs.
 search-missing: ## ARGS=<options> — recherche les manquants déjà sortis (aussi lancé par cron)
 	@python3 scripts/search-missing.py $(ARGS)
+
+# liste les torrents Sonarr/Radarr sans activité depuis 24 h (tracker en 403,
+# aucun seeder, métadonnées jamais reçues) — les arr les laissent « en
+# téléchargement » indéfiniment. `ARGS=--fix` les fait retirer par leur arr
+# (blocklist + nouvelle recherche), seulement s'ils n'ont aucune donnée ; voir
+# scripts/stalled-torrents.py. Aussi lancé par cron toutes les heures, avec --fix.
+stalled-torrents: ## ARGS=--fix — liste les torrents arr bloqués depuis 24 h (--fix : les fait remplacer)
+	@python3 scripts/stalled-torrents.py $(ARGS)
 
 # ouvre/referme au WAN les services normalement restreints au LAN
 # (transmission + prowlarr/sonarr/radarr/clearr) en réécrivant la plage

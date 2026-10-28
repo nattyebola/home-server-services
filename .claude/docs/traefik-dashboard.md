@@ -165,6 +165,13 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
     et depuis le 2026-08-31 les deux compteurs d'imports. 0 en téléchargement
     n'est pas anormal, contrairement à une erreur. « Actifs » = `status != 0`
     (spec RPC), « surveillés » = tous les torrents présents.
+    **« Figés à 0 % »** (2026-10-28, demandé ; 3e colonne sous les imports,
+    pour équilibrer les colonnes en 3/3/3) : non en pause, 0 octet reçu
+    (`percentDone` et `haveUnchecked` à 0), ajouté depuis plus d'**1 h**
+    (`STALLED_ZERO_SECONDS` dans `transmission-stats.py`). Seuil volontairement
+    distinct des 24 h de `stalled-torrents.py` : ici un signal, là un retrait
+    possible. Coloré et compté dans le voyant comme « En erreur » (orange, rouge
+    à 50 % des torrents).
   - **3e colonne « Imports » (Bloqués / En attente)** dans cette même carte,
     demandée le 2026-08-31 : nombre de **téléchargements distincts**
     (downloadId) Sonarr+Radarr en `importBlocked`/`importPending`
@@ -195,7 +202,7 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
     voir. Colonnes à ~137px une fois à 3 dans une carte restée `stat-span-2`
     (un span-3 aurait décalé la carte tracker et les tâches planifiées, cf. le
     calage en rangées de 4 slots), d'où des libellés courts et un `flex-wrap`
-    ciblé dans `.stat-torrents-files`. **Les 8 valeurs de la carte portent un
+    ciblé dans `.stat-torrents-files`. **Les 9 valeurs de la carte portent un
     `title=` natif** donnant leur définition exacte (généralisé le 2026-08-31
     depuis la seule colonne Imports) : les libellés tiennent en deux mots mais
     aucun ne dit ce qui est compté — « Actifs » est un `status` RPC, « Absents »
