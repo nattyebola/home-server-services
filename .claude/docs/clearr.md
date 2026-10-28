@@ -7,7 +7,7 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
 
 - **Remplace l'ancien `scripts/torrent-cleanup.py` / `make cleanup`**
   (2026-07-31) : web LAN-only (`clearr.${DOMAIN}`, middleware
-  `arr-lan-only`), appuyé sur `arr/clearr/app/core.py`. `webapp.py`
+  `clearr-lan-only`), appuyé sur `arr/clearr/app/core.py`. `webapp.py`
   (FastAPI + Jinja2 + Bootstrap) et `cli.py` (`delete-by-inode`) importent
   `core.py`, **jamais l'inverse**. **TUI curses (`make clearr`, `tui.py`)
   supprimée le 2026-10-08, à la demande** — avec elle `core.abs_purge_refusal`,

@@ -1163,7 +1163,7 @@ def film_delete(mid: int, sort: str = Form(DEFAULT_SORT["films"]), reverse: str 
 # Kodi ne pourrait annoncer que le titre, jamais ce qui va réellement partir.
 #
 # Aucune authentification, comme le reste de clearr : le service est LAN-only
-# (middleware arr-lan-only, arr/docker-compose.yml) et son UI web expose déjà
+# (middleware clearr-lan-only, arr/docker-compose.yml) et son UI web expose déjà
 # les mêmes suppressions en POST sans jeton — ces routes n'ajoutent donc pas une
 # classe d'exposition nouvelle. À revoir en même temps que celle de l'UI si le
 # besoin d'un jeton apparaît, pas séparément.

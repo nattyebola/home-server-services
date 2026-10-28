@@ -768,8 +768,8 @@ MEDIA_COVER_DIRS = {
 POSTER_CANDIDATES = ("poster-250.jpg", "poster-500.jpg", "poster.jpg")
 
 # Les UI Sonarr/Radarr vivent sur des sous-domaines de ${DOMAIN} (LAN-only via
-# arr-lan-only, comme clearr lui-même). DOMAIN vient de .env.shared, donc
-# injecté explicitement dans l'environnement du conteneur (`environment:` dans
+# sonarr-lan-only/radarr-lan-only, comme clearr lui-même). DOMAIN vient de
+# .env.shared, donc injecté explicitement dans l'environnement du conteneur (`environment:` dans
 # arr/docker-compose.yml, env_file ne chargeant que arr/.env) — absent = pas
 # de lien arr affiché, le reste fonctionne quand même.
 DOMAIN = os.environ.get("DOMAIN", "")

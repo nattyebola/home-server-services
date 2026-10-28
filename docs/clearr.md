@@ -100,7 +100,7 @@ série entière : des saisons non suivies se lisent dans la colonne SAISONS
 
 ## Sécurité
 
-- **Aucune authentification** : clearr est LAN-only (`arr-lan-only`) et sur
+- **Aucune authentification** : clearr est LAN-only (`clearr-lan-only`) et sur
   `traefik-restricted`, jamais joignable depuis un service public.
 - **Aucun socket Docker** : il parle à Transmission et aux arr par HTTP.
 - **Aucun chemin à supprimer ne vient du navigateur** : tout est recalculé

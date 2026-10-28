@@ -99,6 +99,12 @@ HOST_RE = re.compile(r"Host\(`([^`]+)`\)")
 # Configuration dynamique de Traefik où vivent les middlewares LAN-only, et de
 # quoi y relever leur nom — voir lan_middleware_names().
 LAN_DYNAMIC_FILE = REPO_ROOT / "traefik" / "dynamic" / "lan-only.yml"
+# Services de SERVICES dans scripts/lan-only-middleware.sh, avec leur nom
+# affiché dans le bandeau d'ouverture WAN. L'ordre est celui du bandeau.
+LAN_ONLY_SERVICES = {
+    "transmission": "Transmission", "prowlarr": "Prowlarr", "sonarr": "Sonarr",
+    "radarr": "Radarr", "clearr": "clearr",
+}
 LAN_MIDDLEWARE_RE = re.compile(r"^ {4}([A-Za-z0-9_-]+):[ \t]*\n {6}ipAllowList:", re.MULTILINE)
 
 PROWLARR_CONTAINER = "arr-prowlarr-1"
@@ -172,15 +178,29 @@ def render_lan_only_banner(data_root):
     restreint ». L'échéance est affichée parce que l'oubli est le vrai risque
     de cette bascule.
 
-    Lit le même fichier d'état que scripts/lan-only-middleware.sh, sans jamais
-    l'écrire : absent (ou DATA_ROOT inconnu) = fermé, le cas normal."""
+    Lit les mêmes fichiers d'état que scripts/lan-only-middleware.sh, sans
+    jamais les écrire : échéance absente (ou DATA_ROOT inconnu) = fermé, le
+    cas normal. La liste des services ouverts vient de `.lan-only-open-only`
+    (`SERVICE=` de la cible make) ; absente = tous, comme dans le script."""
     if not data_root:
         return ""
     try:
         deadline = int(Path(data_root, ".lan-only-open-until").read_text().strip())
     except (FileNotFoundError, ValueError, OSError):
         return ""
+    try:
+        opened = Path(data_root, ".lan-only-open-only").read_text().split()
+    except OSError:
+        opened = list(LAN_ONLY_SERVICES)
+    # Un nom inconnu (fichier écrit par une version future du script) est
+    # affiché tel quel plutôt qu'écarté : le bandeau ne doit jamais taire un
+    # service ouvert.
+    names = [LAN_ONLY_SERVICES.get(mw.removesuffix("-lan-only"), mw) for mw in opened]
+    services = ", ".join(names[:-1]) + " et " + names[-1] if len(names) > 1 else "".join(names)
     return render("lan-only-banner.html",
+                  services=services or "Des services LAN-only",
+                  plural="s" if len(names) != 1 else "",
+                  verb="sont" if len(names) != 1 else "est",
                   until=datetime.fromtimestamp(deadline).strftime("%H:%M"))
 
 
@@ -385,8 +405,8 @@ def extract_traefik_services(config, lan_names):
     routeur, **quelle que soit la plage du moment** : après un
     `make switch-lan-only-middleware` la plage laisse tout passer, mais faire
     basculer les 5 cartes dans « Public » à chaque aller-retour ferait perdre
-    l'information utile (« normalement restreint »). C'est le bandeau rouge en
-    haut de page qui dit que la restriction est levée, et jusqu'à quand."""
+    l'information utile (« normalement restreint »). C'est le bandeau orange en
+    haut de page qui dit quels services sont ouverts, et jusqu'à quand."""
     for name, svc in (config.get("services") or {}).items():
         labels = svc.get("labels") or {}
         # `config --no-interpolate` (stack sans .env) rend les labels tels

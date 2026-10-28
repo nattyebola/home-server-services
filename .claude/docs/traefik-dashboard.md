@@ -13,7 +13,7 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   jamais redéfinir `stsSeconds`/`customResponseHeaders` en dur dans un compose
   file, toujours `hsts@docker`/`security-headers@docker`. Un routeur qui a
   déjà un autre middleware les combine en liste :
-  `arr-lan-only@file,security-headers@docker,hsts@docker`.
+  `sonarr-lan-only@file,security-headers@docker,hsts@docker`.
   - `hsts` : `stsSeconds=15552000`, `stsIncludeSubdomains`, `forceSTSHeader`,
     sur tous les services y compris LAN-only.
   - `security-headers` : `X-Robots-Tag: noindex, nofollow, noarchive`
@@ -69,14 +69,19 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   `dashboard/assets/robots.txt` et l'en-tête `X-Robots-Tag`. Garder
   `robots.txt` à jour dans `dashboard/assets/` (source versionnée), pas dans
   `dashboard/html/` (généré, gitignoré).
-- **Les deux middlewares LAN-only vivent dans le provider `file`, pas dans
+- **Les middlewares LAN-only vivent dans le provider `file`, pas dans
   des labels Docker** (`traefik/dynamic/lan-only.yml`, `watch: true`,
-  référencés en `arr-lan-only@file`/`transmission-lan-only@file`) — pour
+  référencés en `<service>-lan-only@file`) — pour
   pouvoir être ouverts au WAN et refermés **sans recréer un seul conteneur**
   (`make switch-lan-only-middleware` : « tester/corriger si je ne suis pas
   chez moi mais que j'ai un accès SSH »). Un label ne peut changer qu'en
   recréant le conteneur qui le porte, ce qui aurait voulu dire redémarrer les
   4 arr + le proxy à chaque aller-retour.
+  **Un middleware par service** (2026-10-28, ex-`arr-lan-only` partagé) :
+  c'est la seule granularité d'ouverture possible, puisqu'un middleware est
+  le même objet pour tous les routeurs qui le citent. `SERVICE=sonarr` ouvre
+  sonarr sans clearr. Un service LAN-only qui arrive ajoute `<nom>` à
+  `SERVICES` dans le script et `<nom>-lan-only@file` à son routeur.
   **Le middleware est rendu inopérant, pas retiré des routeurs** : seule sa
   plage change, `LAN_CIDR` ↔ `0.0.0.0/0` + `::/0`. **`::/0` n'est pas
   décoratif** — sans lui un client IPv6 resterait bloqué et l'ouverture serait
@@ -104,8 +109,8 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   Docker devait créer le dossier lui-même il le ferait en root sur l'hôte ;
   son contenu est gitignoré, il porte `LAN_CIDR`.
   **Pas de marqueur `.cron-status` pour ce garde** : muet en permanence, il ne
-  serait jamais que vert. C'est le **bandeau rouge du dashboard**
-  (`render_lan_only_banner()`, avec l'heure de refermeture) qui porte la
+  serait jamais que vert. C'est le **bandeau orange du dashboard**
+  (`render_lan_only_banner()`, services ouverts et heure de refermeture) qui porte la
   visibilité, et c'est pour lui que la bascule régénère le dashboard dans les
   deux sens. Il fallait un signal *serveur* : les cartes sont grisées côté
   client par la sonde `<img>`, qui verrait justement ces services répondre.

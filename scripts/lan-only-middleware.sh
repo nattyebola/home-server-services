@@ -40,9 +40,9 @@
 # tombe entre 60 et 65 min après l'ouverture, pas à la seconde.
 #
 # Sous-commandes :
-#   toggle  [mw…]    bascule selon l'état courant (à l'ouverture : seulement les
-#                     middlewares cités, tous sinon), puis régénère le dashboard
-#   open    [mw…]    ouvre au WAN pour OPEN_WINDOW_SECONDS (mêmes arguments)
+#   toggle  [svc…]   bascule selon l'état courant (à l'ouverture : seulement les
+#                     services cités, tous sinon), puis régénère le dashboard
+#   open    [svc…]   ouvre au WAN pour OPEN_WINDOW_SECONDS (mêmes arguments)
 #   close             referme (LAN uniquement)
 #   rearm             referme SI l'échéance est passée — appelé par cron, muet sinon
 #   ensure            écrit le fichier s'il manque, en mode fermé (défaut sûr)
@@ -53,12 +53,13 @@ REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 DYNAMIC_FILE="$REPO_ROOT/traefik/dynamic/lan-only.yml"
 OPEN_WINDOW_SECONDS=3600
 
-# Les middlewares LAN-only du repo. Même plage pour les deux : ils sont
-# séparés parce qu'ils viennent de deux stacks (arr/ et vpn/), pas parce qu'ils
-# autorisent des choses différentes. Un middleware par stack — une stack qui
-# arrive ajoute le sien ici, sinon son routeur référencerait un `@file`
-# inexistant et Traefik répondrait 404.
-MIDDLEWARES=(arr-lan-only transmission-lan-only)
+# Les services LAN-only du repo, un middleware `<service>-lan-only` chacun.
+# Même plage pour tous : ils sont séparés pour pouvoir n'ouvrir qu'un service
+# (2026-10-28 ; avant, un `arr-lan-only` partagé ouvrait forcément clearr avec
+# sonarr). Un service LAN-only qui arrive s'ajoute ici, sinon son routeur
+# référencerait un `@file` inexistant et Traefik répondrait 404.
+SERVICES=(prowlarr sonarr radarr clearr transmission)
+MIDDLEWARES=("${SERVICES[@]/%/-lan-only}")
 
 # shellcheck source=/dev/null
 test -f "$REPO_ROOT/.env.shared" || {
@@ -130,14 +131,17 @@ refresh_dashboard() {
 	python3 "$REPO_ROOT/scripts/generate-dashboard.py"
 }
 
-open_until() { # $@ = middlewares à ouvrir, aucun = tous
-	local deadline tmp name
+open_until() { # $@ = services à ouvrir (sonarr ou sonarr-lan-only), aucun = tous
+	local deadline tmp name selected=()
 	for name in "$@"; do
-		[[ " ${MIDDLEWARES[*]} " == *" $name "* ]] || {
-			echo "middleware inconnu : $name (connus : ${MIDDLEWARES[*]})" >&2
+		name="${name%-lan-only}"
+		[[ " ${SERVICES[*]} " == *" $name "* ]] || {
+			echo "service inconnu : $name (connus : ${SERVICES[*]})" >&2
 			exit 1
 		}
+		selected+=("$name-lan-only")
 	done
+	set -- "${selected[@]}"
 	deadline=$(($(date +%s) + OPEN_WINDOW_SECONDS))
 	# La sélection est posée avant l'échéance et avant l'ouverture : si son
 	# écriture échoue, on n'ouvre rien (et surtout pas tout).

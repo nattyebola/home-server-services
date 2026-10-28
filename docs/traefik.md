@@ -23,14 +23,14 @@ conteneurs :
 | komga | `komga.` | | ✅ | ✅ | ✅ |
 | nextcloud | `nextcloud.` | | | ❌ *(voir plus bas)* | ✅ |
 | transmission | `transmission.` | ✅ `transmission-lan-only@file` | | ✅ | ✅ |
-| prowlarr / sonarr / radarr / clearr | `<nom>.` | ✅ `arr-lan-only@file` | | ✅ | ✅ |
+| prowlarr / sonarr / radarr / clearr | `<nom>.` | ✅ `<nom>-lan-only@file` | | ✅ | ✅ |
 
 | Middleware | Défini où | Contenu |
 |---|---|---|
 | `hsts` | labels du conteneur `traefik` | `max-age` 180 jours, `includeSubDomains` posé **sur chaque service** : un favori vers `jellyfin.` qui ne charge jamais le domaine nu est protégé quand même |
 | `security-headers` | labels du conteneur `traefik` | `X-Robots-Tag: noindex, nofollow, noarchive` (ni moteurs ni crawlers IA), `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: no-referrer` |
 | `rate-limit` | labels du conteneur `traefik` | 50 req/s en moyenne, rafale 100, par IP. Seul rempart anti-force-brute de Komga, qui ne verrouille aucun compte |
-| `arr-lan-only`, `transmission-lan-only` | `traefik/dynamic/lan-only.yml` (provider `file`) | `ipAllowList` sur `LAN_CIDR` |
+| `<service>-lan-only` (un par service : prowlarr, sonarr, radarr, clearr, transmission) | `traefik/dynamic/lan-only.yml` (provider `file`) | `ipAllowList` sur `LAN_CIDR` |
 
 Les middlewares partagés sont définis **une seule fois** et référencés par
 `<nom>@docker`. Ne jamais recopier `stsSeconds` ou des en-têtes en dur dans

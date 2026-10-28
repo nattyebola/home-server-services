@@ -150,5 +150,5 @@ notification.
   `arr/clearr/app/core.py`) — à traiter dans l'interface web de clearr. Le repli
   par chemin ne rattrape pas ce cas : il s'interdit `library/` (voir plus haut).
 - **Aucune authentification**, comme le reste de clearr : le service est
-  LAN-only (middleware Traefik `arr-lan-only`) et son interface web expose déjà
+  LAN-only (middleware Traefik `clearr-lan-only`) et son interface web expose déjà
   les mêmes suppressions sans jeton.

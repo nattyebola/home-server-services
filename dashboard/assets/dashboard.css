@@ -56,9 +56,12 @@ h1 { font-size: 1.4rem; margin: 0 0 1.5rem; }
    règle tient en clair comme en sombre. */
 .lan-open-banner {
   max-width: 960px; margin: 0 auto 2rem; padding: .7rem .9rem;
-  border: 1px solid var(--status-critical); border-radius: 8px;
-  background: color-mix(in srgb, var(--status-critical) 10%, transparent);
-  color: var(--status-critical); font-size: .85rem; line-height: 1.45;
+  /* Orange d'avertissement et pas rouge d'erreur : une ouverture est voulue,
+     ce n'est pas une panne. Le texte garde la couleur de la page, le jaune
+     de --status-warning n'atteint pas 3:1 sur fond clair. */
+  border: 1px solid var(--status-warning); border-left-width: 4px; border-radius: 8px;
+  background: color-mix(in srgb, var(--status-warning) 15%, transparent);
+  font-size: .85rem; line-height: 1.45;
 }
 .lan-open-banner code { font-size: .95em; }
 section { max-width: 960px; margin: 0 auto 2.5rem; }
