@@ -80,6 +80,12 @@ flowchart LR
   non, à cause de CORS). Le chemin sondé est dans `PROBE_PATH` et doit
   renvoyer une vraie image.
 - **Bandeau rouge** tant que l'accès WAN temporaire est ouvert.
+- **Se recharge toute seule** : un onglet laissé ouvert relit la page toutes
+  les minutes dès qu'elle a 5 min (un cycle de cron), et recharge s'il en
+  existe une plus récente. Onglet en arrière-plan : rechargé à son retour.
+- **Pied de page rouge « Page périmée »** seulement si la page *servie* a plus
+  de 15 min (génération en panne) ou si le serveur ne répond plus (message
+  distinct). L'âge de l'onglet seul ne le déclenche plus.
 - **Invisible des moteurs et des crawlers**, par trois voies redondantes :
   `<meta name="robots">`, `dashboard/assets/robots.txt` et l'en-tête
   `X-Robots-Tag`.

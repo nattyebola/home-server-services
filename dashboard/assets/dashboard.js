@@ -79,6 +79,12 @@ document.querySelectorAll('.card[data-probe]').forEach(function (card) {
 // coup les pannes qu'il aurait dû rapporter (sauvegarde périmée, cron
 // Nextcloud arrêté, conteneur unhealthy). Point unique de défaillance de
 // toute l'observabilité, d'où ce contrôle côté client.
+//
+// Le verdict porte sur la page que sert le serveur, pas sur celle affichée :
+// un onglet laissé ouvert vieillit sans que le cron soit en cause. Dès que la
+// page affichée a l'âge d'un cycle de cron, on relit index.html et on recharge
+// si une version plus récente existe ; sinon on dit pourquoi on ne peut pas
+// (génération en panne ou serveur injoignable), sans confondre les deux.
 (function () {
   var footer = document.querySelector('.updated[data-generated]');
   if (!footer) { return; }
@@ -86,21 +92,44 @@ document.querySelectorAll('.card[data-probe]').forEach(function (card) {
   var staleAfter = parseInt(footer.dataset.staleAfter, 10);
   if (!generated || !staleAfter) { return; }
   var warn = footer.querySelector('.updated-warning');
-  var check = function () {
-    var age = Math.floor(Date.now() / 1000) - generated;
-    var stale = age > staleAfter;
+  var CRON_INTERVAL = 5 * 60; // scripts/crontab : */5
+  var cause = null; // null | 'server-stale' | 'unreachable'
+  var now = function () { return Math.floor(Date.now() / 1000); };
+  var show = function () {
+    var age = now() - generated;
+    var stale = cause !== null && age > staleAfter;
     footer.classList.toggle('updated-stale', stale);
     if (!warn) { return; }
     warn.hidden = !stale;
     if (stale) {
-      warn.textContent = 'Page périmée depuis ' + Math.floor(age / 60)
-        + ' min — la régénération automatique ne tourne plus, les états affichés '
-        + 'ci-dessus ne sont plus à jour. ';
+      warn.textContent = 'Page périmée depuis ' + Math.floor(age / 60) + ' min — '
+        + (cause === 'unreachable'
+          ? 'serveur injoignable, la page n\'a pas pu être actualisée. '
+          : 'la régénération automatique ne tourne plus, les états affichés '
+            + 'ci-dessus ne sont plus à jour. ');
     }
   };
-  check();
-  // Re-vérifie pendant que l'onglet reste ouvert : la page ne se recharge pas
-  // toute seule, donc sans ça un dashboard laissé affiché resterait crédible
-  // indéfiniment après l'arrêt du cron.
-  setInterval(check, 60000);
+  var tick = function () {
+    // Pas de nouvelle version possible avant un cycle de cron ; onglet masqué :
+    // on attendra son retour (visibilitychange) plutôt que de recharger à vide.
+    if (now() - generated < CRON_INTERVAL || document.hidden) { show(); return; }
+    fetch(location.pathname, { cache: 'no-store' })
+      .then(function (r) {
+        if (!r.ok) { throw new Error(r.status); }
+        return r.text();
+      })
+      .then(function (html) {
+        var m = html.match(/data-generated="(\d+)"/);
+        var served = m ? parseInt(m[1], 10) : 0;
+        if (served > generated) { location.reload(); return; }
+        cause = now() - served > staleAfter ? 'server-stale' : null;
+        show();
+      })
+      .catch(function () { cause = 'unreachable'; show(); });
+  };
+  tick();
+  setInterval(tick, 60000);
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) { tick(); }
+  });
 })();

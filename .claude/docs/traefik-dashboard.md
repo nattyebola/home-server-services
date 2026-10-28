@@ -290,6 +290,15 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   régénéré **par cron toutes les 5 min**, pas seulement par `make
   dashboard-refresh` — sinon un service devenu unhealthy resterait affiché
   comme sain arbitrairement longtemps.
+- **Onglet ouvert : rechargement auto + verdict « périmé » sur la page
+  servie** (2026-10-28). L'ancien contrôle comparait l'horodatage de la page
+  *affichée* à l'horloge : un onglet laissé ouvert 15 min annonçait « la
+  régénération ne tourne plus », à tort. Désormais, dès 5 min d'âge,
+  `dashboard.js` relit `index.html` (`fetch`, `no-store`) chaque minute,
+  recharge si son `data-generated` est plus récent, sinon distingue
+  « génération en panne » (page servie > 15 min) de « serveur injoignable ».
+  Rien quand l'onglet est masqué, `visibilitychange` relance au retour. Les
+  switchs survivent au rechargement (localStorage).
 - **Une commande d'inspection en échec fait échouer la régénération, elle ne
   rend jamais un état vide** : `docker ps` (`docker_ps_set()`) et, depuis le
   2026-09-29, `docker compose config` (`docker_compose_config()`). Ce dernier
