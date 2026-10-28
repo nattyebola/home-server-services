@@ -252,7 +252,15 @@ score de profil, cross-seed ou Seerr.
   jamais par Transmission directement (l'arr ne blocklisterait rien). Garde-fous
   de `action_for()` : hors file arr, données partielles (`percentDone` ou
   `haveUnchecked` > 0), pause et file d'attente Transmission ne sont jamais
-  retirés. Ce n'est pas l'auto-remédiation Docker écartée par le socle
+  retirés, **ni rien tant que le réseau n'a pas été sain 24 h** (ajouté le
+  2026-10-28 : une coupure fige tout à 0 % ; VPN seul tombé = les arr, qui
+  sortent en direct, regrabent et chaque nouvelle release saine aurait été
+  blocklistée 24 h plus tard). Voir `network_health()` : réseau vivant = une
+  annonce tracker réussie depuis 2 h ; « sain depuis » = max(dernière coupure
+  vue, gardée dans `.stalled-torrents.json`, et début de session Transmission,
+  qui couvre un serveur resté éteint). Ne pas réduire ça à un test « le réseau
+  marche maintenant » : après 23 h de coupure, il retirerait à tort.
+  Ce n'est pas l'auto-remédiation Docker écartée par le socle
   (pas de socket, rien sur les conteneurs) : un retrait de file arr.
 
 ## La boucle de regrab infini (`cutoffFormatScore` + regex)

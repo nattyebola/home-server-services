@@ -319,7 +319,7 @@ unique : retirer le tag ne repasse pas en VOSTFR.
 | Rejet des archives/exécutables | `failDownloads` | une « release » `.exe`/`.zipx` est marquée en échec et remplacée automatiquement |
 | Recherche des manquants | `search-missing.py`, lundi 5 h | Sonarr/Radarr **ne re-cherchent jamais** seuls un manquant raté au RSS ; chaque manquant retenté chaque semaine, plafonné à 30 recherches par arr, rotation par ancienneté ; un film seulement en salle n'est pas cherché (il attend sa sortie numérique ou physique) ; une saison diffusée sans aucun fichier est cherchée d'un bloc (packs) ; tâche en rouge si l'arr fait échouer la commande de recherche |
 | Imports rattachés par ID | `manual-import.py apply --by-id-only`, toutes les 15 min | une release au nom non reconnu (titre français, titre d'anime abrégé) est téléchargée via l'identifiant TVDB/IMDb de l'indexeur, puis **refusée à l'import** par Sonarr/Radarr, sans réglage pour lever ce garde-fou ; ce cas, et lui seul, est importé automatiquement (décidé le 2026-10-27 : 18 imports de ce type en 3 mois, aucun mauvais fichier) |
-| Torrents bloqués | `stalled-torrents.py`, toutes les heures | un torrent mort (tracker en 403, aucun seeder, métadonnées jamais reçues) reste « en téléchargement » **indéfiniment** côté arr ; est bloqué un torrent incomplet, ajouté il y a plus de **24 h** et **sans aucune activité depuis 24 h**. Le cron (`--fix`, décidé le 2026-10-28) le fait retirer par son arr (blocklist + nouvelle recherche), **seulement** s'il est dans une file arr, sans aucune donnée, ni en pause ni en attente dans Transmission ; les autres sont seulement signalés (journal `${DATA_ROOT}/.stalled-torrents.log`, état dans `.stalled-torrents.json`). `make stalled-torrents` liste sans rien retirer. La carte Torrents du dashboard compte à part les torrents « figés à 0 % » depuis plus d'**1 h** |
+| Torrents bloqués | `stalled-torrents.py`, toutes les heures | un torrent mort (tracker en 403, aucun seeder, métadonnées jamais reçues) reste « en téléchargement » **indéfiniment** côté arr ; est bloqué un torrent incomplet, ajouté il y a plus de **24 h** et **sans aucune activité depuis 24 h**. Le cron (`--fix`, décidé le 2026-10-28) le fait retirer par son arr (blocklist + nouvelle recherche), **seulement** s'il est dans une file arr, sans aucune donnée, ni en pause ni en attente dans Transmission, **et après 24 h de réseau sain** (aucun retrait pendant une coupure ni dans les 24 h qui suivent) ; les autres sont seulement signalés (journal `${DATA_ROOT}/.stalled-torrents.log`, état dans `.stalled-torrents.json`). `make stalled-torrents` liste sans rien retirer. La carte Torrents du dashboard compte à part les torrents « figés à 0 % » depuis plus d'**1 h** |
 | Marqueurs de fin de saison | `mark-finale.sh`, hook + cron 2 h | `†` fin de saison, `‡` fin de série, `½` mi-saison devant le titre d'épisode (visible dans Kodi) |
 
 Pas de recyclarr (retiré le 2026-10-07) : sur nos trackers français, les
@@ -341,6 +341,18 @@ folders, tags…) peut être ajusté librement dans les UI.
   « en téléchargement » et attendent sans fin (18 jours vécus). Le filtre
   `minimumSeeders: 1` n'est vérifié qu'au grab. `stalled-torrents.py` les
   signale au-delà de 24 h sans activité.
+- **Une coupure réseau fige tous les torrents à 0 %**, comme un tracker
+  mort. Sans garde-fou, le remplacement automatique blocklisterait des
+  releases saines. Pire si **seul le VPN** tombe : Sonarr/Radarr sortent en
+  direct, regrabent aussitôt, et la nouvelle release, figée elle aussi,
+  serait retirée 24 h plus tard (boucle d'un tour par jour). Le cron ne
+  retire donc rien tant qu'il n'a pas vu **24 h de réseau sain** :
+
+  | Situation | Détection | Effet |
+  |---|---|---|
+  | Coupure en cours | aucune annonce tracker réussie depuis 2 h | tâche en rouge sur le dashboard, aucun retrait |
+  | Retour du réseau | heure de la dernière coupure, gardée dans `.stalled-torrents.json` | aucun retrait pendant 24 h |
+  | Serveur éteint, Transmission redémarré | durée de la session Transmission | aucun retrait pendant 24 h |
 - **Un titre « manquant » est souvent déjà téléchargé**, bloqué dans la file
   (`importBlocked`/`importPending`) : aucune erreur visible hors de la file.
   Le dashboard compte ces téléchargements (un pack compte pour un, même si

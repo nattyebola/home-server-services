@@ -22,6 +22,8 @@
 #   - jamais un torrent qui a déjà des données, il peut reprendre ;
 #   - jamais un torrent en pause ou en attente dans la file Transmission :
 #     l'inactivité y est voulue, pas subie.
+#   - jamais pendant une coupure réseau, ni dans les 24 h qui suivent son
+#     retour (voir network_health()).
 # Le retrait passe par l'arr (DELETE /queue/bulk, removeFromClient +
 # blocklist + nouvelle recherche), jamais par Transmission directement : sinon
 # l'arr verrait juste son téléchargement disparaître, sans blocklist ni
@@ -49,6 +51,11 @@ RPC_URL = "http://localhost:9091/transmission/rpc"
 
 STALL_HOURS = 24
 STATE_FILE_NAME = ".stalled-torrents.json"
+
+# Réseau jugé vivant si au moins un tracker a répondu à une annonce depuis ce
+# délai. Avec ~300 torrents en seed, la plus récente date de moins d'une
+# minute (relevé du 2026-10-28) : 2 h ne laisse aucun doute.
+NETWORK_PROBE_SECONDS = 2 * 3600
 
 # (nom, conteneur, URL, clé dans arr/.env, paramètre « entrées orphelines ») —
 # ce dernier n'a pas le même nom d'un arr à l'autre, et sans lui une entrée
@@ -230,14 +237,38 @@ def stall_reasons(torrent):
     return reasons or ["aucune activité"]
 
 
+def network_health(torrents, seconds_active, previous_down_at, now):
+    """Renvoie (réseau vivant, dernière coupure observée, réseau sain depuis).
+
+    Pourquoi : une coupure (VPN tombé, box hors ligne) fige TOUS les torrents
+    à 0 % au même titre qu'un tracker mort. Sans ce garde-fou, une coupure de
+    plus de 24 h faisait blocklister des releases saines ; et si seul le VPN
+    tombe, Sonarr/Radarr (qui sortent en direct, pas par le VPN) regrabent
+    aussitôt une release elle aussi figée, retirée 24 h plus tard : une
+    release saine brûlée par titre et par jour de panne.
+
+    D'où « réseau sain depuis » = la plus tardive de la dernière coupure vue
+    par ce cron (mémorisée dans le fichier d'état, le cron étant horaire) et
+    du démarrage de la session Transmission (un serveur éteint 2 jours ne
+    voit aucune coupure, mais ses torrents n'ont rien pu recevoir). Un retrait
+    exige STALL_HOURS de réseau sain : tester seulement « le réseau marche
+    maintenant » retirerait un torrent juste après une coupure de 23 h."""
+    alive = any(s.get("lastAnnounceSucceeded") and now - s.get("lastAnnounceTime", 0) <= NETWORK_PROBE_SECONDS
+                for t in torrents for s in t.get("trackerStats") or [])
+    down_at = now if not alive else previous_down_at
+    healthy_since = max(x for x in (down_at, now - seconds_active) if x is not None)
+    return alive, down_at, healthy_since
+
+
 def has_data(torrent):
     # haveUnchecked : octets reçus pas encore vérifiés, absents de percentDone.
     return torrent.get("percentDone", 0) > 0 or torrent.get("haveUnchecked", 0) > 0
 
 
-def action_for(torrent, queued, arr_errors):
+def action_for(torrent, queued, arr_errors, healthy_for):
     """Renvoie (retirable, libellé). L'ordre compte : hors arr d'abord, c'est
-    la seule règle qui protège un torrent ajouté à la main."""
+    la seule règle qui protège un torrent ajouté à la main. `healthy_for` :
+    secondes de réseau sain (voir network_health())."""
     if not queued:
         if arr_errors:
             return False, "signalé (arr injoignable, rattachement inconnu)"
@@ -248,6 +279,9 @@ def action_for(torrent, queued, arr_errors):
         return False, "conservé (en pause dans Transmission)"
     if torrent.get("status") == STATUS_DOWNLOAD_WAIT:
         return False, "conservé (en attente dans la file Transmission)"
+    if healthy_for < STALL_HOURS * 3600:
+        return False, (f"conservé (réseau sain depuis {human_duration(healthy_for)} seulement, "
+                       f"{STALL_HOURS} h requises)")
     return True, "à retirer (--fix)"
 
 
@@ -258,6 +292,19 @@ def human_duration(seconds):
     parts = [p for p in (f"{days}j" if days else "", f"{hours}h" if hours else "",
                           f"{minutes}min" if not days and minutes else "") if p]
     return " ".join(parts) if parts else "< 1min"
+
+
+def load_previous_state(data_root):
+    """L'état précédent ne sert qu'à se souvenir de la dernière coupure : un
+    fichier absent ou illisible repart de rien, la session Transmission borne
+    alors seule (voir network_health())."""
+    if not data_root:
+        return {}
+    try:
+        with open(os.path.join(data_root, STATE_FILE_NAME)) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
 
 
 def write_state(data_root, state):
@@ -289,15 +336,32 @@ def main():
     print(f"=== {datetime.datetime.now().isoformat(timespec='seconds')} ===")
     arr_env = load_env_file(os.path.join(REPO_ROOT, "arr", ".env"))
     data_root = load_env_file(os.path.join(REPO_ROOT, ".env.shared")).get("DATA_ROOT")
+    previous_down_at = load_previous_state(data_root).get("network_down_at")
     state = {"generated_at": int(now), "stall_hours": STALL_HOURS, "fix": args.fix,
-             "torrents": [], "errors": []}
+             "network_down_at": previous_down_at, "torrents": [], "errors": []}
 
     try:
         torrents = rpc("torrent-get", {"fields": TORRENT_FIELDS})["torrents"]
+        seconds_active = rpc("session-stats")["current-stats"]["secondsActive"]
     except Exception as e:
         state["errors"].append(f"transmission : {e}")
         torrents = []
     stalled = [t for t in torrents if is_stalled(t, now)]
+
+    # Sans liste de torrents (RPC en échec, ou aucun torrent), rien n'est
+    # bloqué : pas de sonde, la dernière coupure connue est conservée.
+    healthy_for = 0
+    if torrents:
+        alive, down_at, healthy_since = network_health(torrents, seconds_active, previous_down_at, now)
+        healthy_for = now - healthy_since
+        state["network_down_at"] = int(down_at) if down_at is not None else None
+        state["network_healthy_since"] = int(healthy_since)
+        if not alive:
+            # Erreur volontaire : le marqueur cron n'est pas écrit et la tâche
+            # passe au rouge sur le dashboard tant que dure la coupure.
+            state["errors"].append(f"réseau : aucune annonce tracker réussie depuis "
+                                   f"{NETWORK_PROBE_SECONDS // 3600} h (VPN ou connexion coupé) — "
+                                   f"aucun retrait jusqu'à {STALL_HOURS} h après son retour")
 
     by_hash, arr_errors = arr_queues(arr_env) if stalled else ({}, [])
     state["errors"] += arr_errors
@@ -306,7 +370,7 @@ def main():
     for t in sorted(stalled, key=lambda t: t.get("addedDate", 0)):
         queued = by_hash.get(t["hashString"].upper())
         arr_name = queued[0] if queued else None
-        removable, action = action_for(t, queued, arr_errors)
+        removable, action = action_for(t, queued, arr_errors, healthy_for)
         if removable and args.fix:
             _, container, base_url, key_name, _ = arr_by_name[arr_name]
             try:

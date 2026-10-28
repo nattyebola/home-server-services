@@ -122,9 +122,11 @@ MAILTO=""
 # "downloading" forever, see scripts/stalled-torrents.py). --fix decided by the
 # user on 2026-10-28: the arr removes, blocklists and re-searches, but only a
 # queued torrent with no data at all, neither paused nor waiting in
-# Transmission's queue; everything else is only reported. Minute 17 keeps it
-# off the other jobs' ticks. State written to a JSON under DATA_ROOT for the
-# dashboard. Guarded by require-running.sh (Transmission + both arr), success
+# Transmission's queue, and never during a network outage nor in the 24 h
+# after it (a dead VPN freezes every torrent at 0 % too, while the arr, which
+# don't go through the VPN, keep regrabbing); everything else is only
+# reported. Minute 17 keeps it off the other jobs' ticks. State written to a
+# JSON under DATA_ROOT for the dashboard (also remembers the last outage). Guarded by require-running.sh (Transmission + both arr), success
 # marker consumed by the "Tâches planifiées" card.
 # the placeholders below are substituted by `make cron-install` with this
 # checkout's absolute path and DATA_ROOT — never hardcode literals here.

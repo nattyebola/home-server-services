@@ -950,7 +950,9 @@ SCHEDULED_TASKS = [
      "Toutes les heures : fait remplacer par Sonarr/Radarr (blocklist + nouvelle "
      "recherche) les torrents sans aucune donnée ni activité depuis 24 h (tracker "
      "en erreur, aucun seeder, métadonnées absentes), que les arr laissent "
-     "« en téléchargement » indéfiniment ; les autres sont seulement signalés."),
+     "« en téléchargement » indéfiniment ; les autres sont seulement signalés. "
+     "Rien n'est retiré pendant une coupure réseau ni dans les 24 h qui suivent "
+     "(rouge pendant la coupure)."),
 ]
 BACKUP_TASK_DESCRIPTION = (
     "Le dimanche à 3 h : sauvegarde restic (dump de la base Nextcloud, données, "
