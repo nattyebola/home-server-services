@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Steam Big Picture seul sur une console virtuelle, sous gamescope (HDR, VRR, manettes).
+# Lancé automatiquement sur tty3 par ~/.zprofile (autologin getty@tty3), voir steam-tv/README.md.
+# Relancer à la main : steam-tv
+set -u
+
+if [[ -n ${WAYLAND_DISPLAY:-}${DISPLAY:-} ]]; then
+  echo "steam-tv se lance depuis une console virtuelle (Ctrl+Alt+F3), pas depuis GNOME." >&2
+  exit 1
+fi
+
+# Un utilisateur = une seule instance de Steam : celle de GNOME doit être fermée d'abord.
+if pgrep -u "$USER" -x steam >/dev/null; then
+  echo "Steam tourne déjà (session GNOME ?)."
+  read -r -p "Entrée = le fermer proprement et basculer ici, Ctrl+C = annuler. " _
+  /usr/games/steam -shutdown >/dev/null 2>&1
+  for _ in {1..30}; do
+    pgrep -u "$USER" -x steam >/dev/null || break
+    sleep 1
+  done
+  if pgrep -u "$USER" -x steam >/dev/null; then
+    echo "Steam ne s'est pas fermé en 30 s : ferme-le depuis GNOME, puis relance steam-tv." >&2
+    exit 1
+  fi
+fi
+
+log_dir=${XDG_STATE_HOME:-$HOME/.local/state}
+mkdir -p "$log_dir"
+echo "Steam Big Picture démarre (journal : $log_dir/steam-tv.log)…"
+
+# gamescope ne lit pas la disposition de GNOME : XKB par défaut = qwerty US
+export XKB_DEFAULT_LAYOUT=fr XKB_DEFAULT_VARIANT=latin9
+
+# -e : intégration Steam (overlay, réglages d'affichage et HDR pilotés depuis Big Picture)
+# -W/-H : sortie 4K de la TV ; fréquence = mode préféré de l'écran
+gamescope -e -f --hdr-enabled --adaptive-sync -W 3840 -H 2160 \
+  -- /usr/games/steam -gamepadui >"$log_dir/steam-tv.log" 2>&1
+status=$?
+
+echo "gamescope s'est arrêté (code $status). Relancer : steam-tv — retour à GNOME : Ctrl+Alt+F2."

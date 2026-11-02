@@ -192,7 +192,8 @@ server/
 ├── traefik/ jellyfin/ nextcloud/ vpn/ arr/ seerr/ komga/   une stack par dossier
 │   └── arr/{clearr,profiles,cross-seed,scripts}/
 ├── dashboard/              templates/ + assets/ ; html/ généré
-├── kodi/, gnome/           postes clients (addon Kodi, extension GNOME Govee)
+├── kodi/, gnome/, steam-tv/ postes clients (addon Kodi, extension GNOME Govee,
+│                           Steam Big Picture sur tty3)
 └── sauvegarde/             non versionné — dépôt restic
 ```
 

@@ -64,9 +64,11 @@ dans [Téléchargement](docs/telechargement.md#le-parcours-dun-téléchargement)
 | 💾 [Sauvegarde](docs/sauvegarde.md) | ce qui est sauvegardé, restauration |
 | 🩺 [Dépannage](docs/depannage.md) | du symptôme à la cause, pièges Docker, WSL2 |
 
-Côté poste client : [`kodi/`](kodi/README.md) (addon « Supprimer avec clearr »)
-et [`gnome/`](gnome/README.md) (extension GNOME Shell Govee, sans lien avec le
-serveur).
+Côté poste client, sans lien direct avec le serveur pour les deux derniers :
+[`kodi/`](kodi/README.md) (addon « Supprimer avec clearr »),
+[`gnome/`](gnome/README.md) (extension GNOME Shell Govee) et
+[`steam-tv/`](steam-tv/README.md) (annexe : Steam Big Picture sur tty3,
+HDR, AZERTY, touches multimédia).
 
 ## En bref
 

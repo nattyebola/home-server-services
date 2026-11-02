@@ -1,0 +1,32 @@
+#!/bin/sh
+# Touches multimédia sur la console Steam Big Picture (tty3), où GNOME ne les gère pas.
+# Appelé (en root) par triggerhappy, voir /etc/triggerhappy/triggers.d/steam-tv.conf.
+# Installé par copie dans /usr/local/bin par steam-tv/install-root.sh, utilisateur substitué.
+[ "$(cat /sys/class/tty/tty0/active)" = tty3 ] || exit 0
+uid=$(id -u __USER__)
+as_user() { runuser -u __USER__ -- env XDG_RUNTIME_DIR=/run/user/$uid "$@"; }
+
+# Luminosité du contenu SDR sous gamescope, en nits (même réglage que le curseur de Steam).
+# Atome X sur la racine du Xwayland de gamescope : un float 32 bits stocké tel quel en CARDINAL.
+bright() {
+  pid=$(pgrep -u __USER__ -x steam | head -n1) || exit 0
+  dpy=$(tr '\0' '\n' < /proc/$pid/environ | sed -n 's/^DISPLAY=//p')
+  [ -n "$dpy" ] || exit 0
+  atom=GAMESCOPE_SDR_ON_HDR_CONTENT_BRIGHTNESS
+  cur=$(as_user env DISPLAY=$dpy xprop -root $atom | sed -n 's/.*= //p')
+  new=$(python3 -c '
+import struct, sys
+raw, step = sys.argv[1], float(sys.argv[2])
+nits = struct.unpack("<f", struct.pack("<I", int(raw)))[0] if raw else 400.0  # 400 = défaut gamescope
+nits = min(1000.0, max(100.0, nits + step))
+print(struct.unpack("<I", struct.pack("<f", nits))[0])' "$cur" "$1")
+  as_user env DISPLAY=$dpy xprop -root -f $atom 32c -set $atom $new
+}
+
+case "$1" in
+  up)     as_user wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+ ;;
+  down)   as_user wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%- ;;
+  mute)   as_user wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle ;;
+  b-up)   bright 25 ;;
+  b-down) bright -25 ;;
+esac

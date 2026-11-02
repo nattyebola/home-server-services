@@ -13,7 +13,7 @@ STACKS := traefik jellyfin nextcloud vpn arr seerr komga
 # reflète donc l'état d'après redémarrage.
 UPDATE_STACKS := nextcloud vpn jellyfin arr seerr komga traefik
 
-.PHONY: help require-env-shared network up down restart restart-all config logs update rebuild update-all backup restore cron-install dashboard-refresh clearr arr-overrides search-missing stalled-torrents mark-finales kodi-install gnome-install api-keys provision switch-lan-only-middleware test
+.PHONY: help require-env-shared network up down restart restart-all config logs update rebuild update-all backup restore cron-install dashboard-refresh clearr arr-overrides search-missing stalled-torrents mark-finales kodi-install gnome-install steam-tv-install api-keys provision switch-lan-only-middleware test
 
 # `make` sans argument affiche l'aide plutôt que de lancer la première cible
 # (c'était `network`, qui ne dit rien de ce que le reste sait faire).
@@ -450,3 +450,22 @@ gnome-install: ## [GNOME_EXT_DIR=<chemin>] — installe l'extension GNOME Shell 
 	ln -sfn "$(CURDIR)/gnome/govee@local" "$$dest"; \
 	echo "linked $$dest -> $(CURDIR)/gnome/govee@local"; \
 	echo "new install: log out/in (Wayland), then gnome-extensions enable govee@local"
+
+# Steam Big Picture alone on tty3 under gamescope (steam-tv/README.md). User part
+# here (launcher symlinked like gnome-install, ~/.zprofile hook appended once),
+# root part in steam-tv/install-root.sh — run from a real terminal, sudo prompts.
+steam-tv-install: ## — Steam Big Picture sur tty3 (gamescope HDR, autologin, AZERTY, touches multimédia) ; demande sudo
+	@mkdir -p "$(HOME)/.local/bin"
+	@dest="$(HOME)/.local/bin/steam-tv"; \
+	if [ -e "$$dest" ] && [ ! -L "$$dest" ]; then \
+		echo "$$dest exists and is not a symlink — move it away first" >&2; exit 1; \
+	fi; \
+	ln -sfn "$(CURDIR)/steam-tv/steam-tv" "$$dest"; \
+	echo "linked $$dest -> $(CURDIR)/steam-tv/steam-tv"
+	@if grep -q '^# steam-tv :' "$(HOME)/.zprofile" 2>/dev/null; then \
+		echo "~/.zprofile hook already present"; \
+	else \
+		{ echo; cat steam-tv/zprofile.snippet; } >> "$(HOME)/.zprofile"; \
+		echo "appended tty3 hook to ~/.zprofile"; \
+	fi
+	sudo steam-tv/install-root.sh "$$(id -un)"

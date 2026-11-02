@@ -1,0 +1,4 @@
+# steam-tv : Ctrl+Alt+F3 = Steam Big Picture sous gamescope (voir steam-tv/README.md du dépôt)
+if [[ $(tty) == /dev/tty3 && -z ${WAYLAND_DISPLAY:-}${DISPLAY:-} ]]; then
+  steam-tv
+fi
