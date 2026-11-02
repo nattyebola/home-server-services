@@ -138,6 +138,12 @@ ligne « résolu » :
   pas le corriger. Ni ligne de tableau, ni mention dans la ligne de
   couverture. Les autres 404 de ce vhost (scans WAN `wp-login.php`, `.env`,
   `.git/config`…) restent traités normalement.
+- **`traefik-dashboard-1` : `404` sur `/index.php/apps/notes/…` et
+  `/index.php/204`** (décidé le 2026-11-02). L'appli Nextcloud / Notes d'un
+  appareil Android pointe sur le domaine nu au lieu de `nextcloud.`, depuis
+  le 2026-10-31 ; l'utilisateur ne veut plus que ce soit remonté. Même
+  traitement que l'abonnement calendrier : ni ligne de tableau, ni mention
+  dans la ligne de couverture.
 
 Les fichiers de log internes (`/config/logs/*.txt` dans les conteneurs
 Servarr) sont plus fiables que `docker logs` quand il faut une fenêtre
