@@ -35,6 +35,12 @@ export XKB_DEFAULT_LAYOUT=fr XKB_DEFAULT_VARIANT=latin9
 # reste grisée, gamescope ne le pose pas lui-même. Par jeu : DXVK_HDR=0 %command%
 export DXVK_HDR=1
 
+# FSR 3.1 → FSR 4 (RX 9070 = RDNA4) : lu par GE-Proton seulement, ignoré par les Proton
+# de Valve. Par jeu : PROTON_FSR4_UPGRADE=0 %command%
+export PROTON_FSR4_UPGRADE=1
+# Filigrane FSR 4 en jeu, pour voir d'office s'il est actif. Par jeu : PROTON_FSR4_INDICATOR=0 %command%
+export PROTON_FSR4_INDICATOR=1
+
 # Presse-papiers partagé avec GNOME, arrêté avec gamescope
 "$(dirname "$(readlink -f "$0")")/steam-tv-clipboard" &
 clip_pid=$!

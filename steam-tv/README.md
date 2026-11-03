@@ -114,6 +114,31 @@ gamescope 3.16). Rien ne change sous GNOME. Pour couper le HDR d'un seul jeu :
 Aucun des deux n'envoie quoi que ce soit à la TV : c'est un réglage logiciel du
 compositeur. Un jeu HDR garde sa propre luminosité, à régler dans ses options.
 
+## FSR 4
+
+**`PROTON_FSR4_UPGRADE=1` est posé par `steam-tv`**, comme `DXVK_HDR`. Au
+lancement, GE-Proton télécharge le `amdxcffx64.dll` d'AMD (mis en cache) dans
+le préfixe du jeu : un jeu qui propose **FSR 3.1** utilise alors FSR 4
+(upscaling par IA, net, moins de fourmillement), sans rien changer dans ses
+menus.
+
+> [!NOTE]
+> Garder `=1` (version par défaut de GE-Proton) plutôt qu'un numéro figé. Le
+> fichier vient d'URL d'AMD qui disparaissent : constaté le 2026-11-03 avec
+> GE-Proton11-1, seule la 4.0.0 répondait encore (4.0.3 et 4.1.0 en 404).
+> GE-Proton se rabat alors sur la plus récente encore disponible, quel que soit
+> le numéro demandé. Les versions récentes de GE-Proton suivent la liste à jour.
+
+| Condition | Ici |
+|---|---|
+| GPU RDNA4 (RX 9000) | RX 9070 : FSR 4 natif |
+| Jeu en **FSR 3.1** (pas 2.x ni 3.0), DX12 | à vérifier par jeu |
+| **GE-Proton** comme couche de compatibilité | les Proton de Valve ignorent la variable |
+
+**`PROTON_FSR4_INDICATOR=1` aussi** : un filigrane FSR 4 s'affiche en jeu
+quand il est actif, on le voit d'office. Masquer le filigrane d'un jeu :
+`PROTON_FSR4_INDICATOR=0 %command%` ; couper FSR 4 : `PROTON_FSR4_UPGRADE=0 %command%`.
+
 ## Clavier
 
 - **AZERTY** : gamescope ne lit pas la disposition de GNOME et démarre en
@@ -166,6 +191,7 @@ fichiers).
 | Steam refuse de démarrer sur tty3 | Steam déjà ouvert dans GNOME | `steam-tv` le ferme ; sinon le quitter depuis GNOME |
 | Copier-coller absent entre GNOME et Big Picture | deux compositeurs, deux presse-papiers ; ou `xclip` manquant | `steam-tv-clipboard` (lancé par `steam-tv`), `make steam-tv-install` |
 | Option HDR grisée dans un jeu Proton | `DXVK_HDR` absent : le jeu ne voit pas l'écran HDR | posé par `steam-tv` ; relancer `steam-tv` si Big Picture tournait avant |
+| FSR 4 absent (pas de filigrane) | jeu sous un Proton de Valve, ou jeu en FSR 2.x/3.0 | GE-Proton dans *Propriétés → Compatibilité* ; sinon rien à faire |
 | Retour au shell de tty3 après une mise à jour | Steam s'est arrêté au lieu de se relancer, gamescope avec lui | `steam-tv` |
 
 > [!NOTE]
