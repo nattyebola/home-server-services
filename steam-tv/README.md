@@ -93,8 +93,13 @@ input-remapper ne sait pas quelle console est active.
 
 `gamescope --hdr-enabled`, puis *Paramètres → Affichage → HDR* dans Big
 Picture. Un jeu SDR n'est pas délavé : gamescope le place correctement dans le
-signal HDR. `DXVK_HDR=1 %command%` (options de lancement) ne sert qu'à un jeu
-HDR dont l'option reste grisée.
+signal HDR.
+
+**`DXVK_HDR=1` est posé par `steam-tv`** pour tous les jeux lancés sur tty3.
+Sans lui, DXVK et vkd3d-proton ne signalent pas l'écran HDR au jeu, dont
+l'option HDR reste grisée : gamescope ne le pose pas lui-même (constaté avec
+gamescope 3.16). Rien ne change sous GNOME. Pour couper le HDR d'un seul jeu :
+`DXVK_HDR=0 %command%` dans ses options de lancement.
 
 ### Le curseur « luminosité » de GNOME et son équivalent
 
@@ -160,6 +165,7 @@ fichiers).
 | `sudo: A terminal is required` | `make steam-tv-install` lancé sans vrai terminal (ex. prompt `!` de Claude Code) | le lancer en SSH ou dans un terminal |
 | Steam refuse de démarrer sur tty3 | Steam déjà ouvert dans GNOME | `steam-tv` le ferme ; sinon le quitter depuis GNOME |
 | Copier-coller absent entre GNOME et Big Picture | deux compositeurs, deux presse-papiers ; ou `xclip` manquant | `steam-tv-clipboard` (lancé par `steam-tv`), `make steam-tv-install` |
+| Option HDR grisée dans un jeu Proton | `DXVK_HDR` absent : le jeu ne voit pas l'écran HDR | posé par `steam-tv` ; relancer `steam-tv` si Big Picture tournait avant |
 | Retour au shell de tty3 après une mise à jour | Steam s'est arrêté au lieu de se relancer, gamescope avec lui | `steam-tv` |
 
 > [!NOTE]

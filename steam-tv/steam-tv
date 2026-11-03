@@ -31,6 +31,10 @@ echo "Steam Big Picture démarre (journal : $log_dir/steam-tv.log)…"
 # gamescope ne lit pas la disposition de GNOME : XKB par défaut = qwerty US
 export XKB_DEFAULT_LAYOUT=fr XKB_DEFAULT_VARIANT=latin9
 
+# HDR pour tous les jeux Proton (DXVK et vkd3d-proton) : sans ça, l'option HDR du jeu
+# reste grisée, gamescope ne le pose pas lui-même. Par jeu : DXVK_HDR=0 %command%
+export DXVK_HDR=1
+
 # Presse-papiers partagé avec GNOME, arrêté avec gamescope
 "$(dirname "$(readlink -f "$0")")/steam-tv-clipboard" &
 clip_pid=$!
