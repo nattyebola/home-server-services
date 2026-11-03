@@ -223,6 +223,12 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   -pt`, API `airvpn.org/api/whatismyip`, âge du processus `openvpn`. Seuils
   dans `TUNNEL_LOSS_PCT`/`TUNNEL_RTT_MS`. **Jamais omise** quand le VPN
   tourne : un ping sans réponse vaut 100 % de pertes, pas une inconnue.
+  **Pertes ignorées au-delà de `TUNNEL_BUSY_BPS` (5 Mo/s descendant,
+  2026-11-03)** : en plein téléchargement, 10-25 % de pings perdus vers
+  1.1.1.1 *et* vers la passerelle du tunnel (10.7.6.1), latence ~25 ms, 0 %
+  hors tunnel, `RcvbufErrors` négligeables. C'est la file du serveur vers
+  nous, remplie par nos propres flux : pas un défaut. Changer de cible de
+  ping n'y fait rien (essayé). Coupure (100 %) toujours jugée.
   **N'afficher que le pays, jamais `server_name`** de l'API : la page est
   publique et le nom du serveur donne l'IP de sortie qui seede. Pas
   d'auto-remédiation derrière (décision du socle), la carte est le signal.

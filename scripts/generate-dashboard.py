@@ -1144,6 +1144,14 @@ TUNNEL_PING_TARGET = "1.1.1.1"
 # 40-90 % de pertes (voir docs/telechargement.md#choix-du-serveur-airvpn).
 TUNNEL_LOSS_PCT = (5, 20)
 TUNNEL_RTT_MS = (150, 500)
+# Au-delà de ce débit descendant, les pertes ne colorent plus rien : c'est
+# notre propre téléchargement qui remplit la file du serveur AirVPN vers nous,
+# et les pings y sont jetés avec le reste (le TCP s'y règle, c'est son signal
+# de congestion). Mesuré le 2026-11-03 : 10-25 % de pertes vers 1.1.1.1 comme
+# vers la passerelle du tunnel à ~60 Mo/s, latence inchangée (~25 ms), 0-4 %
+# à 8 Mo/s, 0 % hors tunnel. La panne belge du 2026-10-20 (~90 Ko/s, 3,4 s)
+# reste visible : débit sous le seuil, et latence rouge de toute façon.
+TUNNEL_BUSY_BPS = 5 * 1024 * 1024
 # Codes renvoyés par l'API AirVPN ; un pays absent s'affiche en code brut.
 COUNTRY_NAMES = {
     "at": "Autriche", "be": "Belgique", "ch": "Suisse", "de": "Allemagne",
@@ -1203,8 +1211,10 @@ def tunnel_health():
     return health
 
 
-def tunnel_state(h):
-    """(classe, libellé) de l'état global du tunnel, porté par le voyant."""
+def tunnel_state(h, busy):
+    """(classe, libellé) de l'état global du tunnel, porté par le voyant.
+    `busy` : tunnel saturé par le téléchargement, pertes non jugées (voir
+    TUNNEL_BUSY_BPS) sauf la coupure franche."""
     if h["loss"] >= 100:
         return "critical", "Coupé"
     if h["airvpn"] is False:
@@ -1212,9 +1222,10 @@ def tunnel_state(h):
     if h["port_open"] is False:
         return "critical", "Port fermé"
     rtt = h["rtt"] or 0
-    if h["loss"] >= TUNNEL_LOSS_PCT[1] or rtt >= TUNNEL_RTT_MS[1]:
+    loss = 0 if busy else h["loss"]
+    if loss >= TUNNEL_LOSS_PCT[1] or rtt >= TUNNEL_RTT_MS[1]:
         return "critical", "Dégradé"
-    if h["loss"] >= TUNNEL_LOSS_PCT[0] or rtt >= TUNNEL_RTT_MS[0]:
+    if loss >= TUNNEL_LOSS_PCT[0] or rtt >= TUNNEL_RTT_MS[0]:
         return "warning", "Ralenti"
     return "good", "Sain"
 
@@ -1227,14 +1238,16 @@ def human_uptime(seconds):
     return f"{seconds // 86400} j"
 
 
-def render_tunnel_card(running):
+def render_tunnel_card(running, stats):
     """Toujours rendue quand le VPN tourne, jamais omise : un tunnel qui ne
     répond plus est précisément ce que la carte doit montrer (même logique
     que les compteurs d'imports, voir render_torrents_files_card)."""
     if "vpn/transmission-vpn" not in running:
         return render_stat_placeholder("Tunnel VPN")
     h = tunnel_health()
-    cls, label = tunnel_state(h)
+    # Sans stats Transmission, débit inconnu : pertes jugées comme avant.
+    busy = bool(stats) and stats.get("download_speed", 0) >= TUNNEL_BUSY_BPS
+    cls, label = tunnel_state(h, busy)
 
     def level(value, thresholds):
         if value is None:
@@ -1263,8 +1276,11 @@ def render_tunnel_card(running):
             title=f"Ping moyen vers {TUNNEL_PING_TARGET} à travers le tunnel (10 paquets)",
         ),
         render_stat_item(
-            f"{h['loss']} %", "Pertes", value_class=level(h["loss"], TUNNEL_LOSS_PCT),
-            title="Part des 10 pings restés sans réponse",
+            f"{h['loss']} %", "Pertes",
+            value_class="" if busy and h["loss"] < 100 else level(h["loss"], TUNNEL_LOSS_PCT),
+            title="Part des 10 pings restés sans réponse"
+                  + (" ; non jugée pendant un téléchargement : c'est lui qui remplit "
+                     "la file du tunnel" if busy else ""),
         ),
         render_stat_item(
             {True: "Ouvert", False: "Fermé", None: "—"}[h["port_open"]], "Port",
@@ -1340,7 +1356,7 @@ def build_stats_section(running, data_root, backup_dir):
     # la même rangée (demandé le 2026-07-30, voir CLAUDE.md). Une carte omise
     # (best-effort) décale la suite.
     cards = [c for c in (
-        render_tunnel_card(running),
+        render_tunnel_card(running, stats),
         speed_card,
         render_indexers_card(running),
         ratio_card,

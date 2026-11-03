@@ -23,6 +23,7 @@ touchent toutes les stacks.
 | Recherches cross-seed toujours à `Found 0 torrents` | ID d'indexeur obsolète dans `CROSS_SEED_INDEXER_IDS` | [Téléchargement](telechargement.md#cross-seed) |
 | Indexeur en `429` / « API Request Limit reached » | souvent le backoff d'échec de Prowlarr, pas un quota | skill `indexer-quota` |
 | Plus de DNS ni de ping dans `transmission-vpn`, `rtnl: generic error (-101)` | conteneur attaché à un 2e réseau, ou `LOCAL_NETWORK` mal réglé | [Téléchargement](telechargement.md#vpn--transmission) |
+| Carte « Tunnel VPN » : **10-25 % de pertes** pendant un téléchargement, latence normale | file du serveur AirVPN remplie par notre propre téléchargement : normal, pertes non jugées au-delà de 5 Mo/s | [Téléchargement](telechargement.md#pièges-connus) |
 | Tunnel VPN (Transmission, proxy `:8118`) **très lent**, ping de plusieurs secondes, `bad packet ID` dans les logs | route dégradée entre le FAI et le pays AirVPN : redémarrer ne suffit pas, changer l'ordre des `remote` | [Téléchargement](telechargement.md#choix-du-serveur-airvpn) |
 | Tous les torrents **Gemini** en erreur `You already have 3 peers on this torrent` | IP de sortie VPN changée plusieurs fois de suite (`vpn-bench`) : anciens pairs pas encore expirés ; attendre 1 h 30 à 3 h | [Téléchargement](telechargement.md#pièges-connus) |
 | `transmission-vpn` ne démarre pas / ne route rien | module `ip_tables` absent sur l'hôte | [Installation](installation.md#prérequis) |

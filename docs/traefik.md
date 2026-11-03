@@ -132,6 +132,14 @@ conteneur VPN, donc à travers le tunnel, à chaque régénération (5 min) :
 
 Tout état rouge pulse ; la ligne en cause est aussi en rouge.
 
+> [!NOTE]
+> **Pertes non jugées pendant un téléchargement** (débit descendant ≥ 5 Mo/s) :
+> la valeur reste affichée, sans couleur, et ne compte pas dans le voyant.
+> Notre propre téléchargement remplit la file du serveur AirVPN vers nous ;
+> les pings y sont jetés avec le reste (10-25 % à 60 Mo/s, latence inchangée,
+> 0 % hors tunnel). Ce n'est pas du trafic perdu : TCP règle son débit sur ces
+> pertes. Une vraie dégradation se voit sur la latence et le débit.
+
 > [!WARNING]
 > La page est publique : seul le **pays** est affiché. L'API renvoie aussi le
 > nom du serveur AirVPN, jamais affiché : il donne l'IP de sortie, celle qui

@@ -117,6 +117,34 @@ remote be3.vpn.airdns.org 443
     echo "$c $ip"; ping -c 10 -i 0.3 -W 2 $ip | tail -2
   done
   ```
+- **Pertes de ping élevées pendant un téléchargement : normal, rien à
+  régler.** À ~60 Mo/s, 10 à 25 % des pings se perdent dans le tunnel,
+  latence inchangée (~25 ms). Constaté le 2026-11-03 :
+
+  | Ping | Pertes |
+  |---|---|
+  | hôte, hors tunnel → 1.1.1.1 | 0 % |
+  | tunnel → 1.1.1.1, 8.8.8.8, 9.9.9.9 | 15-25 % |
+  | tunnel → passerelle AirVPN (`10.7.6.1`) | 0-15 % |
+  | tunnel → 1.1.1.1, à 8 Mo/s | 4 % |
+
+  Notre téléchargement remplit la file du serveur AirVPN vers nous ; quand
+  elle est pleine, il jette sans tri, pings compris. Ce n'est pas du trafic
+  perdu : TCP/µTP renvoient et règlent leur débit sur ces pertes. Le goulot
+  n'est ni la ligne (ping hôte à 0 %) ni le client OpenVPN
+  (`RcvbufErrors` ~0,01 % dans `/proc/net/snmp` du conteneur, `tun0` sans
+  drop). Rien à changer côté client :
+
+  | Idée | Pourquoi non |
+  |---|---|
+  | `rcvbuf`/`sndbuf`, `txqueuelen` | agrandissent **nos** files, qui ne débordent pas |
+  | Tunnel en TCP | TCP dans TCP : les deux renvoient et ralentissent ensemble, le débit s'effondre |
+  | File plus grande (côté serveur, hors de portée) | même débit, plus de latence (bufferbloat) |
+  | Brider Transmission sous la capacité | pertes ~0 %, mais du débit perdu pour un indicateur |
+
+  La carte « Tunnel VPN » ne juge plus les pertes au-delà de 5 Mo/s
+  descendant (voir [Traefik](traefik.md)). Pour aller plus vite : un autre
+  serveur, skill `vpn-bench`.
 - **Impossible de relancer le tunnel sans redémarrer le conteneur.** L'image
   ajoute `remap-usr1 SIGTERM` au `.ovpn` : un `SIGUSR1` à OpenVPN l'arrête,
   donc le conteneur entier. De toute façon, les scripts de l'image arrêtent
