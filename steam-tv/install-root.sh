@@ -9,8 +9,8 @@ id -u "$user" >/dev/null
 here=$(dirname "$(readlink -f "$0")")
 render() { sed "s/__USER__/$user/g" "$1"; }
 
-# xprop (x11-utils) : luminosité ; triggerhappy : raccourcis globaux
-apt-get install -y triggerhappy x11-utils
+# xprop (x11-utils) : luminosité ; triggerhappy : raccourcis globaux ; xclip : presse-papiers partagé
+apt-get install -y triggerhappy x11-utils xclip
 for cmd in gamescope wpctl python3; do
   command -v "$cmd" >/dev/null || echo "ATTENTION : $cmd introuvable" >&2
 done

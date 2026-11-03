@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Presse-papiers (texte) partagé entre GNOME et gamescope, lancé par steam-tv
+# le temps que gamescope tourne. Les deux compositeurs ont chacun le leur ;
+# on passe par leurs Xwayland, où un client X lit et pose la sélection sans
+# avoir le focus (mutter synchronise son Xwayland avec le presse-papiers Wayland).
+# Sondage toutes les secondes ; si les deux ont changé entre deux tours, GNOME l'emporte.
+set -u
+
+# Xwayland de GNOME : :0, avec le cookie que mutter régénère à chaque session
+gnome_x() {
+  local auth
+  auth=$(ls "/run/user/$(id -u)"/.mutter-Xwaylandauth.* 2>/dev/null | head -n1)
+  [[ -n $auth ]] && XAUTHORITY=$auth DISPLAY=:0 "$@"
+}
+# Xwayland de gamescope : le DISPLAY du process steam qu'il a lancé
+gs_x() { DISPLAY=$gs_dpy "$@"; }
+
+get() { "$1" timeout 2 xclip -selection clipboard -o 2>/dev/null; }
+# xclip -i reste en arrière-plan pour servir la sélection : pas de timeout ici
+put() { printf '%s' "$2" | "$1" xclip -selection clipboard -i >/dev/null 2>&1; }
+
+gs_dpy=
+last=
+while sleep 1; do
+  if [[ -z $gs_dpy ]]; then
+    pid=$(pgrep -u "$USER" -x steam | head -n1)
+    [[ -n $pid ]] && gs_dpy=$(tr '\0' '\n' < "/proc/$pid/environ" | sed -n 's/^DISPLAY=//p')
+    [[ -n $gs_dpy ]] || continue
+  fi
+  g=$(get gnome_x) || g=
+  s=$(get gs_x) || s=
+  if [[ -n $g && $g != "$last" ]]; then
+    put gs_x "$g"; last=$g
+  elif [[ -n $s && $s != "$last" ]]; then
+    put gnome_x "$s"; last=$s
+  fi
+done

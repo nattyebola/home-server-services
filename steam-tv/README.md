@@ -2,8 +2,9 @@
 
 Steam Big Picture seul sur **tty3**, sous [gamescope](https://github.com/ValveSoftware/gamescope)
 (comme sur un Steam Deck), à côté de la session GNOME sur tty2. HDR, VRR,
-manettes, clavier AZERTY et touches multimédia. Comme [`kodi/`](../kodi/) et
-[`gnome/`](../gnome/), ce n'est pas un service de la stack : c'est un réglage
+manettes, clavier AZERTY, touches multimédia et presse-papiers partagé avec
+GNOME. Comme [`kodi/`](../kodi/) et [`gnome/`](../gnome/), ce n'est pas un
+service de la stack : c'est un réglage
 **poste de salon**.
 
 Testé sur Ubuntu avec GNOME 50, gamescope 3.16, Radeon RX 9070 (RDNA 4), TV
@@ -36,13 +37,14 @@ make steam-tv-install
 |---|---|---|
 | utilisateur | `~/.local/bin/steam-tv` (lien) | `steam-tv` |
 | utilisateur | bloc ajouté une fois à `~/.zprofile` | `zprofile.snippet` |
+| utilisateur | presse-papiers partagé, lancé par `steam-tv` depuis le dépôt | `steam-tv-clipboard` |
 | root | `/etc/systemd/system/getty@tty3.service.d/autologin.conf` | `systemd/getty@tty3-autologin.conf` |
 | root | `/etc/systemd/system/triggerhappy.service.d/root.conf` | `systemd/triggerhappy-root.conf` |
 | root | `/etc/triggerhappy/triggers.d/steam-tv.conf` | `triggers.conf` |
 | root | `/usr/local/bin/steam-tv-key` (**copie**) | `steam-tv-key` |
 
-La partie root est dans `install-root.sh` (paquets `triggerhappy` et
-`x11-utils`). Elle se relance sans risque après une modification du dépôt.
+La partie root est dans `install-root.sh` (paquets `triggerhappy`,
+`x11-utils` et `xclip`). Elle se relance sans risque après une modification du dépôt.
 `steam-tv-key` est **copié**, pas lié : triggerhappy l'exécute en root, il ne
 doit pas rester modifiable par l'utilisateur.
 
@@ -127,6 +129,26 @@ compositeur. Un jeu HDR garde sa propre luminosité, à régler dans ses options
 Une touche maintenue répète. Pas d'indicateur à l'écran. Le curseur de Steam
 ne suit pas les touches, et le bouger écrase leur réglage.
 
+## Presse-papiers partagé
+
+GNOME et gamescope sont deux compositeurs distincts, chacun avec son
+presse-papiers. `steam-tv` lance `steam-tv-clipboard` le temps que gamescope
+tourne : il copie le **texte** d'un côté à l'autre (pas les images ni les
+fichiers).
+
+- Il passe par les deux Xwayland : `:0` côté GNOME (cookie
+  `/run/user/<uid>/.mutter-Xwaylandauth.*`, mutter le synchronise avec le
+  presse-papiers Wayland), et celui de gamescope (le `DISPLAY` du process
+  `steam`). Un client X y lit et pose la sélection sans avoir le focus.
+- Sondage toutes les secondes : un copier est disponible de l'autre côté en
+  1 s au plus. Si les deux côtés ont changé dans la même seconde, GNOME
+  l'emporte.
+- Au lancement, le presse-papiers de GNOME est recopié dans gamescope.
+
+> [!NOTE]
+> Tout texte copié passe de l'autre côté, mots de passe compris. Même
+> utilisateur des deux côtés : rien n'est exposé à un autre compte.
+
 ## Pièges connus
 
 | Symptôme | Cause | Solution |
@@ -137,6 +159,7 @@ ne suit pas les touches, et le bouger écrase leur réglage.
 | Touches mortes après branchement d'un clavier ou démarrage d'input-remapper | thd en `nobody` (défaut du paquet) ne rouvre pas les nouveaux périphériques | override `triggerhappy-root.conf` (`--user root`) |
 | `sudo: A terminal is required` | `make steam-tv-install` lancé sans vrai terminal (ex. prompt `!` de Claude Code) | le lancer en SSH ou dans un terminal |
 | Steam refuse de démarrer sur tty3 | Steam déjà ouvert dans GNOME | `steam-tv` le ferme ; sinon le quitter depuis GNOME |
+| Copier-coller absent entre GNOME et Big Picture | deux compositeurs, deux presse-papiers ; ou `xclip` manquant | `steam-tv-clipboard` (lancé par `steam-tv`), `make steam-tv-install` |
 | Retour au shell de tty3 après une mise à jour | Steam s'est arrêté au lieu de se relancer, gamescope avec lui | `steam-tv` |
 
 > [!NOTE]
