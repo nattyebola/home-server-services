@@ -12,6 +12,9 @@ compare après le `up` (`scripts/image-versions.py`). Chaque version qui a
 changé ajoute une ligne à `$DATA_ROOT/.update-journal/journal.jsonl`, avec
 `processed: null`. Ce skill lit ces lignes, résume, puis les marque.
 
+Seulement si `.env.shared` contient `UPDATE_JOURNAL=1` (sinon `pending`
+le signale sur stderr : le dire et s'arrêter).
+
 Une montée sans changement de version (rebuild linuxserver `-lsNNN`,
 modif de code de clearr) n'est pas notée : il n'y a rien à lire.
 

@@ -16,6 +16,11 @@
 #
 # Toujours best-effort : une erreur ici s'affiche mais ne fait jamais
 # échouer `make update` (code de retour 0).
+#
+# Opt-in : sans `UPDATE_JOURNAL=1` dans .env.shared, snapshot/record/recap
+# ne font rien. Le journal ne sert qu'au skill `changelogs`, donc qu'à une
+# instance pilotée depuis Claude Code ; un autre déploiement du dépôt n'a
+# pas à accumuler un journal que personne ne lit.
 import datetime
 import io
 import json
@@ -75,7 +80,9 @@ def load_env_file(path):
     return values
 
 
-DATA_ROOT = load_env_file(os.path.join(REPO_ROOT, ".env.shared")).get("DATA_ROOT")
+ENV_SHARED = load_env_file(os.path.join(REPO_ROOT, ".env.shared"))
+DATA_ROOT = ENV_SHARED.get("DATA_ROOT")
+ENABLED = ENV_SHARED.get("UPDATE_JOURNAL", "").strip() == "1"
 JOURNAL_DIR = os.path.join(DATA_ROOT, ".update-journal") if DATA_ROOT else None
 JOURNAL = os.path.join(JOURNAL_DIR, "journal.jsonl") if JOURNAL_DIR else None
 
@@ -284,6 +291,13 @@ def main():
         print("image-versions: DATA_ROOT introuvable dans .env.shared", file=sys.stderr)
         return
     cmd = args[0] if args else ""
+    # Désactivé : make update n'écrit rien, en silence. La lecture
+    # (pending/mark) reste possible, avec un mot pour expliquer un vide.
+    if not ENABLED:
+        if cmd in ("snapshot", "record", "recap"):
+            return
+        print("image-versions: journal désactivé (UPDATE_JOURNAL=1 dans .env.shared pour l'activer)",
+              file=sys.stderr)
     if cmd == "snapshot" and len(args) == 2:
         cmd_snapshot(args[1])
     elif cmd == "record" and len(args) == 2:
