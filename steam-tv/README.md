@@ -127,7 +127,8 @@ menus.
 > fichier vient d'URL d'AMD qui disparaissent : constaté le 2026-11-03 avec
 > GE-Proton11-1, seule la 4.0.0 répondait encore (4.0.3 et 4.1.0 en 404).
 > GE-Proton se rabat alors sur la plus récente encore disponible, quel que soit
-> le numéro demandé. Les versions récentes de GE-Proton suivent la liste à jour.
+> le numéro demandé. Les versions récentes de GE-Proton suivent la liste à jour : avec
+> GE-Proton11-12, `=1` donne la 4.1.1 (vérifié dans Space Marine 2).
 
 | Condition | Ici |
 |---|---|
@@ -135,9 +136,11 @@ menus.
 | Jeu en **FSR 3.1** (pas 2.x ni 3.0), DX12 | à vérifier par jeu |
 | **GE-Proton** comme couche de compatibilité | les Proton de Valve ignorent la variable |
 
-**`PROTON_FSR4_INDICATOR=1` aussi** : un filigrane FSR 4 s'affiche en jeu
-quand il est actif, on le voit d'office. Masquer le filigrane d'un jeu :
-`PROTON_FSR4_INDICATOR=0 %command%` ; couper FSR 4 : `PROTON_FSR4_UPGRADE=0 %command%`.
+Vérifié en 4.1.1 : Space Marine 2 (FSR 3.1 → 4) et 007 First Light (SDK
+FidelityFX 2, FSR 4 natif : il lui manquait seulement le `amdxcffx64.dll`).
+
+Vérifier qu'il agit : `PROTON_FSR4_INDICATOR=1 %command%` affiche un filigrane
+FSR 4 en jeu. Le couper pour un jeu : `PROTON_FSR4_UPGRADE=0 %command%`.
 
 ## Clavier
 
@@ -191,7 +194,7 @@ fichiers).
 | Steam refuse de démarrer sur tty3 | Steam déjà ouvert dans GNOME | `steam-tv` le ferme ; sinon le quitter depuis GNOME |
 | Copier-coller absent entre GNOME et Big Picture | deux compositeurs, deux presse-papiers ; ou `xclip` manquant | `steam-tv-clipboard` (lancé par `steam-tv`), `make steam-tv-install` |
 | Option HDR grisée dans un jeu Proton | `DXVK_HDR` absent : le jeu ne voit pas l'écran HDR | posé par `steam-tv` ; relancer `steam-tv` si Big Picture tournait avant |
-| FSR 4 absent (pas de filigrane) | jeu sous un Proton de Valve, ou jeu en FSR 2.x/3.0 | GE-Proton dans *Propriétés → Compatibilité* ; sinon rien à faire |
+| FSR 4 absent (pas de filigrane avec `PROTON_FSR4_INDICATOR=1`) | jeu sous un Proton de Valve, ou jeu en FSR 2.x/3.0 | GE-Proton dans *Propriétés → Compatibilité* ; sinon rien à faire |
 | Retour au shell de tty3 après une mise à jour | Steam s'est arrêté au lieu de se relancer, gamescope avec lui | `steam-tv` |
 
 > [!NOTE]
