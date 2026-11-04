@@ -178,8 +178,8 @@ remote be3.vpn.airdns.org 443
 - **`settings.json` n'est réécrit qu'à l'arrêt du daemon** : lire l'état réel
   par `session-get`, jamais dans le fichier ; une édition à chaud est perdue.
 - **Déplacer des données** : `torrent-set-location … move=true`, jamais `mv`.
-  Sur le même disque, l'inode est conservé (les hardlinks survivent), mais pas
-  les symlinks de cross-seed.
+  Sur le même disque, l'inode est conservé : les hardlinks survivent, ceux de
+  cross-seed compris.
 
 ## Prowlarr, Sonarr, Radarr
 
@@ -462,6 +462,9 @@ fois. Déclenché à chaque import par un **Custom Script** Sonarr/Radarr
 
 - Le montage reste `/data` (cross-seed n'a pas de remote path mapping) ; ses
   liens vont dans `/data/.cross-seed-links`, **sous le même montage**.
+- **Liens en hardlink** (`linkType: "hardlink"`, depuis le 2026-11-04), pas en
+  symlink : la copie ne dépend plus de l'original. Si cross-seed ne peut pas
+  créer de hardlink, il refuse de démarrer (pas de repli en symlink).
 - La recherche périodique ne couvre que les torrents de moins de 30 jours
   (cadence 3 j / exclusion 9 j / 30 j, contraintes de validation de
   cross-seed). Un rattrapage complet se lance à la main, jamais en automatique.
@@ -476,6 +479,11 @@ fois. Déclenché à chaque import par un **Custom Script** Sonarr/Radarr
   2026-09-29, chaque script était monté seul sous `/config/custom-*.sh`, et
   le conteneur gardait l'ancienne version. `make provision` repointe une
   connexion restée sur l'ancien chemin.
+- **Copie privée perdue quand l'original public part** (avant le
+  2026-11-04) : l'arr retire un original Nyaa.si au ratio 1.5 avec ses
+  données ; en symlink, sa copie sur un tracker privé pointait dans le vide
+  (ABS dans clearr). Réglé par le hardlink. Réparer un ancien cas : recréer le
+  fichier de la copie par hardlink depuis `library/`, puis vérifier le torrent.
 - **`useClientTorrents: true`** requis dans `arr/cross-seed/config.js`, sinon
   chaque notification échoue (`Torrent client does not have any torrent…`).
 - **Les ID d'indexeur Prowlarr changent** quand un indexeur est recréé. Un ID

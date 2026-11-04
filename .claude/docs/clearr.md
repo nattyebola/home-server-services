@@ -629,6 +629,22 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   là-bas seulement le 2026-10-05, le dashboard comptait entre-temps chaque
   téléchargement en cours comme absent. Tout changement du critère ABS se fait
   des deux côtés.
+- **clearr retire lui-même les symlinks cross-seed** (2026-11-04,
+  `core.remove_torrent_and_links`, utilisé par `do_delete`, la cascade des
+  enfants et `delete-by-inode`). `delete-local-data` laisse en place le lien
+  d'une entrée cross-seed dont la cible a déjà disparu (original supprimé
+  juste avant par la cascade, ou retiré par l'arr au `seedRatio` 1.5 des
+  publics) — vraisemblablement parce que Transmission teste l'existence en
+  suivant le lien. 552 liens morts (80 fichiers seuls, 472 dans 50 dossiers
+  de saison) accumulés depuis juillet, purgés à la main le même jour. Ne
+  supprime que des symlinks, puis les dossiers vides jusqu'au dossier du
+  tracker (exclu). Depuis le passage de cross-seed en hardlink le même jour,
+  c'est un filet : un hardlink, lui, est bien effacé par Transmission.
+- **Copie cross-seed d'un original Nyaa.si = ABS au ratio 1.5** (constaté le
+  2026-11-04 sur *Look Back*) : l'arr retirait l'original public avec ses
+  données, le symlink de la copie privée pointait dans le vide. Réglé le même
+  jour par `linkType: "hardlink"` dans cross-seed (voir `arr-pieges.md`,
+  section cross-seed) ; les symlinks existants ont été convertis.
 ## Addon Kodi « Supprimer avec clearr » (`kodi/context.clearr`)
 
 - `make kodi-install`, ajouté le 2026-08-05 — détail humain dans

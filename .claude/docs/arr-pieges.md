@@ -319,6 +319,23 @@ custom format. Récidive côté Radarr le 2026-09-29 : *Coyote vs. Acme* grabé
 
 ## cross-seed
 
+- **`linkType: "hardlink"`, jamais le symlink par défaut** (2026-11-04). En
+  symlink, la copie dépend de l'original : la règle de ratio 1.5 des publics
+  (`PUBLIC_INDEXER_SEED_RATIO`) fait retirer l'original Nyaa.si **avec ses
+  données** par l'arr, et la copie sur un tracker privé — justement le sens
+  qui rapporte du ratio — passe ABS (vécu sur *Look Back*, TR4KER). La règle
+  ne voit pas la copie (torrent distinct) et l'arr ne sait pas poser de
+  condition sur son retrait : le hardlink est la seule parade qui ne demande
+  ni script ni exception de ratio. Coût nul (même inode), et tout ce qui
+  rattache un torrent à `library/` (clearr, `transmission-stats.py`) passe
+  déjà par l'inode. Vérifié dans le code de cross-seed 6.13.9 : en hardlink,
+  pas de repli silencieux en symlink — le test de liaison au démarrage lève
+  (`CrossSeedError`) et le conteneur ne démarre pas. **Non rétroactif** : les
+  298 symlinks valides existants ont été convertis à la main le même jour
+  (`ln <cible> tmp && mv -fT tmp <lien>`, sans re-vérification Transmission :
+  contenu identique). Un `config.js` modifié exige un `docker restart
+  arr-cross-seed-1` : bind-mount de fichier, et `make rebuild` ne recrée pas
+  un service dont la config compose n'a pas bougé.
 - **Connect « Custom Script », pas « Webhook »** — le type Webhook générique
   de Sonarr/Radarr envoie un payload de test factice (pas de vrai hash) au
   moment d'enregistrer la connexion ; cross-seed le rejette (`A valid

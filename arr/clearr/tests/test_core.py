@@ -592,6 +592,63 @@ class KindFilterGroups(unittest.TestCase):
                          (2, 1, 1, 1, 0))
 
 
+class LiensCrossSeedRetires(unittest.TestCase):
+    """Transmission laisse en place le symlink d'une entrée cross-seed dont la
+    cible a déjà disparu (2026-11-04 : 80 liens morts accumulés). clearr le
+    retire lui-même, sans jamais toucher un fichier réel ni une cible."""
+
+    def setUp(self):
+        self.tracker = Path(tempfile.mkdtemp(dir=core.TRANSMISSION_DATA_ROOT, prefix="links-")) / ".cross-seed-links" / "TR"
+        self.tracker.mkdir(parents=True)
+        self.container_dir = "/data" + str(self.tracker)[len(core.TRANSMISSION_DATA_ROOT):]
+        self.removed = []
+
+        class Client:
+            def remove_torrent(c, _id):
+                self.removed.append(_id)
+        self.client = Client()
+
+    def _torrent(self, *names, download_dir=None):
+        return {"id": 9, "name": names[0], "downloadDir": download_dir or self.container_dir,
+                "files": [{"name": n, "length": 1} for n in names]}
+
+    def test_lien_mort_d_un_film_retire(self):
+        lien = self.tracker / "Film.mkv"
+        os.symlink("/data/completed/radarr/Film.mkv", lien)  # cible absente
+        core.remove_torrent_and_links(self.client, self._torrent("Film.mkv"))
+        self.assertEqual(self.removed, [9])
+        self.assertFalse(os.path.lexists(lien))
+        self.assertTrue(self.tracker.is_dir(), "le dossier du tracker reste")
+
+    def test_saison_retiree_avec_son_dossier(self):
+        (self.tracker / "S01").mkdir()
+        for e in ("E01.mkv", "E02.mkv"):
+            os.symlink(f"/data/completed/sonarr/S01/{e}", self.tracker / "S01" / e)
+        core.remove_cross_seed_links(self._torrent("S01/E01.mkv", "S01/E02.mkv"))
+        self.assertFalse((self.tracker / "S01").exists())
+        self.assertTrue(self.tracker.is_dir())
+
+    def test_cible_existante_intacte(self):
+        cible = touch(Path(core.TRANSMISSION_DATA_ROOT, "completed", "anime", "Garde.mkv"))
+        os.symlink(cible, self.tracker / "Garde.mkv")
+        core.remove_cross_seed_links(self._torrent("Garde.mkv"))
+        self.assertFalse(os.path.lexists(self.tracker / "Garde.mkv"))
+        self.assertTrue(os.path.isfile(cible))
+
+    def test_fichier_reel_jamais_supprime(self):
+        reel = touch(self.tracker / "Reel.mkv")
+        self.assertEqual(core.remove_cross_seed_links(self._torrent("Reel.mkv")), 0)
+        self.assertTrue(os.path.isfile(reel))
+
+    def test_torrent_hors_cross_seed_ignore(self):
+        lien = Path(core.TRANSMISSION_DATA_ROOT, "completed", "anime", "Lien.mkv")
+        os.symlink("/data/nulle-part.mkv", lien)
+        self.addCleanup(os.remove, lien)
+        self.assertEqual(core.remove_cross_seed_links(
+            self._torrent("Lien.mkv", download_dir="/data/completed/anime")), 0)
+        self.assertTrue(os.path.lexists(lien))
+
+
 class BuildCrossSeedGroups(unittest.TestCase):
     """Le parent choisi détermine ce que la cascade supprime : une inversion
     supprimerait le téléchargement d'origine en croyant nettoyer un cross-seed."""

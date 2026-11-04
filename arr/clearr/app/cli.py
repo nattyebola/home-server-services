@@ -24,7 +24,7 @@ def delete_by_inode(dev, ino, dry_run):
     if dry_run:
         print(json.dumps({"found": True, "deleted": False, "torrent": torrent["name"]}))
         return
-    client.remove_torrent(torrent["id"])
+    core.remove_torrent_and_links(client, torrent)
     core.logger.info("delete-by-inode: torrent %r (id=%s) supprimé (remplacé par une nouvelle release)",
                       torrent["name"], torrent["id"])
     print(json.dumps({"found": True, "deleted": True, "torrent": torrent["name"]}))

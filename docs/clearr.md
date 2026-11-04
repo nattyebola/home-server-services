@@ -117,6 +117,7 @@ série entière : des saisons non suivies se lisent dans la colonne SAISONS
 | Un torrent en cours de téléchargement marqué ABS (avant le 2026-09-29) | clearr ne cherchait ses fichiers que sous `completed/` | corrigé : `incomplete/` (et les `.part`) compte aussi |
 | **Tous** les torrents en « absent » (loupe) d'un coup, bandeau rouge « problème de montage » | données Transmission non montées (disque absent, montage raté) — ne rien supprimer | vérifier le disque et le montage, puis `make restart STACK=arr` |
 | Onglet BD, Séries, Animés ou Films absent | son service (Komga, Sonarr, Radarr) ne répond pas, ou vient de démarrer (cache de 30 s) | `docker ps` ; attendre 30 s et recharger. Pour Komga, la sonde passe par Traefik : Traefik arrêté masque aussi BD |
+| Torrent cross-seed en ABS alors que le film est en bibliothèque (avant le 2026-11-04) | l'original venait d'un tracker public : l'arr l'a retiré au ratio 1.5 avec ses données, et le lien cross-seed (alors un symlink) pointait dans le vide | ne doit plus arriver (liens en hardlink). Sinon : supprimer le torrent depuis clearr (le film reste), ou recréer son fichier par hardlink depuis `library/` puis vérifier le torrent |
 | Un pack de films emporte d'autres films | un torrent = un seul lot de fichiers | la confirmation (web et Kodi ≥ 1.1.1) liste les autres titres touchés |
 
 ## Tests

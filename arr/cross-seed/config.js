@@ -35,6 +35,13 @@ module.exports = {
   // renvoyé par Transmission (pas de remapping possible côté cross-seed).
   dataDirs: ["/data/completed"],
   linkDirs: ["/data/.cross-seed-links"],
+  // hardlink, pas symlink (défaut de cross-seed) : depuis le 2026-11-04. Un
+  // symlink rend la copie dépendante de l'original, et l'arr retire les
+  // originaux Nyaa.si (public) avec leurs données au seedRatio 1.5 — la copie
+  // sur un tracker privé, la seule qui rapporte du ratio, passait ABS. En
+  // hardlink, pas de repli silencieux : cross-seed refuse de démarrer si le
+  // lien est impossible entre dataDirs et linkDirs.
+  linkType: "hardlink",
   action: "inject",
   duplicateCategories: true,
   // Sans cadence, le daemon ne recherche que sur événement webhook (nouvel

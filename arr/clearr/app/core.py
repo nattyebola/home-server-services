@@ -2466,6 +2466,43 @@ def is_cross_seed_entry(torrent):
     return "/.cross-seed-links/" in torrent.get("downloadDir", "")
 
 
+def remove_cross_seed_links(torrent):
+    """Retire les symlinks d'une entrée cross-seed APRÈS son retrait de
+    Transmission, puis les dossiers devenus vides (jamais le dossier du
+    tracker lui-même). Constaté le 2026-11-04 (80 liens morts accumulés) :
+    quand la cible a déjà disparu (original supprimé avant, par clearr ou par
+    l'arr au seedRatio), delete-local-data laisse le lien en place —
+    vraisemblablement parce que Transmission teste l'existence en suivant le
+    lien. Ne touche qu'à des symlinks, jamais à un fichier réel ni à la
+    cible d'un lien. Filet depuis le passage de cross-seed en hardlink
+    (2026-11-04) : un hardlink, Transmission l'efface lui-même. Renvoie le nombre de liens retirés."""
+    if not is_cross_seed_entry(torrent):
+        return 0
+    try:
+        tracker_dir = container_path_to_host(torrent["downloadDir"])
+    except ValueError:
+        return 0
+    removed = 0
+    for path, _size in torrent_host_files(torrent):
+        if not os.path.islink(path):
+            continue
+        try:
+            os.remove(path)
+        except OSError as e:
+            logger.warning("échec de suppression du lien cross-seed %s : %s", path, e)
+            continue
+        removed += 1
+        logger.info("lien cross-seed supprimé : %s", path)
+        prune_empty_dirs_from(os.path.dirname(path), root=tracker_dir)
+    return removed
+
+
+def remove_torrent_and_links(client, torrent):
+    """Retrait Transmission (delete-local-data) + liens cross-seed restants."""
+    client.remove_torrent(torrent["id"])
+    remove_cross_seed_links(torrent)
+
+
 def build_cross_seed_groups(all_torrents):
     """Regroupe les torrents qui partagent au moins un fichier réel (même
     (dev, inode), voir analyze_torrent_files/t["_inodes"]) — un torrent
@@ -2539,7 +2576,7 @@ def prune_empty_dirs_from(directory, root=LIBRARY_ROOT):
 
 def do_delete(client, torrent, host_files, lib_matches, arr_plan, dependents=()):
     log_deletion(torrent, host_files, lib_matches, arr_plan)
-    client.remove_torrent(torrent["id"])
+    remove_torrent_and_links(client, torrent)
     for path, _size in lib_matches:
         try:
             os.remove(path)
@@ -2561,17 +2598,16 @@ def do_delete(client, torrent, host_files, lib_matches, arr_plan, dependents=())
     # l'inode de ce torrent : une fois ce dernier supprimé, ses cross-seeds
     # n'ont plus rien à seeder (données orphelines) — on les supprime avec
     # lui plutôt que de laisser des entrées mortes dans Transmission.
-    # remove_torrent(delete-local-data=True) suffit pour le "lien logique" :
-    # le fichier d'un enfant est un symlink (.cross-seed-links/<tracker>/...,
-    # cf. is_cross_seed_entry) — Transmission appelle unlink() dessus comme
-    # sur n'importe quel fichier, ce qui retire le symlink lui-même sans
-    # toucher sa cible (déjà supprimée juste au-dessus). Pas de
+    # Le fichier d'un enfant est un symlink (.cross-seed-links/<tracker>/...)
+    # dont la cible vient d'être supprimée juste au-dessus : Transmission
+    # (delete-local-data) le croit absent et le laisse en place, d'où
+    # remove_torrent_and_links() qui le retire lui-même. Pas de
     # find_library_matches/plan_arr_actions rejoués pour ces enfants : même
     # inode que le parent, donc mêmes correspondances library/ et même plan
     # Sonarr/Radarr déjà traités ci-dessus — les rejouer serait redondant.
     for child in dependents:
         try:
-            client.remove_torrent(child["id"])
+            remove_torrent_and_links(client, child)
             logger.info("cross-seed: torrent enfant %r (id=%s) supprimé avec son parent %r (id=%s)",
                         child["name"], child["id"], torrent["name"], torrent["id"])
         except Exception as e:

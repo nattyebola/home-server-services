@@ -31,9 +31,9 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   `torrent-set-location … move=true` (jamais un `mv` : Transmission perdrait
   les fichiers). Un move sur le même disque est un `rename`, donc **l'inode est
   conservé** et les hardlinks `library/` survivent — vérifié par `stat -c '%i %h'`
-  avant/après. **En revanche les symlinks cross-seed ne survivent pas** : ils
-  portent le chemin absolu vu par le conteneur, il faut les repointer à la main
-  (`ln -sfn`) sous `.cross-seed-links/<tracker>/`.
+  avant/après. À l'époque, les liens cross-seed étaient des symlinks et ne
+  survivaient pas (chemin absolu vu par le conteneur, repointés à la main) ;
+  depuis le 2026-11-04 ce sont des hardlinks, qui survivent comme les autres.
 - **`settings.json` n'est réécrit qu'à l'arrêt du daemon** : un réglage changé
   en RPC vit uniquement en session. Corollaire dans les deux sens — un `docker
   restart` grave la valeur courante (donc une dérive), et une correction faite
