@@ -165,15 +165,19 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
     et depuis le 2026-08-31 les deux compteurs d'imports. 0 en téléchargement
     n'est pas anormal, contrairement à une erreur. « Actifs » = `status != 0`
     (spec RPC), « surveillés » = tous les torrents présents.
-    **« Figés à 0 % »** (2026-10-28, demandé ; 3e colonne sous les imports,
-    pour équilibrer les colonnes en 3/3/3) : non en pause, 0 octet reçu
+    **« Figés à 0 % »** (2026-10-28, demandé ; ajouté pour
+    équilibrer les colonnes en 3/3/3) : non en pause, 0 octet reçu
     (`percentDone` et `haveUnchecked` à 0), ajouté depuis plus d'**1 h**
     (`STALLED_ZERO_SECONDS` dans `transmission-stats.py`). Seuil volontairement
     distinct des 24 h de `stalled-torrents.py` : ici un signal, là un retrait
     possible. Coloré et compté dans le voyant comme « En erreur » (orange, rouge
     à 50 % des torrents).
-  - **3e colonne « Imports » (Bloqués / En attente)** dans cette même carte,
-    demandée le 2026-08-31 : nombre de **téléchargements distincts**
+  - **Disposition (2026-11-05, demandée)** : colonne 1 Actifs / En
+    bibliothèque / En cross-seed, colonne 2 En pause / En attente / En erreur,
+    colonne 3 Absents / Bloqués / Figés à 0 %. Elle remplace le rangement par
+    source (torrents / fichiers / imports).
+  - **Compteurs d'imports (Bloqués / En attente)** dans cette même carte,
+    demandés le 2026-08-31 : nombre de **téléchargements distincts**
     (downloadId) Sonarr+Radarr en `importBlocked`/`importPending`
     (`arr_stuck_imports()`), les mêmes états que `stuck_queue_records()` de
     `scripts/manual-import.py` — **à garder alignés**, ce qui est compté doit

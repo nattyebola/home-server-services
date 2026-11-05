@@ -644,29 +644,19 @@ def render_torrents_files_card(stats, imports):
     `imports` à None (un arr arrêté ou injoignable, voir arr_stuck_imports())
     affiche "—" et non 0 : ici un zéro faux annoncerait précisément l'absence
     de l'anomalie qu'on cherche à voir."""
-    torrents_col = render_multi_stat_column([
+    # Ordre des colonnes demandé le 2026-11-05, qui remplace le rangement par
+    # source (torrents / fichiers / imports) : Actifs, En bibliothèque, En
+    # cross-seed | En pause, En attente, En erreur | Absents, Bloqués, Figés.
+    # "Bloqués" rouge si > 0 : un import refusé ne se débloque pas sans
+    # intervention. "En attente" sans couleur : état normal, que le cron
+    # d'import par ID (toutes les 15 min) résorbe en grande partie — décidé
+    # le 2026-10-27. Aucune classe non plus quand le compte est inconnu — "—"
+    # n'est ni bon ni mauvais.
+    normal_col = render_multi_stat_column([
         render_stat_item(
             str(stats["torrents_active"]), "Actifs",
             title="Torrents non arrêtés côté Transmission (status != 0) : en "
                   "téléchargement, en vérification ou en seed",
-        ),
-        render_stat_item(
-            str(stats["torrents_paused"]), "En pause",
-            title="Torrents arrêtés (status 0), terminés ou non",
-        ),
-        render_stat_item(
-            str(stats["torrents_errored"]), "En erreur",
-            value_class=share_value_class(stats["torrents_errored"], stats),
-            title="Torrents signalés en erreur par Transmission : tracker "
-                  "injoignable, données introuvables sur disque…",
-        ),
-    ])
-    files_col = render_multi_stat_column([
-        render_stat_item(
-            str(stats["torrents_missing"]), "Absents",
-            value_class=share_value_class(stats["torrents_missing"], stats),
-            title="Torrents dont plus aucun fichier n'existe sur disque "
-                  "(marqueur ABS de clearr)",
         ),
         render_stat_item(
             str(stats["torrents_linked"]), "En bibliothèque",
@@ -679,12 +669,30 @@ def render_torrents_files_card(stats, imports):
                   ".cross-seed-links/ et non sous completed/",
         ),
     ])
-    # "Bloqués" rouge si > 0 : un import refusé ne se débloque pas sans
-    # intervention. "En attente" sans couleur : état normal, que le cron
-    # d'import par ID (toutes les 15 min) résorbe en grande partie — décidé
-    # le 2026-10-27. Aucune classe non plus quand le compte est inconnu — "—"
-    # n'est ni bon ni mauvais.
-    imports_col = render_multi_stat_column([
+    waiting_col = render_multi_stat_column([
+        render_stat_item(
+            str(stats["torrents_paused"]), "En pause",
+            title="Torrents arrêtés (status 0), terminés ou non",
+        ),
+        render_stat_item(
+            str(imports["importPending"]) if imports else "—", "En attente",
+            title="Imports en attente (importPending) — l'arr a renoncé à "
+                  "rattacher le fichier ; ne se débloque pas tout seul",
+        ),
+        render_stat_item(
+            str(stats["torrents_errored"]), "En erreur",
+            value_class=share_value_class(stats["torrents_errored"], stats),
+            title="Torrents signalés en erreur par Transmission : tracker "
+                  "injoignable, données introuvables sur disque…",
+        ),
+    ])
+    anomaly_col = render_multi_stat_column([
+        render_stat_item(
+            str(stats["torrents_missing"]), "Absents",
+            value_class=share_value_class(stats["torrents_missing"], stats),
+            title="Torrents dont plus aucun fichier n'existe sur disque "
+                  "(marqueur ABS de clearr)",
+        ),
         render_stat_item(
             str(imports["importBlocked"]) if imports else "—", "Bloqués",
             value_class=(("stat-value-critical" if imports["importBlocked"] else "stat-value-good")
@@ -692,11 +700,6 @@ def render_torrents_files_card(stats, imports):
             title="Imports bloqués par Sonarr/Radarr (importBlocked) — "
                   "téléchargements terminés que l'arr a refusé d'importer "
                   "(un pack compte pour un, pas un par épisode)",
-        ),
-        render_stat_item(
-            str(imports["importPending"]) if imports else "—", "En attente",
-            title="Imports en attente (importPending) — l'arr a renoncé à "
-                  "rattacher le fichier ; ne se débloque pas tout seul",
         ),
         render_stat_item(
             str(stats["torrents_stalled_zero"]), "Figés à 0 %",
@@ -708,7 +711,7 @@ def render_torrents_files_card(stats, imports):
         ),
     ])
     return render("multi-stat-columns-card.html", header=render_stat_header("Torrents", torrents_state(stats, imports)),
-                  columns="\n".join([torrents_col, files_col, imports_col]))
+                  columns="\n".join([normal_col, waiting_col, anomaly_col]))
 
 
 # Part des torrents en erreur ou absents à partir de laquelle la carte passe
