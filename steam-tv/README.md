@@ -100,11 +100,11 @@ Laissé seul en arrière-plan, Big Picture continue de dessiner son interface :
 **~25-30 W** de GPU en continu (mesuré le 2026-11-09, sur tty2 : 18 % de
 charge et 31-60 W dégelé, contre 0-3 % et 11-13 W gelé ; mémoire vidéo à
 456-772 MHz au lieu de 96). Le CPU, lui, ne bouge pas (~45 W dans les deux
-cas). `steam-tv` gèle donc tout le groupe quand tty3 n'est plus affichée.
+cas). `steam-tv` gèle donc tout le groupe dès que tty3 n'est plus affichée.
 
 ```mermaid
 flowchart LR
-    run["▶️ Big Picture actif"] -->|"toutes les 5 min :<br/>tty3 pas affichée ?"| frz["❄️ systemctl --user freeze"]
+    run["▶️ Big Picture actif"] -->|"départ de tty3<br/>(+ 2 s)"| frz["❄️ systemctl --user freeze"]
     frz -->|"retour sur tty3<br/>(instantané)"| thaw["systemctl --user thaw"] --> run
 ```
 
@@ -112,7 +112,7 @@ flowchart LR
 |---|---|
 | Ce qui est gelé | le scope systemd `steam-tv.scope` : gamescope, Steam, ses sous-processus, le jeu en cours, le presse-papiers partagé |
 | Mécanisme | cgroup freezer, comme une mise en veille : tout s'arrête d'un bloc |
-| Gel | vérifié toutes les **5 min** (`check_every`) : jusqu'à 5 min de conso après le départ |
+| Gel | **2 s après la bascule** (`settle`) : `poll()` sur `/sys/class/tty/tty0/active`, que le noyau signale à chaque changement de console (repli : sondage à la seconde). Les 2 s laissent gamescope rendre l'écran ; un aller-retour plus rapide ne gèle rien |
 | Reprise | **instantanée** : ioctl `VT_WAITACTIVE` sur tty3, qui rend la main dès la bascule (repli : sondage à la seconde) |
 | État | `systemctl --user show steam-tv.scope -p FreezerState` (`frozen` / `running`) |
 
@@ -120,7 +120,15 @@ Pendant le gel :
 - Steam est **hors ligne** : ni téléchargement, ni mise à jour. Il se reconnecte
   seul au dégel.
 - Un jeu solo reprend tel quel ; un jeu **en ligne** perd sa connexion.
-- La mémoire vive reste occupée (1 à 2 Go).
+- La mémoire vive reste occupée : 1 à 2 Go pour Big Picture seul, plus celle
+  du jeu (~9 Go au total avec 007 First Light, mesuré le 2026-11-09).
+
+> [!NOTE]
+> **Un jeu en cours est figé avec le reste**, 2 s après la bascule : on
+> n'entend plus son son sur le bureau, il ne consomme plus rien (0 % de CPU,
+> GPU au repos). Au retour, il reprend là où il s'était arrêté, image et son
+> (vérifié avec 007 First Light). Jusqu'au 2026-11-09, le gel n'était vérifié
+> que toutes les 5 min : le jeu continuait, son compris, jusque-là.
 
 > [!WARNING]
 > Télé éteinte **en restant sur tty3** : rien n'est gelé, tty3 est toujours la

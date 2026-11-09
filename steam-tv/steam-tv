@@ -49,9 +49,26 @@ scope=steam-tv.scope
 systemctl --user stop "$scope" 2>/dev/null   # reste d'une session précédente
 vt_dev=$(tty)            # /dev/tty3
 vt_num=${vt_dev#/dev/tty}
-check_every=300          # gel : la latence ne coûte que quelques Wh, inutile de sonder souvent
+settle=2                 # s entre la bascule et le gel, voir pause_when_hidden
 
 vt_shown() { [[ $(</sys/class/tty/tty0/active) == "tty$vt_num" ]]; }
+
+# Bloque jusqu'au départ de la console. Le noyau signale chaque bascule sur
+# /sys/class/tty/tty0/active (sysfs_notify, ce que surveille logind) : poll() en
+# POLLPRI rend la main aussitôt. Le timeout de 60 s n'est qu'un filet de sécurité.
+# Repli : sondage à la seconde.
+wait_vt_hidden() {
+  python3 -c 'import select, sys
+f = open("/sys/class/tty/tty0/active")
+p = select.poll()
+p.register(f, select.POLLPRI | select.POLLERR)
+while True:
+    f.seek(0)
+    if f.read().strip() != sys.argv[1]:
+        break
+    p.poll(60000)' "tty$vt_num" 2>/dev/null && return
+  while vt_shown; do sleep 1; done
+}
 
 # Bloque jusqu'au retour sur la console. VT_WAITACTIVE (0x5607) rend la main dès la
 # bascule, sans sondage : la reprise est instantanée. Repli : sondage à la seconde.
@@ -64,9 +81,13 @@ fcntl.ioctl(fd, 0x5607, int(sys.argv[2]))' "$vt_dev" "$vt_num" 2>/dev/null && re
 
 # Hors du scope, sinon elle se gèlerait elle-même
 pause_when_hidden() {
-  while sleep "$check_every"; do
+  while true; do
+    wait_vt_hidden
+    # Laisse gamescope rendre l'écran (« Session paused ») avant de le figer ; un
+    # aller-retour rapide entre consoles ne gèle rien.
+    sleep "$settle"
     vt_shown && continue
-    systemctl --user freeze "$scope" || continue
+    systemctl --user freeze "$scope" || { sleep 5; continue; }
     wait_vt_shown
     systemctl --user thaw "$scope"
   done
