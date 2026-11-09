@@ -97,9 +97,10 @@ input-remapper ne sait pas quelle console est active.
 ## Pause hors de tty3
 
 Laissé seul en arrière-plan, Big Picture continue de dessiner son interface :
-**~40 W** de plus en continu (mesuré le 2026-11-09 : CPU 52 → 44 W, GPU
-30-50 → 12 W, mémoire vidéo bloquée à 772 MHz au lieu de 96). `steam-tv`
-gèle donc tout le groupe quand tty3 n'est plus affichée.
+**~25-30 W** de GPU en continu (mesuré le 2026-11-09, sur tty2 : 18 % de
+charge et 31-60 W dégelé, contre 0-3 % et 11-13 W gelé ; mémoire vidéo à
+456-772 MHz au lieu de 96). Le CPU, lui, ne bouge pas (~45 W dans les deux
+cas). `steam-tv` gèle donc tout le groupe quand tty3 n'est plus affichée.
 
 ```mermaid
 flowchart LR

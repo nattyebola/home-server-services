@@ -44,7 +44,7 @@ export PROTON_FSR4_UPGRADE=1
 
 # gamescope, Steam, un éventuel jeu et le presse-papiers vivent dans un scope systemd
 # qu'on gèle d'un bloc (cgroup freezer) quand la console n'est plus affichée : sinon
-# l'interface de Steam continue de dessiner en arrière-plan (~40 W mesurés, CPU + GPU).
+# l'interface de Steam continue de dessiner en arrière-plan (~25-30 W de GPU mesurés).
 scope=steam-tv.scope
 systemctl --user stop "$scope" 2>/dev/null   # reste d'une session précédente
 vt_dev=$(tty)            # /dev/tty3

@@ -171,6 +171,11 @@ remote be3.vpn.airdns.org 443
 - **Module `ip_tables` requis sur l'hôte** (absent par défaut sur les Ubuntu
   récents, passés à nftables) : `/etc/modules-load.d/ip-tables.conf` contenant
   `ip_tables`. Sans lui, le kill-switch ne se met pas en place.
+- **`webproxy` arrêté après un redémarrage de la machine** (`cannot assign
+  requested address` sur `<IP LAN>:8118`) : Docker a démarré avant l'IP du
+  LAN et ne retente pas. Drop-in systemd décrit dans
+  [Installation](installation.md#docker-et-lip-du-lan-au-démarrage) ; pour
+  relancer : `make up STACK=vpn`.
 - **`transmission-remote -w <dir>` avant `-a` change le dossier par défaut de
   la session**, pas celui du torrent ajouté. Toujours écrire
   `-a <magnet> -w <dir>`. Sonarr/Radarr collant leur catégorie au dossier par

@@ -43,9 +43,32 @@ flowchart LR
 | ✅ | `python3` | stdlib seule, aucun paquet pip |
 | ✅ | [`restic`](https://restic.net/), `logrotate` | logrotate tourne sans root, avec son propre fichier d'état |
 | VPN | module noyau `ip_tables` chargé | absent par défaut sur les Ubuntu récents : `echo ip_tables \| sudo tee /etc/modules-load.d/ip-tables.conf && sudo modprobe ip_tables` |
+| VPN | Docker qui attend l'IPv4 du LAN au boot | si `WEBPROXY_HOST_IP` est une IP LAN : sans ça, `webproxy` peut rester arrêté après un redémarrage ([détail](#docker-et-lip-du-lan-au-démarrage)) |
 | VPN | une config OpenVPN (`.ovpn`) | testé avec AirVPN |
 | option | GPU exposant `/dev/dri/renderD128` | transcodage Jellyfin, à déclarer dans `jellyfin/docker-compose.override.yml` (voir son `.example`) ; sans GPU, rien à faire |
 | option | Kodi 19+ avec `jellyfin-kodi` en mode sync | pour l'addon de l'étape 22 |
+
+### Docker et l'IP du LAN au démarrage
+
+`webproxy` publie son port sur l'IP LAN (`WEBPROXY_HOST_IP`). Si Docker
+démarre avant que la carte réseau ait son adresse, la publication échoue
+(`cannot assign requested address`) et **Docker ne réessaie pas**, malgré
+`restart: unless-stopped`.
+
+`NetworkManager-wait-online` ne protège pas : constaté le 2026-11-09, il a
+rendu la main 5 s avant même le lien Ethernet. Un drop-in fait attendre Docker
+(30 s au plus, pour qu'un câble débranché ne bloque pas tout) :
+
+```sh
+sudo tee /etc/systemd/system/docker.service.d/wait-lan-ip.conf >/dev/null <<'EOF'
+[Service]
+ExecStartPre=/bin/sh -c 'for i in $(seq 30); do ip -4 -o addr show <interface> | grep -q inet && exit 0; sleep 1; done; exit 0'
+EOF
+sudo systemctl daemon-reload
+```
+
+`<interface>` : celle du LAN (`ip -4 -br addr`). Déjà tombé dans ce cas :
+`make up STACK=vpn` relance `webproxy`.
 
 ## ① Préparation
 

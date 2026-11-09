@@ -26,6 +26,7 @@ touchent toutes les stacks.
 | Carte « Tunnel VPN » : **10-25 % de pertes** pendant un téléchargement, latence normale | file du serveur AirVPN remplie par notre propre téléchargement : normal, pertes non jugées au-delà de 5 Mo/s | [Téléchargement](telechargement.md#pièges-connus) |
 | Tunnel VPN (Transmission, proxy `:8118`) **très lent**, ping de plusieurs secondes, `bad packet ID` dans les logs | route dégradée entre le FAI et le pays AirVPN : redémarrer ne suffit pas, changer l'ordre des `remote` | [Téléchargement](telechargement.md#choix-du-serveur-airvpn) |
 | Tous les torrents **Gemini** en erreur `You already have 3 peers on this torrent` | IP de sortie VPN changée plusieurs fois de suite (`vpn-bench`) : anciens pairs pas encore expirés ; attendre 1 h 30 à 3 h | [Téléchargement](telechargement.md#pièges-connus) |
+| `vpn-webproxy-1` **arrêté après un redémarrage de la machine** (`Exited (128)`), `failed to bind host port <IP LAN>:8118/tcp: cannot assign requested address` | Docker a démarré avant que la carte réseau ait son IP ; il ne réessaie pas | [Installation](installation.md#docker-et-lip-du-lan-au-démarrage) |
 | `transmission-vpn` ne démarre pas / ne route rien | module `ip_tables` absent sur l'hôte | [Installation](installation.md#prérequis) |
 | `Connection refused` vers un tracker qui répond ailleurs | DNS du FAI qui renvoie `127.0.0.1` | [plus bas](#dns-du-fai-menteur) |
 | Dashboard surligné **« périmé »** | régénération en échec (`docker ps` ou `docker compose config`), voir `dashboard/refresh.log` | [Traefik](traefik.md#pièges-connus) |
@@ -56,7 +57,7 @@ touchent toutes les stacks.
 | Un fichier sans français (ou sous les règles) n'est **jamais remplacé** | plus aucun upgrade depuis le 2026-10-07 : à remplacer à la main | [Téléchargement](telechargement.md#pièges-connus-1) |
 | Un contenu pour enfant grabé en VOSTFR | requête Seerr partie avant la bascule nocturne du tag vers le profil `… VF` | [Téléchargement](telechargement.md#comment-les-profils-les-appliquent) |
 | Steam Big Picture sur tty3 : clavier en **QWERTY**, touches volume/luminosité sans effet, ou pas de copier-coller avec GNOME | gamescope ne reprend ni la disposition, ni les touches multimédia, ni le presse-papiers de GNOME | [`steam-tv/`](../steam-tv/README.md#pièges-connus) |
-| Steam ne s'ouvre pas dans GNOME, ou Big Picture figé au retour sur tty3 | Big Picture est gelé hors de tty3 pour économiser ~40 W | [`steam-tv/`](../steam-tv/README.md#pause-hors-de-tty3) |
+| Steam ne s'ouvre pas dans GNOME, ou Big Picture figé au retour sur tty3 | Big Picture est gelé hors de tty3 pour économiser ~25-30 W de GPU | [`steam-tv/`](../steam-tv/README.md#pause-hors-de-tty3) |
 
 ## Pièges Docker transverses
 
