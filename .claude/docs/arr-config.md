@@ -36,6 +36,13 @@ ou aux connexions arr → Jellyfin.
   de langue — deviner lequel est le français est exactement le genre
   d'heuristique qui a produit le bug corrigé ici). Ne pas reproposer sans
   redemande.
+  **Les résumés (`<plot>`) des séries et épisodes sont aussi en anglais**, même
+  cause (le serveur de métadonnées de Sonarr ne renvoie que l'anglais, celui de
+  Radarr toutes les traductions). Retirer le `<plot>` ne fait pas revenir le FR
+  (testé le 2026-11-05 : Jellyfin garde l'ancien texte, ou laisse l'épisode vide
+  en `ReplaceAllMetadata`). Parade écartée le 2026-11-05 (« trop complexe ») :
+  réécrire `<plot>` depuis TMDB `fr-FR` dans `mark-finale.sh`, par id TMDB
+  (série) et `/find` par id TVDB (épisode). Ne pas reproposer sans redemande.
   Jellyfin **relit un `.nfo` modifié tout seul** (il en suit la date à son
   scan) ; un `/Items/{id}/Refresh` explicite ne sert qu'à ne pas attendre.
   Les `.nfo` ne sont écrits qu'à l'import ou sur rescan — rattraper une

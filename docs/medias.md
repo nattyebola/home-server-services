@@ -56,7 +56,7 @@ déterministe.
 | Conséquence | Détail |
 |---|---|
 | ✅ Films en français | `movieMetadataLanguage: French` côté Radarr |
-| ⚠️ Séries en anglais / VO | Sonarr n'a aucun réglage de langue des métadonnées. **Écart accepté.** |
+| ⚠️ Séries en anglais / VO (titres **et résumés**) | Sonarr n'a aucun réglage de langue des métadonnées. **Écart accepté** (résumés FR via TMDB écartés le 2026-11-05 : trop complexe). |
 | ✅ Suppression depuis Kodi fiable | l'addon clearr envoie les identifiants vus par Jellyfin ; un ID faux rendait le titre insupprimable |
 | ✅ Tag `pour-les-enfants` | posé depuis Seerr, il ressort dans le `.nfo`, puis dans Jellyfin, puis dans Kodi, où il sert de filtre (un seul compte, filtrage par tags) |
 
