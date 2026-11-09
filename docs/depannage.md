@@ -56,6 +56,7 @@ touchent toutes les stacks.
 | Un fichier sans français (ou sous les règles) n'est **jamais remplacé** | plus aucun upgrade depuis le 2026-10-07 : à remplacer à la main | [Téléchargement](telechargement.md#pièges-connus-1) |
 | Un contenu pour enfant grabé en VOSTFR | requête Seerr partie avant la bascule nocturne du tag vers le profil `… VF` | [Téléchargement](telechargement.md#comment-les-profils-les-appliquent) |
 | Steam Big Picture sur tty3 : clavier en **QWERTY**, touches volume/luminosité sans effet, ou pas de copier-coller avec GNOME | gamescope ne reprend ni la disposition, ni les touches multimédia, ni le presse-papiers de GNOME | [`steam-tv/`](../steam-tv/README.md#pièges-connus) |
+| Steam ne s'ouvre pas dans GNOME, ou Big Picture figé au retour sur tty3 | Big Picture est gelé hors de tty3 pour économiser ~40 W | [`steam-tv/`](../steam-tv/README.md#pause-hors-de-tty3) |
 
 ## Pièges Docker transverses
 

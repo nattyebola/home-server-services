@@ -18,6 +18,7 @@ flowchart LR
     subgraph vt3["tty3 · Ctrl+Alt+F3"]
         getty["autologin getty"] --> zp["~/.zprofile"] --> st["steam-tv"]
         st --> gs["gamescope (DRM, HDR)"] --> steam["🎮 Steam -gamepadui"]
+        st -.->|"gel / dégel"| gs
     end
     thd["⌨️ triggerhappy (root)"] -->|"seulement si tty3 actif"| key["steam-tv-key"]
     key -->|wpctl| audio["🔊 volume"]
@@ -66,12 +67,16 @@ dans `~/.zprofile`).
 | Journal | `~/.local/state/steam-tv.log` |
 
 La bascule prend environ 1 s : les deux sessions restent ouvertes. Le son suit
-(PipeWire est commun). Un jeu laissé sur tty3 continue de tourner, sans être
-affiché.
+(PipeWire est commun). Un jeu laissé sur tty3 est mis en pause avec Steam (voir
+[Pause hors de tty3](#pause-hors-de-tty3)).
 
 **Une seule instance de Steam par utilisateur.** Si Steam tourne dans GNOME,
 `steam-tv` propose de le fermer (`steam -shutdown`) avant de lancer gamescope.
 Tant que Big Picture tourne sur tty3, pas de Steam dans GNOME.
+
+**Un Steam gelé compte aussi** : tant que Big Picture est en pause sur tty3,
+Steam ne s'ouvre pas dans GNOME. Repasser par `Ctrl+Alt+F3` puis quitter
+Steam depuis Big Picture.
 
 **Mises à jour du client** : un seul client pour les deux sessions
 (`~/.steam`). Il télécharge en arrière-plan et applique au redémarrage :
@@ -88,6 +93,38 @@ Deux boutons, un par sens. Sortie dans input-remapper :
 
 Une seule touche qui bascule dans les deux sens est impossible ici :
 input-remapper ne sait pas quelle console est active.
+
+## Pause hors de tty3
+
+Laissé seul en arrière-plan, Big Picture continue de dessiner son interface :
+**~40 W** de plus en continu (mesuré le 2026-11-09 : CPU 52 → 44 W, GPU
+30-50 → 12 W, mémoire vidéo bloquée à 772 MHz au lieu de 96). `steam-tv`
+gèle donc tout le groupe quand tty3 n'est plus affichée.
+
+```mermaid
+flowchart LR
+    run["▶️ Big Picture actif"] -->|"toutes les 5 min :<br/>tty3 pas affichée ?"| frz["❄️ systemctl --user freeze"]
+    frz -->|"retour sur tty3<br/>(instantané)"| thaw["systemctl --user thaw"] --> run
+```
+
+| | |
+|---|---|
+| Ce qui est gelé | le scope systemd `steam-tv.scope` : gamescope, Steam, ses sous-processus, le jeu en cours, le presse-papiers partagé |
+| Mécanisme | cgroup freezer, comme une mise en veille : tout s'arrête d'un bloc |
+| Gel | vérifié toutes les **5 min** (`check_every`) : jusqu'à 5 min de conso après le départ |
+| Reprise | **instantanée** : ioctl `VT_WAITACTIVE` sur tty3, qui rend la main dès la bascule (repli : sondage à la seconde) |
+| État | `systemctl --user show steam-tv.scope -p FreezerState` (`frozen` / `running`) |
+
+Pendant le gel :
+- Steam est **hors ligne** : ni téléchargement, ni mise à jour. Il se reconnecte
+  seul au dégel.
+- Un jeu solo reprend tel quel ; un jeu **en ligne** perd sa connexion.
+- La mémoire vive reste occupée (1 à 2 Go).
+
+> [!WARNING]
+> Télé éteinte **en restant sur tty3** : rien n'est gelé, tty3 est toujours la
+> console active (une TV éteinte reste vue « branchée » en HDMI). Revenir au
+> bureau (`Ctrl+Alt+F2`) avant d'éteindre.
 
 ## HDR
 
@@ -195,6 +232,8 @@ fichiers).
 | Copier-coller absent entre GNOME et Big Picture | deux compositeurs, deux presse-papiers ; ou `xclip` manquant | `steam-tv-clipboard` (lancé par `steam-tv`), `make steam-tv-install` |
 | Option HDR grisée dans un jeu Proton | `DXVK_HDR` absent : le jeu ne voit pas l'écran HDR | posé par `steam-tv` ; relancer `steam-tv` si Big Picture tournait avant |
 | FSR 4 absent (pas de filigrane avec `PROTON_FSR4_INDICATOR=1`) | jeu sous un Proton de Valve, ou jeu en FSR 2.x/3.0 | GE-Proton dans *Propriétés → Compatibilité* ; sinon rien à faire |
+| Steam ne s'ouvre pas (ou reste figé) dans GNOME | l'instance de tty3 est gelée | `Ctrl+Alt+F3`, quitter Steam depuis Big Picture |
+| Big Picture figé au retour sur tty3 | le dégel n'a pas eu lieu (surveillance arrêtée) | `systemctl --user thaw steam-tv.scope` depuis GNOME ou SSH |
 | Retour au shell de tty3 après une mise à jour | Steam s'est arrêté au lieu de se relancer, gamescope avec lui | `steam-tv` |
 
 > [!NOTE]

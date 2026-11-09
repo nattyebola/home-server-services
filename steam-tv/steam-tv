@@ -9,6 +9,9 @@ if [[ -n ${WAYLAND_DISPLAY:-}${DISPLAY:-} ]]; then
   exit 1
 fi
 
+# Un Steam resté gelé (session précédente interrompue) ne répondrait pas à -shutdown
+systemctl --user thaw steam-tv.scope 2>/dev/null
+
 # Un utilisateur = une seule instance de Steam : celle de GNOME doit être fermée d'abord.
 if pgrep -u "$USER" -x steam >/dev/null; then
   echo "Steam tourne déjà (session GNOME ?)."
@@ -39,14 +42,48 @@ export DXVK_HDR=1
 # de Valve. Par jeu : PROTON_FSR4_UPGRADE=0 %command%
 export PROTON_FSR4_UPGRADE=1
 
-# Presse-papiers partagé avec GNOME, arrêté avec gamescope
-"$(dirname "$(readlink -f "$0")")/steam-tv-clipboard" &
-clip_pid=$!
-trap 'kill $clip_pid 2>/dev/null' EXIT
+# gamescope, Steam, un éventuel jeu et le presse-papiers vivent dans un scope systemd
+# qu'on gèle d'un bloc (cgroup freezer) quand la console n'est plus affichée : sinon
+# l'interface de Steam continue de dessiner en arrière-plan (~40 W mesurés, CPU + GPU).
+scope=steam-tv.scope
+systemctl --user stop "$scope" 2>/dev/null   # reste d'une session précédente
+vt_dev=$(tty)            # /dev/tty3
+vt_num=${vt_dev#/dev/tty}
+check_every=300          # gel : la latence ne coûte que quelques Wh, inutile de sonder souvent
+
+vt_shown() { [[ $(</sys/class/tty/tty0/active) == "tty$vt_num" ]]; }
+
+# Bloque jusqu'au retour sur la console. VT_WAITACTIVE (0x5607) rend la main dès la
+# bascule, sans sondage : la reprise est instantanée. Repli : sondage à la seconde.
+wait_vt_shown() {
+  python3 -c 'import fcntl, os, sys
+fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOCTTY)
+fcntl.ioctl(fd, 0x5607, int(sys.argv[2]))' "$vt_dev" "$vt_num" 2>/dev/null && return
+  until vt_shown; do sleep 1; done
+}
+
+# Hors du scope, sinon elle se gèlerait elle-même
+pause_when_hidden() {
+  while sleep "$check_every"; do
+    vt_shown && continue
+    systemctl --user freeze "$scope" || continue
+    wait_vt_shown
+    systemctl --user thaw "$scope"
+  done
+}
+pause_when_hidden &
+watch_pid=$!
+# À la sortie de gamescope : arrêter la surveillance et ce qui resterait du scope (presse-papiers)
+trap 'kill $watch_pid 2>/dev/null; systemctl --user stop "$scope" 2>/dev/null' EXIT
+
+clipboard="$(dirname "$(readlink -f "$0")")/steam-tv-clipboard"
 
 # -e : intégration Steam (overlay, réglages d'affichage et HDR pilotés depuis Big Picture)
 # -W/-H : sortie 4K de la TV ; fréquence = mode préféré de l'écran
-gamescope -e -f --hdr-enabled --adaptive-sync -W 3840 -H 2160 \
+# Le presse-papiers est dans le scope : gelé avec gamescope, il ne bloque pas sur un Xwayland figé.
+systemd-run --user --scope --quiet --collect --unit="$scope" -- \
+  bash -c '"$1" & exec "${@:2}"' _ "$clipboard" \
+  gamescope -e -f --hdr-enabled --adaptive-sync -W 3840 -H 2160 \
   -- /usr/games/steam -gamepadui >"$log_dir/steam-tv.log" 2>&1
 status=$?
 
