@@ -70,6 +70,12 @@ sudo systemctl daemon-reload
 `<interface>` : celle du LAN (`ip -4 -br addr`). Déjà tombé dans ce cas :
 `make up STACK=vpn` relance `webproxy`.
 
+> [!WARNING]
+> Ne pas le relancer par `docker start`/`make restart` : il repart `Up` mais
+> **sans aucun réseau** (endpoint resté cassé), donc `unhealthy`, et `make up`
+> le voit démarré et n'y touche plus (constaté le 2026-11-10). Dans ce cas :
+> `docker rm -f vpn-webproxy-1 && make up STACK=vpn` (relais sans état).
+
 ## ① Préparation
 
 ### 1. Cloner

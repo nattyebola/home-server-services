@@ -175,7 +175,9 @@ remote be3.vpn.airdns.org 443
   requested address` sur `<IP LAN>:8118`) : Docker a démarré avant l'IP du
   LAN et ne retente pas. Drop-in systemd décrit dans
   [Installation](installation.md#docker-et-lip-du-lan-au-démarrage) ; pour
-  relancer : `make up STACK=vpn`.
+  relancer : `make up STACK=vpn`. S'il est `Up (unhealthy)` sans réseau
+  (relancé par `docker start` après l'échec) : `docker rm -f vpn-webproxy-1`
+  puis `make up STACK=vpn`.
 - **`transmission-remote -w <dir>` avant `-a` change le dossier par défaut de
   la session**, pas celui du torrent ajouté. Toujours écrire
   `-a <magnet> -w <dir>`. Sonarr/Radarr collant leur catégorie au dossier par
