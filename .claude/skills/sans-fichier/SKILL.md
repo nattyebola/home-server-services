@@ -85,6 +85,14 @@ titre par titre. Commit seulement si l'utilisateur le demande.
 
 ## Pièges
 
+- **Anime : jamais de `GET /release?seasonNumber=` sur une longue saison.**
+  Sans pack trouvé, Sonarr enchaîne une recherche **par épisode** (absolu),
+  ~25 s × 8 indexeurs chacune : *Atashin'chi* S01 = 329 épisodes, plusieurs
+  heures, quotas vidés (2026-11-10). Couper le client (`curl`, timeout) ne
+  l'arrête pas : seul `docker restart arr-sonarr-1` le fait. Pour un anime,
+  commencer par le texte libre Prowlarr, puis `GET /parse?title=` dans Sonarr
+  sur la release trouvée (reconnaissance, langue, score), sans requête
+  d'indexeur. Même comportement à l'ajout d'une série (recherche initiale).
 - **Les packs de saison échappent à la recherche par épisode** : *Man vs.
   Baby* le 2026-10-14, 1 résultat par épisode contre 25 en recherche de
   saison. Corrigé dans `search-missing.py` pour une saison diffusée sans

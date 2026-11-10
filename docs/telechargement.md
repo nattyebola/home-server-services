@@ -352,7 +352,7 @@ unique : retirer le tag ne repasse pas en VOSTFR.
 | Ratio 1.5 sur les indexeurs publics | `PUBLIC_INDEXER_SEED_RATIO` | un tracker public ne compte pas le ratio ; les privés ne sont pas touchés |
 | Repacks | `downloadPropersAndRepacks: doNotPrefer` | un REPACK ne passe pas devant le score (et sans upgrade, ne remplace jamais un fichier) |
 | Rejet des archives/exécutables | `failDownloads` | une « release » `.exe`/`.zipx` est marquée en échec et remplacée automatiquement |
-| Recherche des manquants | `search-missing.py`, lundi 5 h | Sonarr/Radarr **ne re-cherchent jamais** seuls un manquant raté au RSS ; chaque manquant retenté chaque semaine, plafonné à 30 recherches par arr, rotation par ancienneté ; un film seulement en salle n'est pas cherché (il attend sa sortie numérique ou physique) ; une saison diffusée sans aucun fichier est cherchée d'un bloc (packs) ; tâche en rouge si l'arr fait échouer la commande de recherche |
+| Recherche des manquants | `search-missing.py`, lundi 5 h | Sonarr/Radarr **ne re-cherchent jamais** seuls un manquant raté au RSS ; chaque manquant retenté chaque semaine, plafonné à 30 recherches par arr, rotation par ancienneté ; un film seulement en salle n'est pas cherché (il attend sa sortie numérique ou physique) ; une saison diffusée sans aucun fichier est cherchée d'un bloc (packs) ; sauf une saison d'anime de plus de 26 épisodes, jamais cherchée (Sonarr la ferait épisode par épisode : quotas vidés) ; tâche en rouge si l'arr fait échouer la commande de recherche |
 | Imports rattachés par ID | `manual-import.py apply --by-id-only`, toutes les 15 min | une release au nom non reconnu (titre français, titre d'anime abrégé) est téléchargée via l'identifiant TVDB/IMDb de l'indexeur, puis **refusée à l'import** par Sonarr/Radarr, sans réglage pour lever ce garde-fou ; ce cas, et lui seul, est importé automatiquement (décidé le 2026-10-27 : 18 imports de ce type en 3 mois, aucun mauvais fichier) |
 | Torrents bloqués | `stalled-torrents.py`, toutes les heures | un torrent mort (tracker en 403, aucun seeder, métadonnées jamais reçues) reste « en téléchargement » **indéfiniment** côté arr ; est bloqué un torrent incomplet, ajouté il y a plus de **24 h** et **sans aucune activité depuis 24 h**. Le cron (`--fix`, décidé le 2026-10-28) le fait retirer par son arr (blocklist + nouvelle recherche), **seulement** s'il est dans une file arr, sans aucune donnée, ni en pause ni en attente dans Transmission, **et après 24 h de réseau sain** (aucun retrait pendant une coupure ni dans les 24 h qui suivent) ; les autres sont seulement signalés (journal `${DATA_ROOT}/.stalled-torrents.log`, état dans `.stalled-torrents.json`). `make stalled-torrents` liste sans rien retirer. La carte Torrents du dashboard compte à part les torrents « figés à 0 % » depuis plus d'**1 h** |
 | Marqueurs de fin de saison | `mark-finale.sh`, hook + cron 2 h | `†` fin de saison, `‡` fin de série, `½` mi-saison devant le titre d'épisode (visible dans Kodi) |
@@ -407,6 +407,14 @@ folders, tags…) peut être ajusté librement dans les UI.
   donc par saison une saison diffusée sans aucun fichier (depuis le
   2026-10-14). Pour une saison partiellement présente, lancer une
   recherche de saison à la main.
+- **Une longue saison d'anime vide les quotas des indexeurs.** Pour un
+  anime, une recherche de saison sans pack trouvé devient une recherche
+  par épisode : *Atashin'chi* (329 épisodes), le 2026-11-09, a fait
+  357 recherches en 3 h 30 et des 429 en cascade. C'est aussi ce qui se
+  passe à l'ajout de la série. `search-missing` ne cherche plus une
+  saison d'anime de plus de 26 épisodes. Avant d'ajouter un long anime,
+  vérifier qu'il existe en français (texte libre dans Prowlarr), et
+  l'ajouter sans recherche initiale.
 - Le skill `sans-fichier` liste les titres suivis que Sonarr/Radarr
   cherchent sans rien trouver, et vérifie pour chacun ce qui est possible.
   Il écarte ce qui n'est pas sorti (un film seulement en salle n'est pas

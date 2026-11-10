@@ -22,6 +22,7 @@ touchent toutes les stacks.
 | Torrent **ABS** dans clearr juste après un import manuel | `ManualImport` sans `downloadId` : fichier déplacé, pas hardlinké | [Téléchargement](telechargement.md#pièges-connus-1) |
 | Recherches cross-seed toujours à `Found 0 torrents` | ID d'indexeur obsolète dans `CROSS_SEED_INDEXER_IDS` | [Téléchargement](telechargement.md#cross-seed) |
 | Indexeur en `429` / « API Request Limit reached » | souvent le backoff d'échec de Prowlarr, pas un quota | skill `indexer-quota` |
+| `429` en rafale juste après l'ajout d'un anime | la recherche initiale d'une longue saison part épisode par épisode (des centaines de recherches) | [Téléchargement](telechargement.md#pièges-connus-1) |
 | Plus de DNS ni de ping dans `transmission-vpn`, `rtnl: generic error (-101)` | conteneur attaché à un 2e réseau, ou `LOCAL_NETWORK` mal réglé | [Téléchargement](telechargement.md#vpn--transmission) |
 | Carte « Tunnel VPN » : **10-25 % de pertes** pendant un téléchargement, latence normale | file du serveur AirVPN remplie par notre propre téléchargement : normal, pertes non jugées au-delà de 5 Mo/s | [Téléchargement](telechargement.md#pièges-connus) |
 | Tunnel VPN (Transmission, proxy `:8118`) **très lent**, ping de plusieurs secondes, `bad packet ID` dans les logs | route dégradée entre le FAI et le pays AirVPN : redémarrer ne suffit pas, changer l'ordre des `remote` | [Téléchargement](telechargement.md#choix-du-serveur-airvpn) |

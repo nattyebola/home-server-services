@@ -527,6 +527,11 @@ ou aux connexions arr → Jellyfin.
   6 et pas 7 pour qu'un lancement manuel en semaine ne fasse pas sauter le
   lundi suivant. Seul `MAX_SEARCHES_PER_RUN` (relevé de 12 à **30** le même jour, ~150
   requêtes par arr et par passage) peut encore repousser un item.
+  **Saison d'anime de plus de `MAX_ANIME_SEASON_EPISODES` (26) épisodes, sans
+  aucun fichier : jamais cherchée** (2026-11-10). Pour un anime, `SeasonSearch`
+  sans pack trouvé enchaîne une recherche par épisode absolu, hors plafond
+  (un item = une saison) : *Atashin'chi*, 357 recherches le 2026-11-09. Ne pas
+  remplacer par une recherche par épisode (choix de l'utilisateur).
   `--dry-run` liste la sélection sans rien envoyer aux indexeurs — le réflexe
   avant de toucher aux plafonds.
   **Saison entièrement diffusée, sans aucun fichier, ≥ 2 épisodes manquants =

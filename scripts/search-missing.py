@@ -40,7 +40,9 @@
 # Saison entière manquante = recherche de SAISON, pas d'épisodes : une série
 # sortie d'un bloc n'existe souvent qu'en packs, que la recherche d'un épisode
 # ne remonte pas (Man vs. Baby, 2026-10-14 : 1 résultat par épisode, 25 pour
-# la saison). Voir sonarr_candidates().
+# la saison). Sauf une saison d'anime de plus de MAX_ANIME_SEASON_EPISODES
+# épisodes, pas cherchée du tout (Sonarr la ferait épisode par épisode).
+# Voir sonarr_candidates().
 #
 # Best-effort par arr, comme scripts/apply-arr-overrides.py : un Sonarr
 # injoignable n'empêche pas la passe Radarr. Sortie non nulle si l'un des deux
@@ -75,6 +77,16 @@ STATE_FILE_NAME = ".search-missing-state.json"
 # contre une rafale (C411, 2026-07-28). Si les manquants dépassent durablement
 # ce plafond, la rotation par ancienneté reprend le relais.
 MAX_SEARCHES_PER_RUN = 30
+
+# Au-delà de ce nombre d'épisodes manquants, une saison d'anime sans aucun
+# fichier n'est PAS cherchée du tout (ni saison, ni épisodes). Pour un anime,
+# SeasonSearch ne fait pas une requête par indexeur : Sonarr enchaîne une
+# recherche par épisode (numéro absolu), ~25 s × 8 indexeurs chacune, que le
+# plafond ci-dessus ne voit pas (un item = une saison). Atashin'chi S01, 329
+# épisodes, ajoutée le 2026-11-09 : 357 recherches de 15 h 11 à 18 h 48, 429
+# en cascade. 26 = une saison de deux cours. Ces saisons-là se cherchent à la
+# main, en texte libre dans Prowlarr (skill sans-fichier).
+MAX_ANIME_SEASON_EPISODES = 26
 # Chaque manquant est retenté à chaque passage hebdomadaire (2026-10-20 ; 14 j
 # auparavant, soit un lundi sur deux). 6 et pas 7 : un lancement manuel en
 # cours de semaine ne fait pas sauter le passage du lundi suivant. Seul le
@@ -271,7 +283,11 @@ def sonarr_candidates(api_key):
     cas où seuls des packs existent, et une requête par indexeur au lieu d'une
     par épisode. La recherche de saison remonte aussi les épisodes isolés. Une
     saison en cours de diffusion reste épisode par épisode : un pack n'y
-    passerait pas (Sonarr refuse un pack dont tout n'est pas diffusé)."""
+    passerait pas (Sonarr refuse un pack dont tout n'est pas diffusé).
+
+    Exception : une telle saison d'anime de plus de MAX_ANIME_SEASON_EPISODES
+    épisodes n'est pas cherchée du tout, pas même épisode par épisode (choix
+    de l'utilisateur, 2026-11-10). Elle est signalée sur la sortie."""
     missing = api_get(SONARR_CONTAINER, SONARR_URL, api_key,
                       "/wanted/missing?page=1&pageSize=1000&monitored=true&includeSeries=true")
     in_queue = queued_ids(SONARR_CONTAINER, SONARR_URL, api_key, "episodeId",
@@ -291,6 +307,11 @@ def sonarr_candidates(api_key):
         stats = season_stats.get(season, {})
         if (len(episodes) >= 2 and stats.get("episodeFileCount", 1) == 0
                 and not stats.get("nextAiring")):
+            is_anime = (episodes[0].get("series") or {}).get("seriesType") == "anime"
+            if is_anime and len(episodes) > MAX_ANIME_SEASON_EPISODES:
+                print(f"sonarr : {title} S{season[1]:02d} ignorée (anime, {len(episodes)} ép. "
+                      f"> {MAX_ANIME_SEASON_EPISODES}, à chercher à la main)")
+                continue
             items.append(([e["id"] for e in episodes],
                           f"{title} S{season[1]:02d} (saison, {len(episodes)} ép.)", season))
             continue
