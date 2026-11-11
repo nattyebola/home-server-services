@@ -97,6 +97,17 @@ python3 scripts/manual-import.py assign radarr \
 `--path <nom de fichier>` si le téléchargement en contient plusieurs,
 `--dry-run` sur les deux sous-commandes.
 
+**« Unable to parse file »** : le *fichier* est nommé sans année, résolution
+ni source (`Le_Grand_Bain.FR.x265-10bit.AAC.mkv`), alors que la *release*
+grabée l'était. Le script le classe en REFUSÉ, mais ce n'est pas un vrai
+rejet : la cible est résolue par l'historique du grab, seule la qualité
+manque (le candidat n'a pas de clé `quality`). `assign` refuse alors de
+partir sans `--quality` : reprendre celle du grab
+(`GET /api/v3/history/movie?movieId=<id>&eventType=1`), après avoir vérifié
+les pistes du fichier (`ffprobe`) — le nom de la release peut mentir
+(cas du 2026-11-11 : une release `MULTi` dont le fichier n'avait qu'une
+piste audio, en VO).
+
 ## Étapes
 
 1. **Diagnostiquer** — `list`. S'il n'y a rien, le dire et s'arrêter : le

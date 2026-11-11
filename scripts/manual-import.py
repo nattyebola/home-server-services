@@ -281,11 +281,11 @@ def collect(arr, api_key, only_download_id=None):
     return rows
 
 
-def build_file(arr, candidate, download_id, target_ids=None, languages=None):
+def build_file(arr, candidate, download_id, target_ids=None, languages=None, quality=None):
     entry = {
         "path": candidate["path"],
-        "quality": candidate["quality"],
-        "languages": languages if languages is not None else candidate["languages"],
+        "quality": quality if quality is not None else candidate["quality"],
+        "languages": languages if languages is not None else candidate.get("languages") or [],
         "releaseGroup": candidate.get("releaseGroup"),
         "downloadId": download_id,
     }
@@ -303,6 +303,14 @@ def resolve_language(arr, api_key, name):
         if language.get("name", "").lower() == name.lower():
             return [{"id": language["id"], "name": language["name"]}]
     raise RuntimeError(f"langue inconnue de {arr['container']} : {name!r}")
+
+
+def resolve_quality(arr, api_key, name):
+    for definition in api_get(arr, api_key, "/qualitydefinition"):
+        if definition["quality"]["name"].lower() == name.lower():
+            return {"quality": definition["quality"],
+                    "revision": {"version": 1, "real": 0, "isRepack": False}}
+    raise RuntimeError(f"qualité inconnue de {arr['container']} : {name!r}")
 
 
 def print_rows(rows, arr_name):
@@ -426,6 +434,13 @@ def cmd_assign(args, env):
         return 1
     candidate = candidates[0]
     languages = resolve_language(arr, api_key, args.language) if args.language else None
+    quality = resolve_quality(arr, api_key, args.quality) if args.quality else None
+    # Fichier sans résolution ni source dans son nom (« Unable to parse file ») :
+    # l'arr ne propose aucune qualité et l'import planterait sur une clé absente.
+    if quality is None and not candidate.get("quality"):
+        print("ERREUR qualité non détectée sur ce fichier — préciser --quality "
+              "(ex. celle du grab : `GET /api/v3/history/…?eventType=1`)", file=sys.stderr)
+        return 1
     target = args.movie_id if arr["target_key"] == "movie" else args.episode_ids
     if target is None:
         print("ERREUR --episode-ids (sonarr) ou --movie-id (radarr) est requis", file=sys.stderr)
@@ -449,9 +464,11 @@ def cmd_assign(args, env):
                   f"{candidate['series'].get('title', series_id)} — voir "
                   f"`GET /api/v3/episode?seriesId={series_id}`", file=sys.stderr)
             return 1
-    entry = build_file(arr, candidate, download_id, target_ids=target, languages=languages)
+    entry = build_file(arr, candidate, download_id, target_ids=target, languages=languages,
+                       quality=quality)
     print(f"{os.path.basename(candidate['path'])} -> {arr['target_key']}={target}"
-          + (f" langue={args.language}" if args.language else ""))
+          + (f" langue={args.language}" if args.language else "")
+          + (f" qualité={args.quality}" if args.quality else ""))
     if args.dry_run:
         print("(dry-run : rien envoyé)")
         return 0
@@ -485,6 +502,8 @@ def main():
     p_assign.add_argument("--movie-id", type=int, help="radarr : id du film")
     p_assign.add_argument("--path", help="nom du fichier si le téléchargement en contient plusieurs")
     p_assign.add_argument("--language", help="force la langue (ex. French) si la détection est fausse")
+    p_assign.add_argument("--quality", help="force la qualité (ex. WEBDL-1080p) si l'arr n'en détecte "
+                                            "aucune (nom de fichier non parsable)")
     p_assign.add_argument("--dry-run", action="store_true")
     p_assign.set_defaults(func=cmd_assign)
 
