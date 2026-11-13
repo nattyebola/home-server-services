@@ -1059,12 +1059,12 @@ def render_scheduled_tasks_card(data_root, running):
                       description))
 
     lis = "\n".join(
-        # Glyphe + texte caché en plus de la pastille : l'état ne reposait QUE
-        # sur la couleur (WCAG 1.4.1), donc invisible pour un daltonien deutan
-        # ou protan — ~8 % des hommes — alors que c'est la seule information de
-        # la carte, et muet pour un lecteur d'écran (1.1.1), qui n'entendait
-        # qu'une liste de noms. Le glyphe hérite de la couleur du point.
-        '<li title="{description}"><span class="status-dot status-dot-{cls}"></span>'
+        # Coche/croix colorée + texte caché : la forme du glyphe porte l'état
+        # en plus de sa couleur (WCAG 1.4.1 — un point coloré seul était
+        # invisible pour un daltonien deutan ou protan), le texte caché le dit
+        # aux lecteurs d'écran (1.1.1). Plus de point coloré devant depuis le
+        # 2026-11-13 : deux puces par ligne disaient deux fois la même chose.
+        '<li title="{description}">'
         '<span class="status-mark status-mark-{cls}" aria-hidden="true">{mark}</span>'
         '{label}<span class="visually-hidden"> — {state}</span>{info}</li>'.format(
             cls="good" if ok else "critical",
@@ -1097,7 +1097,7 @@ def render_indexers_card(running):
     items = "\n".join(
         # Même raison que render_scheduled_tasks_card ci-dessus : « quel
         # indexeur est tombé » ne doit pas dépendre de la perception des couleurs.
-        '<li><span class="status-dot status-dot-{cls}"></span>'
+        '<li>'
         '<span class="status-mark status-mark-{cls}" aria-hidden="true">{mark}</span>'
         '{label}<span class="visually-hidden"> — {state}</span></li>'.format(
             cls="good" if i["ok"] else "critical",

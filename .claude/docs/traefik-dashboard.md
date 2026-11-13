@@ -216,7 +216,8 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
     Corollaire assumé du rattachement à cette carte : `vpn/transmission-vpn`
     arrêté remplace tout le bloc par un placeholder, compteurs d'imports
     compris, alors qu'ils ne dépendent que des arr.
-  - Indexeurs Prowlarr : liste avec un point coloré **par indexeur** plutôt
+  - Indexeurs Prowlarr : liste avec une coche/croix colorée **par indexeur**
+    (seule puce, plus de point coloré devant depuis le 2026-11-13) plutôt
     qu'un compte agrégé, pour voir directement LEQUEL est en échec sans
     changer d'écran. `/api/v1/indexer` croisé avec `/api/v1/indexerstatus`
     (vide si tout va bien).

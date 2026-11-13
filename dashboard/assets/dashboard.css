@@ -179,11 +179,10 @@ a.card:hover { transform: translateY(-2px); }
   outline-offset: 2px;
 }
 
-.status-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-.status-dot-good { background: var(--status-good); }
-.status-dot-critical { background: var(--status-critical); }
-/* Glyphe monochrome doublant la pastille : l'état ne doit pas reposer sur la
-   seule couleur (WCAG 1.4.1). Même convention que la croix ✕ de clearr. */
+/* Puce d'état des listes (indexeurs, tâches) : coche ✓ ou croix ✕ colorée,
+   seule — la forme porte l'état en plus de la couleur (WCAG 1.4.1). Même
+   convention que la croix ✕ de clearr. Plus de point coloré devant
+   (2026-11-13) : deux puces par ligne pour une seule information. */
 .status-mark { font-size: .8rem; line-height: 1; flex: none; }
 .status-mark-good { color: var(--status-good); }
 .status-mark-critical { color: var(--status-critical); }
