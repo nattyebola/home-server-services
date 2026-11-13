@@ -1,14 +1,19 @@
 services:
-  db-next:
+  bdd:
     # Majeur FIGÉ, exception assumée au `:latest` du dépôt (voir CLAUDE.md) :
     # PostgreSQL ne lit pas un répertoire de données d'un autre majeur, un
-    # `:latest` qui passerait de 15 à 16 laisserait db-next en boucle de
-    # crash au démarrage. Monter de version = dump (make backup), nouveau
-    # volume, réimport — à la main. 15 est en fin de vie en novembre 2027.
-    image: postgres:15-alpine
+    # `:latest` qui changerait de majeur laisserait bdd en boucle de crash au
+    # démarrage. Monter de version = dump, nouveau dossier de données, réimport
+    # — à la main (docs/nextcloud.md). 15 → 18 le 2026-11-13. 18 est en fin de
+    # vie en novembre 2030.
+    image: postgres:18-alpine
     restart: unless-stopped
     volumes:
-      - ${DATA_ROOT}/.nextcloud/db-next:/var/lib/postgresql/data:Z
+      # Depuis l'image 18, PGDATA vaut /var/lib/postgresql/18/docker et c'est
+      # le parent qu'on monte : l'entrypoint refuse un montage sur l'ancien
+      # chemin /var/lib/postgresql/data. Le majeur dans le chemin permet aussi
+      # un futur pg_upgrade --link (ancien et nouveau côte à côte).
+      - ${DATA_ROOT}/.nextcloud/bdd:/var/lib/postgresql:Z
       - /etc/localtime:/etc/localtime:ro
     env_file:
       - .env
@@ -55,7 +60,9 @@ services:
     extra_hosts:
       - "nextcloud.${DOMAIN}:host-gateway"
     environment:
-      - POSTGRES_HOST=db-next
+      # Lu seulement à l'installation : une instance installée prend `dbhost`
+      # dans config.php, à changer aussi si ce service est renommé.
+      - POSTGRES_HOST=bdd
       - POSTGRES_DB=nextcloud
       # Réglages de reverse-proxy qu'une installation neuve n'avait pas (en prod
       # ils avaient été posés à la main par occ) : sans eux Nextcloud répond 400
@@ -74,7 +81,7 @@ services:
     env_file:
       - .env
     depends_on:
-      db-next:
+      bdd:
         condition: service_healthy
     # nextcloud:fpm-alpine only listens on the php-fpm fastcgi socket (9000),
     # no HTTP of its own — a plain TCP connect is the simplest signal that
@@ -114,7 +121,7 @@ services:
         # nginx résout `app` une seule fois, au démarrage, et garde son IP : app
         # recréé seul (changement de config) = nouvelle IP, web frappe l'ancienne
         # et Traefik sert des 502. Vu le 2026-09-29 après un `make up` qui n'a
-        # recréé qu'app et db-next. `restart: true` fait relancer web avec app.
+        # recréé qu'app et la base. `restart: true` fait relancer web avec app.
         restart: true
     # status.php is proxied through to app's php-fpm (see app's healthcheck
     # above) — also catches app being unreachable from web, not just nginx

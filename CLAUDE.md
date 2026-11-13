@@ -46,15 +46,16 @@ Ne pas proposer d'y revenir sans demande explicite de l'utilisateur.
 
 - **Non-root par conteneur**, pas de daemon Docker rootless : `cap_drop: ALL`
   + `no-new-privileges:true` partout. `cap_add` ciblé **seulement** sur
-  `db-next` et `vpn/transmission-vpn`, justifié en commentaire. N'en ajouter
+  `nextcloud/bdd` et `vpn/transmission-vpn`, justifié en commentaire. N'en ajouter
   ailleurs qu'avec la même nécessité.
 - **Jamais de socket Docker monté dans un conteneur** (root-équivalent sur
   l'hôte). C'est ce qui a décidé le transport HTTP de clearr et de l'addon Kodi.
 - **Images en `:latest`**, jamais de tag figé ; la reproductibilité passe par
   le manifeste de digests de `make backup`. **Majeur tenu, par choix
   (2026-09-29) : `traefik:v3`** (un majeur casse la config) **et
-  `postgres:15-alpine`** (un majeur ne relit pas le répertoire de données :
-  dump + réimport à la main, fin de vie 11/2027).
+  `postgres:18-alpine`** (un majeur ne relit pas le répertoire de données :
+  dump + réimport à la main, fin de vie 11/2030 ; 15 → 18 le 2026-11-13,
+  marche dans `docs/nextcloud.md`).
 - **Arr : `authenticationRequired: enabled`** (2026-09-29), login même depuis
   le LAN. `disabledForLocalAddresses` laissait les conteneurs WAN de
   `traefik-public` lire la clé API (`/initialize.json`). Sonde du dashboard

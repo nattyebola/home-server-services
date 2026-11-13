@@ -225,7 +225,7 @@ rebuild: require-env-shared network ## STACK=<nom> SERVICE=<nom> — recrée UN 
 		echo "  services de $(STACK) : $$($(compose) --profile '*' config --services 2>/dev/null | sort | tr '\n' ' ')" >&2; \
 		exit 1; }
 	@# Sans ce test, un nom mal tapé donne un « no such service » sec qui ne dit
-	@# pas quels noms existent — et ils ne se devinent pas (`db-next`, `web`...).
+	@# pas quels noms existent — et ils ne se devinent pas (`bdd`, `web`...).
 	@$(compose) --profile '*' config --services 2>/dev/null | grep -qx "$(SERVICE)" || { \
 		echo "$(SERVICE) n'est pas un service de la stack $(STACK)." >&2; \
 		echo "  disponibles : $$($(compose) --profile '*' config --services 2>/dev/null | sort | tr '\n' ' ')" >&2; \

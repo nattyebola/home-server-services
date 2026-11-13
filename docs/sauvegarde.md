@@ -65,7 +65,7 @@ flowchart TD
     R["make restore SNAPSHOT=…"] --> Z["0 · rester sur la version actuelle du dépôt<br>(épingler un digest seulement si un service refuse ses données)"]
     Z --> A["1 · recopier .env, .env.shared,<br>fichiers secrets"]
     A --> B["2 · par stack, conteneurs ARRÊTÉS :<br>rsync des configs arr / jellyfin / seerr / transmission"]
-    B --> C["3 · Nextcloud : webroot, puis db-next seul<br>et import du dump"]
+    B --> C["3 · Nextcloud : webroot, puis bdd seul<br>et import du dump"]
     C --> D["4 · make up (traefik d'abord), make test,<br>make dashboard-refresh, retirer l'épinglage"]
 ```
 

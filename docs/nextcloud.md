@@ -12,13 +12,13 @@ par du code.
 flowchart LR
     Traefik -->|"nextcloud.DOMAIN<br>hsts seul"| Web["web<br>nginx-unprivileged :8080"]
     Web -->|"FastCGI :9000"| App["app<br>nextcloud:fpm-alpine + ffmpeg"]
-    App --> DB[("db-next<br>Postgres")]
+    App --> DB[("bdd<br>Postgres 18")]
     Cron["cron hôte */5 min"] -.->|"php cron.php"| App
 ```
 
 | Service | Détail |
 |---|---|
-| `db-next` | Postgres, données sous `${DATA_ROOT}/.nextcloud/db-next`. Un des deux seuls services avec `cap_add` (démarre root puis descend). |
+| `bdd` | Postgres, majeur figé (`postgres:18-alpine`), données sous `${DATA_ROOT}/.nextcloud/bdd/18/docker`. Un des deux seuls services avec `cap_add` (démarre root puis descend). |
 | `app` | build local (`nextcloud/app/Dockerfile`) : image FPM + `ffmpeg` pour les aperçus vidéo. Webroot sous `${DATA_ROOT}/.nextcloud/nexcloud`. |
 | `web` | nginx non-root avec le `nginx.conf` officiel ; porte les en-têtes de sécurité |
 
@@ -38,6 +38,37 @@ le crontab de l'hôte toutes les 5 minutes.
 
 **Stockages externes** (dossiers de l'hôte à exposer dans Nextcloud) :
 `nextcloud/docker-compose.override.yml`.
+
+## Changer de majeur Postgres
+
+L'image est figée sur un majeur : Postgres ne relit pas le répertoire de
+données d'un autre majeur. Fait pour 15 → 18 le 2026-11-13 (2 Go, ~5 min
+d'arrêt). L'ancien dossier reste en place jusqu'à validation : c'est le
+retour arrière.
+
+```sh
+docker exec -u "$PUID" nextcloud-app-1 php occ maintenance:mode --on
+( umask 077; docker exec nextcloud-bdd-1 sh -c 'pg_dumpall -U "$POSTGRES_USER"' > dump.sql )
+make down STACK=nextcloud
+# docker-compose.yml : image postgres:<N>-alpine (et le montage si l'image l'impose)
+make rebuild STACK=nextcloud SERVICE=bdd            # bdd seul, cluster neuf
+docker exec nextcloud-bdd-1 sh -c 'dropdb -U "$POSTGRES_USER" nextcloud'   # base vide de POSTGRES_DB
+docker exec -i nextcloud-bdd-1 sh -c 'psql -q -U "$POSTGRES_USER" -d postgres' < dump.sql
+# un dump ne transporte pas les statistiques du planificateur : les recalculer
+docker exec nextcloud-bdd-1 sh -c 'vacuumdb -U "$POSTGRES_USER" --all --analyze-only'
+make up STACK=nextcloud
+docker exec -u "$PUID" nextcloud-app-1 php occ maintenance:mode --off
+```
+
+Vérifier en comparant avant/après le nombre de tables et de lignes de
+`oc_filecache`. Seule erreur attendue à l'import :
+`role "postgres" already exists`. Puis supprimer le dump (il contient les
+hachages de mots de passe) et, après quelques jours, l'ancien dossier.
+
+> [!WARNING]
+> Depuis l'image 18, `PGDATA` vaut `/var/lib/postgresql/<majeur>/docker` et on
+> monte **`/var/lib/postgresql`** : l'entrypoint refuse un montage sur
+> l'ancien `/var/lib/postgresql/data`.
 
 ## Flux de l'app News
 
@@ -68,6 +99,11 @@ boucle (404/504), et doublait le job interne.
   en-têtes viennent de `nextcloud/web/nginx.conf`. Attention au piège nginx :
   un `add_header` dans une `location` annule tous ceux du bloc `server`, d'où
   leur répétition dans les `location` des assets.
+- **Renommer le service Postgres ne suffit pas** : `POSTGRES_HOST` n'est lu
+  qu'à l'installation, une instance en place prend `dbhost` dans
+  `config.php`. Vécu en renommant `db-next` en `bdd` (2026-11-13). Fix : y
+  changer `dbhost` (conteneur `app` arrêté, `occ` ne démarre pas sans base).
+  Un snapshot restauré d'avant cette date pointe encore vers `db-next`.
 - **Changer de domaine** : `occ config:system:set trusted_domains …` et
   `overwrite.cli.url`, jamais en éditant `config.php` à la main.
 - **Une mise à jour majeure peut désactiver une app** dont `max-version` est

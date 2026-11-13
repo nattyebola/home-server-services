@@ -142,8 +142,8 @@ echo
 echo "3. Nextcloud — webroot puis base, dans cet ordre :"
 echo "     make down STACK=nextcloud"
 echo "     mkdir -p ${DATA_ROOT}/.nextcloud/nexcloud/ && rsync -a --delete ${TARGET}${SRC_DATA}/.nextcloud/nexcloud/ ${DATA_ROOT}/.nextcloud/nexcloud/"
-echo "   Démarrer db-next SEUL (app ne doit pas voir une base vide) :"
-echo "     make rebuild STACK=nextcloud SERVICE=db-next"
+echo "   Démarrer bdd SEUL (app ne doit pas voir une base vide) :"
+echo "     make rebuild STACK=nextcloud SERVICE=bdd"
 # `make rebuild` rend la main dès le démarrage du conteneur, pas quand Postgres
 # accepte les connexions : sur un cluster neuf, l'initialisation prend quelques
 # secondes et un psql lancé aussitôt échouait (« No such file or directory » sur
@@ -152,9 +152,9 @@ echo "     make rebuild STACK=nextcloud SERVICE=db-next"
 # n'écoute que sur la socket, puis l'arrête ; un pg_isready par la socket
 # pouvait réussir sur lui et laisser l'import tomber sur son arrêt.
 echo "   Attendre que Postgres accepte les connexions (initialisation d'un cluster neuf) :"
-echo "     until docker exec nextcloud-db-next-1 sh -c 'pg_isready -h 127.0.0.1 -U \"\$POSTGRES_USER\"' >/dev/null 2>&1; do sleep 2; done"
+echo "     until docker exec nextcloud-bdd-1 sh -c 'pg_isready -h 127.0.0.1 -U \"\$POSTGRES_USER\"' >/dev/null 2>&1; do sleep 2; done"
 if [ -n "$staging" ] && [ -f "$staging/nextcloud-db.sql" ]; then
-	psql_cmd="docker exec -i nextcloud-db-next-1 sh -c 'psql -U \"\$POSTGRES_USER\" -d postgres'"
+	psql_cmd="docker exec -i nextcloud-bdd-1 sh -c 'psql -U \"\$POSTGRES_USER\" -d postgres'"
 	# Rôles d'abord : la base appartient au rôle oc_<admin> de Nextcloud, que
 	# pg_dump ne sauvegarde pas. Absent des snapshots d'avant le 2026-09-29.
 	if [ -f "$staging/nextcloud-roles.sql" ]; then
@@ -166,23 +166,27 @@ if [ -n "$staging" ] && [ -f "$staging/nextcloud-db.sql" ]; then
 		echo "     ${DATA_ROOT}/.nextcloud/nexcloud/config/config.php :"
 		echo "     CREATE ROLE <dbuser> LOGIN CREATEDB PASSWORD '<dbpassword>';"
 	fi
-	# Toujours supprimer la base d'abord : depuis que db-next porte
+	# Toujours supprimer la base d'abord : depuis que la base porte
 	# POSTGRES_DB=nextcloud (2026-09-29, sans quoi une installation neuve
 	# échouait), un cluster neuf naît AVEC une base `nextcloud` vide, possédée par
 	# POSTGRES_USER. Le dump en --create échouerait sur « already exists », un
 	# ancien dump s'importerait dans une base au mauvais propriétaire.
 	echo "   Supprimer la base (vide sur un cluster neuf : créée par POSTGRES_DB) :"
-	echo "     docker exec nextcloud-db-next-1 sh -c 'dropdb -U \"\$POSTGRES_USER\" --if-exists nextcloud'"
+	echo "     docker exec nextcloud-bdd-1 sh -c 'dropdb -U \"\$POSTGRES_USER\" --if-exists nextcloud'"
 	# Dump en --create depuis le 2026-09-29 : il crée lui-même la base. Les
 	# plus anciens supposent qu'elle existe déjà.
 	if grep -q '^CREATE DATABASE' "$staging/nextcloud-db.sql"; then
 		echo "   Base (le dump la recrée lui-même, avec son propriétaire) :"
 	else
 		echo "   Base (dump antérieur au 2026-09-29, sans CREATE DATABASE) :"
-		echo "     docker exec nextcloud-db-next-1 sh -c 'createdb -U \"\$POSTGRES_USER\" -O <dbuser> nextcloud'"
-		psql_cmd="docker exec -i nextcloud-db-next-1 sh -c 'psql -U \"\$POSTGRES_USER\" -d nextcloud'"
+		echo "     docker exec nextcloud-bdd-1 sh -c 'createdb -U \"\$POSTGRES_USER\" -O <dbuser> nextcloud'"
+		psql_cmd="docker exec -i nextcloud-bdd-1 sh -c 'psql -U \"\$POSTGRES_USER\" -d nextcloud'"
 	fi
 	echo "     $psql_cmd < $staging/nextcloud-db.sql"
+	# Le service Postgres s'appelait db-next jusqu'au 2026-11-13 : un webroot
+	# restauré d'avant garde ce dbhost, que POSTGRES_HOST ne corrige pas.
+	echo "   'dbhost' de config.php doit valoir 'bdd' (snapshot d'avant le 2026-11-13 : 'db-next') :"
+	echo "     grep dbhost ${DATA_ROOT}/.nextcloud/nexcloud/config/config.php"
 else
 	echo "     (dump introuvable dans ce snapshot — vérifier .staging/)"
 fi

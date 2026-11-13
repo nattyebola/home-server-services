@@ -63,7 +63,7 @@ if ! restic snapshots >/dev/null 2>&1; then
 	restic init
 fi
 
-echo "==> dumping nextcloud DB (consistent, not a raw copy of db-next's data dir)"
+echo "==> dumping nextcloud DB (consistent, not a raw copy of the bdd data dir)"
 # La base réelle de Nextcloud est "nextcloud" (POSTGRES_DB=nextcloud codé en
 # dur sur le service app, docker-compose.yml) — pas $POSTGRES_USER. nextcloud/.env
 # ne définit que POSTGRES_USER/PASSWORD (le superuser d'amorçage de l'image
@@ -77,7 +77,7 @@ echo "==> dumping nextcloud DB (consistent, not a raw copy of db-next's data dir
 # dump DB. Le fichier d'un run précédent est supprimé plutôt que laissé tel
 # quel : un vieux dump silencieusement re-sauvegardé comme s'il était frais
 # serait pire qu'une sauvegarde manquante.
-if "$REPO_ROOT/scripts/require-running.sh" nextcloud/db-next; then
+if "$REPO_ROOT/scripts/require-running.sh" nextcloud/bdd; then
 	# umask 077 : le dump porte les hachages de mots de passe, les jetons de
 	# session et les jetons d'application de Nextcloud. Il était créé en
 	# rw-rw-r-- (543 Mo lisibles par tout compte de la machine) et n'était
@@ -91,14 +91,14 @@ if "$REPO_ROOT/scripts/require-running.sh" nextcloud/db-next; then
 	# installeur a créé (dbuser de config.php), propriétaire de la base. Sans
 	# ce fichier, une restauration sur cluster neuf échoue sur chaque
 	# `OWNER TO`, puis Nextcloud ne peut plus se connecter du tout.
-	( umask 077; compose_for nextcloud exec -T db-next \
+	( umask 077; compose_for nextcloud exec -T bdd \
 		sh -c 'pg_dump -U "$POSTGRES_USER" --create "${POSTGRES_DB:-nextcloud}"' \
 		>"$STAGING_DIR/nextcloud-db.sql" )
-	( umask 077; compose_for nextcloud exec -T db-next \
+	( umask 077; compose_for nextcloud exec -T bdd \
 		sh -c 'pg_dumpall -U "$POSTGRES_USER" --roles-only' \
 		>"$STAGING_DIR/nextcloud-roles.sql" )
 else
-	echo "nextcloud/db-next n'est pas démarré — dump DB ignoré pour cette sauvegarde" >&2
+	echo "nextcloud/bdd n'est pas démarré — dump DB ignoré pour cette sauvegarde" >&2
 	rm -f "$STAGING_DIR/nextcloud-db.sql" "$STAGING_DIR/nextcloud-roles.sql"
 fi
 

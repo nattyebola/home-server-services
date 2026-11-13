@@ -52,6 +52,7 @@ touchent toutes les stacks.
 | BD illisible dans Komga | `.cbr` en RAR5 ou archive « solid » | [Komga](komga.md#pièges-connus) |
 | Nextcloud ou Transmission en **502** juste après un `make up` | un relais nginx garde l'ancienne IP du conteneur recréé derrière lui (corrigé le 2026-09-29 : `restart: true` sur `nextcloud/web`, résolution dynamique sur `vpn/proxy` et `vpn/webproxy`) | [Nextcloud](nextcloud.md#pièges-connus) |
 | Plus de nouveaux articles dans **Nextcloud News**, aucune erreur | `useCronUpdates` à faux : le job horaire sort sans rien faire | [Nextcloud](nextcloud.md#pièges-connus) |
+| Nextcloud en erreur interne après une restauration ou un renommage du service Postgres | `dbhost` de `config.php` pointe encore vers l'ancien nom (`db-next`) | [Nextcloud](nextcloud.md#pièges-connus) |
 | Avertissements de sécurité dans l'admin Nextcloud | `security-headers` remis sur son routeur | [Nextcloud](nextcloud.md#pièges-connus) |
 | Une tâche cron « réussit » à la main mais pas sous cron | `%` non échappé | [Exploitation](exploitation.md#tâches-planifiées) |
 | Un `.env` modifié « pas pris », puis appliqué plus tard sans raison apparente | `make restart` ne recrée pas ; la commande compose suivante sur la stack le fait | [plus bas](#env-modifié-conteneur-recréé--tout-seul--plus-tard) |
