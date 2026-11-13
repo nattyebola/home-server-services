@@ -15,21 +15,23 @@ conteneurs :
 
 ## Qui est exposé, et comment
 
-| Routeur | Hôte | 🏠 LAN only | `rate-limit` | `security-headers` | `hsts` |
-|---|---|:-:|:-:|:-:|:-:|
-| dashboard | `DOMAIN`, `www.DOMAIN` | | | ✅ | ✅ |
-| jellyfin | `jellyfin.` | | ✅ | ✅ | ✅ |
-| seerr | `seerr.` | | ✅ | ✅ | ✅ |
-| komga | `komga.` | | ✅ | ✅ | ✅ |
-| nextcloud | `nextcloud.` | | | ❌ *(voir plus bas)* | ✅ |
-| transmission | `transmission.` | ✅ `transmission-lan-only@file` | | ✅ | ✅ |
-| prowlarr / sonarr / radarr / clearr | `<nom>.` | ✅ `<nom>-lan-only@file` | | ✅ | ✅ |
+| Routeur | Hôte | 🏠 LAN only | `rate-limit` | `security-headers` | `hsts` | `compress` |
+|---|---|:-:|:-:|:-:|:-:|:-:|
+| dashboard | `DOMAIN`, `www.DOMAIN` | | | ✅ | ✅ | ✅ |
+| jellyfin | `jellyfin.` | | ✅ | ✅ | ✅ | |
+| seerr | `seerr.` | | ✅ | ✅ | ✅ | |
+| komga | `komga.` | | ✅ | ✅ | ✅ | |
+| nextcloud | `nextcloud.` | | | ❌ *(voir plus bas)* | ✅ | |
+| transmission | `transmission.` | ✅ `transmission-lan-only@file` | | ✅ | ✅ | |
+| prowlarr / sonarr / radarr | `<nom>.` | ✅ `<nom>-lan-only@file` | | ✅ | ✅ | |
+| clearr | `clearr.` | ✅ `clearr-lan-only@file` | | ✅ | ✅ | ✅ |
 
 | Middleware | Défini où | Contenu |
 |---|---|---|
 | `hsts` | labels du conteneur `traefik` | `max-age` 180 jours, `includeSubDomains` posé **sur chaque service** : un favori vers `jellyfin.` qui ne charge jamais le domaine nu est protégé quand même |
 | `security-headers` | labels du conteneur `traefik` | `X-Robots-Tag: noindex, nofollow, noarchive` (ni moteurs ni crawlers IA), `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: no-referrer` |
 | `rate-limit` | labels du conteneur `traefik` | 50 req/s en moyenne, rafale 100, par IP. Seul rempart anti-force-brute de Komga, qui ne verrouille aucun compte |
+| `compress` | labels du conteneur `traefik` | gzip/brotli/zstd des réponses texte (HTML, CSS, JS, JSON, SVG), jamais des images. Sur les backends qui ne compressent pas eux-mêmes : clearr (1,7 Mo → 40 Ko) et le dashboard (28 → 5 Ko) |
 | `<service>-lan-only` (un par service : prowlarr, sonarr, radarr, clearr, transmission) | `traefik/dynamic/lan-only.yml` (provider `file`) | `ipAllowList` sur `LAN_CIDR` |
 
 Les middlewares partagés sont définis **une seule fois** et référencés par
@@ -41,6 +43,12 @@ un compose file.
 > en égalité stricte (`noindex,nofollow`, `sameorigin`), et ceux de
 > `security-headers` le faisaient échouer. Ses en-têtes viennent du
 > `nginx.conf` officiel, voir [Nextcloud](nextcloud.md).
+
+**En-têtes à nom « alias » supprimés** (`global.aliasHeadersStrategy: delete`
+dans `traefik.yml`, 2026-11-13) : un en-tête comme `X_Forwarded_For` est lu
+par PHP, nginx ou WSGI comme `X-Forwarded-For`, ce qui permettait de falsifier
+les en-têtes posés par Traefik. Ils sont retirés de la requête, sans erreur
+pour le client (`reject` renverrait un 400).
 
 ### Ouvrir temporairement au WAN
 

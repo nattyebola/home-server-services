@@ -265,7 +265,7 @@ services:
       # changer qu'en recréant le conteneur, ce qui interdit de l'ouvrir puis
       # de le refermer (`make switch-lan-only-middleware`). hsts/security-headers
       # définis une seule fois dans traefik/docker-compose.yml, voir CLAUDE.md
-      - "traefik.http.routers.clearr.middlewares=clearr-lan-only@file,security-headers@docker,hsts@docker"
+      - "traefik.http.routers.clearr.middlewares=clearr-lan-only@file,security-headers@docker,hsts@docker,compress@docker"
       - "traefik.http.services.clearr.loadbalancer.server.port=8000"
       # Indispensable : sans lui Traefik résoudrait clearr sur traefik-public
       # (défaut du provider, voir `network:` dans traefik/traefik.yml), où il

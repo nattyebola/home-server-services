@@ -35,10 +35,25 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
     transmission sont LAN-only). Limite tout le routeur, pas seulement le
     login — Traefik seul ne sait pas cibler par code de réponse ou chemin.
     Valeurs volontairement généreuses pour ne jamais gêner un usage normal.
+  - `compress` (2026-11-13) : réponses texte seulement
+    (`includedContentTypes`), sur `clearr` et `dashboard`, dont uvicorn et
+    nginx-unprivileged ne compressent rien. À ajouter à tout backend qui ne
+    compresse pas lui-même ; inutile sur ceux qui le font déjà (vérifier
+    `Content-Encoding` avec `curl -H 'Accept-Encoding: gzip'` d'abord). Pas de risque BREACH tant que la page compressée ne
+    porte aucun secret (jeton, cookie de session). Changer ce label = recréer
+    `traefik` (`make up STACK=traefik`), donc une coupure de quelques secondes
+    de tous les services.
     **C'est ce middleware qui rate-limitait Seerr** quand il passait par le
     domaine public (voir `.claude/docs/arr-config.md`) : y ajouter un
     service qui parle à
     Jellyfin en volume demande d'y penser.
+- **`global.aliasHeadersStrategy: delete`** (`traefik.yml`, 2026-11-13) :
+  supprime les en-têtes dont le nom est un alias d'un autre (`_` ou `.` à la
+  place d'un `-`), lus comme le vrai par PHP/nginx/WSGI → `X-Forwarded-*`
+  falsifiables. `delete` plutôt que `reject` (400) pour ne casser aucun
+  client. Fait taire l'avertissement de démarrage de Traefik ≥ 3.6. Remplace
+  l'ancien `underscoreHeadersStrategy` (déprécié). Statique : changer =
+  `make restart STACK=traefik`.
 - **Le dashboard vit sur le domaine nu et `www.${DOMAIN}`**, pas
   `dashboard.${DOMAIN}` : `Host(${DOMAIN}) || Host(www.${DOMAIN})` dans
   `traefik/docker-compose.yml`. Nextcloud est sur `nextcloud.${DOMAIN}` — et

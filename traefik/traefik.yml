@@ -1,6 +1,16 @@
 log:
   level: INFO
 
+# Header names that alias another one (`X_Forwarded_For`, `X.Forwarded.For` for
+# `X-Forwarded-For`): backends that turn header names into variables (PHP for
+# Nextcloud, nginx, WSGI) read them as the real header, so a client could spoof
+# the X-Forwarded-* headers Traefik sets. `delete` drops such headers silently
+# rather than rejecting the request (`reject` = 400), so no client breaks.
+# Applies to every entry point; set on 2026-11-13 after Traefik 3.6+ started
+# warning about it at startup.
+global:
+  aliasHeadersStrategy: delete
+
 # Traefik is the only entry point from the WAN (it alone publishes ports), so
 # without an access log there is no trace at all of who reaches Jellyfin,
 # Nextcloud, Seerr or the dashboard — including the 403s the LAN-only

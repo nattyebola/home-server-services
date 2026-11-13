@@ -116,6 +116,13 @@ services:
       # bibliothèque en parallèle) sans le limiter.
       - "traefik.http.middlewares.rate-limit.ratelimit.average=50"
       - "traefik.http.middlewares.rate-limit.ratelimit.burst=100"
+      # Compression (gzip/brotli/zstd selon le navigateur) des réponses
+      # texte seulement : une image ou une vidéo est déjà compressée, la
+      # recompresser coûterait du CPU pour rien. Posée sur clearr (vue
+      # Torrents : 1,7 Mo de HTML → ~100 Ko) et le dashboard, servis sans
+      # compression par uvicorn et nginx. Sans risque BREACH : aucune de ces
+      # pages ne porte de secret (ni jeton, ni cookie de session).
+      - "traefik.http.middlewares.compress.compress.includedContentTypes=text/html,text/css,text/javascript,application/javascript,application/json,image/svg+xml"
     logging:
       driver: json-file
       options:
@@ -160,7 +167,7 @@ services:
       # container, voir CLAUDE.md. X-Robots-Tag redondant avec la balise
       # <meta robots> du HTML généré : couvre aussi les crawlers qui ne
       # parsent pas le HTML (ou tapent une ressource non-HTML, ex. les logos).
-      - "traefik.http.routers.dashboard.middlewares=security-headers@docker,hsts@docker"
+      - "traefik.http.routers.dashboard.middlewares=security-headers@docker,hsts@docker,compress@docker"
       - "traefik.http.services.dashboard.loadbalancer.server.port=8080"
       - "traefik.docker.network=traefik-public"
     logging:
