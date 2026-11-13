@@ -164,7 +164,10 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   qu'`item_meta()`, donc `_meta.html`/`details.html` inchangés.
   `render_torrents_tab` l'utilise pour **toute BD, vue Torrents comprise**,
   à la place de `torrent_meta` (une BD n'a jamais d'arr). Jaquette relayée par
-  `/bd-cover/{book_id}` (Komga la génère), id validé par `KOMGA_ID_RE`. Fiche :
+  `/bd-cover/{book_id}` (Komga la génère), id validé par `KOMGA_ID_RE`. ETag de
+  Komga relayé dans les deux sens (2026-11-13, `ETAG_RE` filtre le
+  `If-None-Match` entrant) : 304 vide après le mois de cache
+  (`IMAGE_CACHE_CONTROL`, commun à `/poster`). Fiche :
   section Komga (`_komga_details` : séries, nombre de livres vus par Komga sur
   nombre de fichiers, pages, auteurs, éditeur, livres pas READY — un `.cbr`
   RAR5 ressort ici), résumé de la série, liste des livres. Clé admin, réseau,
@@ -265,7 +268,13 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   l'orange est pris par la BD), recyclage (remplacé, sarcelle : le vert est
   pris par l'anime), loupe (absent, framboise), `?`
   (inconnu, sbed/help) ; signe interdit dessiné à la main (anneau + barre épais, rien de tel chez game-icons). SVG game-icons.net (CC BY 3.0, auteurs cités
-  dans `templates/_kind_icon.html` — à garder) en ligne, **pas d'emoji** (même
+  dans `templates/_kind_icon.html` — à garder) en ligne, **en sprite**
+  (2026-11-13 : chaque tracé défini une fois dans un `<symbol id="ki-…">`
+  rendu par `kind_icon_sprite()` en tête de `page.html`, hors de
+  `#tab-content` ; chaque instance n'est qu'un `<use>` portant sa classe de
+  couleur, son `<title>` et son `aria-label`. Avant : 1,16 Mo de tracés
+  recopiés sur une page de 1,68 Mo, renvoyée à chaque frappe du filtre),
+  **pas d'emoji** (même
   raison que la croix ✕). Grands (1,6 em) et une couleur par type, variante
   sombre sous `[data-bs-theme="dark"]` dans `clearr.css`.
   **Pictos devant les libellés d'onglets** (2026-10-08, demandé) : même

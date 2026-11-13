@@ -7,6 +7,7 @@
 import hashlib
 import html
 import os
+import re
 import urllib.parse
 
 from fastapi import FastAPI, Form
@@ -144,6 +145,13 @@ def health():
     return "ok"
 
 
+# Cache navigateur des jaquettes et couvertures : un mois (demandé le
+# 2026-11-13, elles ne changent pour ainsi dire jamais). Une image changée
+# dans l'arr ou Komga peut donc rester ancienne jusqu'à un mois ; passé ce
+# délai, l'ETag la revalide (304 vide si elle n'a pas bougé).
+IMAGE_CACHE_CONTROL = "public, max-age=2592000"
+
+
 @app.get("/poster/{kind}/{arr_id}")
 def poster(kind: str, arr_id: int):
     """Jaquette servie depuis le cache disque de Sonarr/Radarr (voir
@@ -157,22 +165,42 @@ def poster(kind: str, arr_id: int):
     if not path:
         return Response(status_code=404)
     return FileResponse(path, media_type="image/jpeg",
-                        headers={"Cache-Control": "public, max-age=86400"})
+                        headers={"Cache-Control": IMAGE_CACHE_CONTROL})
+
+
+# Une seule étiquette d'entité, forme stricte (RFC 9110) : elle part telle
+# quelle dans une requête vers Komga, donc rien d'autre ne doit passer.
+ETAG_RE = re.compile(r'(W/)?"[\x21\x23-\x7e]{1,128}"')
 
 
 @app.get("/bd-cover/{book_id}")
-def bd_cover(book_id: str):
+def bd_cover(request: Request, book_id: str):
     """Couverture d'un livre, générée par Komga (core.bd_meta), relayée telle
     quelle : le navigateur ne parle qu'à clearr. `book_id` validé par
     KOMGA_ID_RE avant de construire le chemin d'API (pas de int() possible, les
     ids Komga sont des chaînes). 404 sur tout échec, comme /poster : clearr.js
-    n'affiche alors rien au survol."""
+    n'affiche alors rien au survol.
+
+    L'ETag de Komga est relayé dans les deux sens (2026-11-13) : sans lui, une
+    couverture était retéléchargée en entier à l'expiration du cache navigateur
+    (un mois), là où une jaquette arr (FileResponse, ETag posé par Starlette)
+    revient en 304 vide."""
     if not core.KOMGA_ID_RE.fullmatch(book_id):
         return Response(status_code=404)
-    resp = core.komga_request("GET", f"/api/v1/books/{book_id}/thumbnail", accept="image/*")
-    if not resp or resp[0] != 200 or not resp[1].startswith("image/"):
+    if_none_match = request.headers.get("if-none-match", "")
+    extra = {"If-None-Match": if_none_match} if ETAG_RE.fullmatch(if_none_match) else None
+    resp = core.komga_request("GET", f"/api/v1/books/{book_id}/thumbnail", accept="image/*", headers=extra)
+    if not resp:
         return Response(status_code=404)
-    return Response(resp[2], media_type=resp[1], headers={"Cache-Control": "public, max-age=86400"})
+    status, ctype, body, etag = resp
+    headers = {"Cache-Control": IMAGE_CACHE_CONTROL}
+    if etag:
+        headers["ETag"] = etag
+    if status == 304:
+        return Response(status_code=304, headers=headers)
+    if status != 200 or not ctype.startswith("image/"):
+        return Response(status_code=404)
+    return Response(body, media_type=ctype, headers=headers)
 
 
 def komga_index_for(torrents):

@@ -25,6 +25,9 @@
 </script>
 </head>
 <body>
+{# Tracés des pictos, définis une fois pour toutes les lignes (_kind_icon.html). #}
+{% from "_kind_icon.html" import kind_icon_sprite %}
+{{ kind_icon_sprite() }}
 <header class="navbar navbar-expand bg-body-tertiary border-bottom mb-3">
   <div class="container-fluid px-3">
     {# h1 : la page n'avait AUCUN titre, et son premier élément de titre était

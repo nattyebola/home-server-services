@@ -819,18 +819,20 @@ def bd_book_count(torrent):
     return sum(1 for f in torrent.get("files", []) if f["name"].lower().endswith(KOMGA_BOOK_EXTENSIONS))
 
 
-def komga_request(method, path, body=None, timeout=5, accept="application/json"):
-    """(status, content-type, corps) d'une requête à l'API Komga, ou None si
-    elle n'est pas configurée ou injoignable. Certificat non vérifié : on
+def komga_request(method, path, body=None, timeout=5, accept="application/json", headers=None):
+    """(status, content-type, corps, ETag) d'une requête à l'API Komga, ou None
+    si elle n'est pas configurée ou injoignable. Certificat non vérifié : on
     parle à Traefik par son nom de service, comme _probe_komga. `accept` : Komga
-    répond 406 à une vignette demandée en application/json."""
+    répond 406 à une vignette demandée en application/json. `headers` : en-têtes
+    ajoutés (If-None-Match de /bd-cover) ; l'ETag de la réponse est rendu pour
+    la même raison — Komga en pose un sur ses vignettes et répond 304."""
     if not (DOMAIN and KOMGA_API_KEY):
         return None
     context = ssl.create_default_context()
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
     conn = http.client.HTTPSConnection(*TRAEFIK_HTTPS, timeout=timeout, context=context)
-    headers = {"Host": f"komga.{DOMAIN}", "X-API-Key": KOMGA_API_KEY, "Accept": accept}
+    headers = {**(headers or {}), "Host": f"komga.{DOMAIN}", "X-API-Key": KOMGA_API_KEY, "Accept": accept}
     data = None
     if body is not None:
         data = json.dumps(body).encode()
@@ -838,7 +840,7 @@ def komga_request(method, path, body=None, timeout=5, accept="application/json")
     try:
         conn.request(method, path, body=data, headers=headers)
         resp = conn.getresponse()
-        return resp.status, resp.getheader("Content-Type", ""), resp.read()
+        return resp.status, resp.getheader("Content-Type", ""), resp.read(), resp.getheader("ETag")
     except (OSError, http.client.HTTPException) as e:
         logger.warning("Komga injoignable (%s %s) : %s", method, path, e)
         return None
@@ -852,7 +854,7 @@ def _komga_list(kind):
     resp = komga_request("POST", f"/api/v1/{kind}/list?unpaged=true", body={})
     if not resp:
         return []
-    status, _ctype, body = resp
+    status, _ctype, body, _etag = resp
     if status != 200:
         logger.warning("Komga : /api/v1/%s/list a répondu %s (clé d'API invalide ?)", kind, status)
         return []
