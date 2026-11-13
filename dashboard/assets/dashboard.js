@@ -113,7 +113,9 @@ document.querySelectorAll('.card[data-probe]').forEach(function (card) {
     // Pas de nouvelle version possible avant un cycle de cron ; onglet masqué :
     // on attendra son retour (visibilitychange) plutôt que de recharger à vide.
     if (now() - generated < CRON_INTERVAL || document.hidden) { show(); return; }
-    fetch(location.pathname, { cache: 'no-store' })
+    // Délai de 10 s : sans lui, un serveur qui ne répond plus laissait la
+    // requête pendante (jamais « injoignable ») et en empilait une par minute.
+    fetch(location.pathname, { cache: 'no-store', signal: AbortSignal.timeout(10000) })
       .then(function (r) {
         if (!r.ok) { throw new Error(r.status); }
         return r.text();

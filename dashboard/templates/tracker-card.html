@@ -1,18 +1,18 @@
 <div class="stat stat-span-3 stat-tracker">
   <div class="stat-header-row">
-    <span class="stat-label">Ratio par tracker</span>
+    <h3 class="stat-label" id="tracker-title">Ratio par tracker</h3>
     <label class="switch-row">
-      <span class="switch-label">Trackers privés</span>
+      <span class="switch-label" aria-hidden="true">Trackers privés</span>
       <span class="switch">
-        <input type="checkbox" id="tracker-all-toggle">
+        <input type="checkbox" role="switch" id="tracker-all-toggle">
         <span class="switch-slider"></span>
       </span>
       <span class="switch-label">Tous les trackers</span>
     </label>
   </div>
-  <div class="tracker-table-wrap">
-    <table class="tracker-table">
-      <thead><tr><th>Tracker</th><th>Ratio</th><th>Envoyé</th><th>Reçu</th></tr></thead>
+  <div class="tracker-table-wrap" tabindex="0" role="region" aria-labelledby="tracker-title">
+    <table class="tracker-table" aria-labelledby="tracker-title">
+      <thead><tr><th scope="col">Tracker</th><th scope="col">Ratio</th><th scope="col">Envoyé</th><th scope="col">Reçu</th></tr></thead>
       <tbody>
 $rows
       </tbody>

@@ -393,3 +393,32 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   Pas de gating équivalent sur la sauvegarde restic elle-même : c'est une
   sauvegarde globale, pas le cron d'un seul service.
 
+- **Couleurs de thème = tokens sur `:root`** (2026-11-13) : toute couleur qui
+  diffère entre clair et sombre est une variable définie dans le `:root` de
+  `dashboard.css` et redéfinie dans **son unique** `@media
+  (prefers-color-scheme: dark)`. Ne pas rouvrir un bloc sombre par composant.
+  `<meta name="color-scheme">` dans `page.html` évite le flash blanc des
+  rechargements automatiques en mode sombre.
+- **Accessibilité acquise, à ne pas défaire** (revue du 2026-11-13) : switchs
+  en `role="switch"` avec un nom qui dit ce qu'ils activent (« Trackers
+  privés » en `aria-hidden`), tableau des trackers dans un conteneur
+  `tabindex="0" role="region"` (défilement clavier sur mobile) avec noms en
+  `<th scope="row">`, `role="list"` sur les `.status-list` (Safari retire la
+  sémantique de liste sous `list-style: none` + `flex`), `<main>` autour des
+  sections, `fetch` de la sonde de fraîcheur borné à 10 s.
+- **Définitions au téléphone : bouton « i » + popover** (2026-11-13,
+  demandé, `render_info_tip()` / `info-tip.html`). Toute valeur qui porte un
+  `title=` de définition (Torrents, Tunnel VPN, légendes des jauges, tâches
+  planifiées) a aussi son bouton, **visible seulement en
+  `(hover: none) and (pointer: coarse)`** — `hover: none` seul attrape aussi
+  un navigateur sans pointeur (Chrome headless l'affichait). `popover`
+  `auto`, pas `hint` (absent de Safari iOS) ; bulle centrée, pas d'ancrage
+  CSS (trop peu répandu) ; aucun polyfill ni CDN. La bulle n'est affichée
+  que par `.info-tip:popover-open` : sans support popover elle reste cachée
+  et le bouton n'apparaît pas (`@supports selector(:popover-open)`). Ids
+  `info-tip-N` uniques par rendu (`itertools.count`). **Une nouvelle valeur
+  avec définition passe par `render_stat_item(title=…)`** pour avoir les deux.
+- **Titres des cartes du Monitoring en `<h3 class="stat-label">`**
+  (2026-11-13, demandé) : `stat-header.html`, `stat-placeholder.html`,
+  `tracker-card.html`. `h3.stat-label` neutralise marges et graisse du
+  navigateur, rendu identique à l'ancien `<span>`.

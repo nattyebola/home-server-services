@@ -94,6 +94,9 @@ flowchart LR
   (comptés par téléchargement, un pack compte pour un),
   santé de chaque indexeur Prowlarr, âge de la dernière sauvegarde,
   **tâches planifiées** (vert si la tâche a réussi dans son intervalle).
+- **Définitions des valeurs** : au survol sur ordinateur ; sur téléphone
+  (écran tactile), un petit bouton **i** à côté de chaque libellé ouvre la
+  définition dans une bulle, refermée en touchant ailleurs.
 - **Chaque carte a son titre en bandeau et un voyant d'état global** quand il
   a un sens (état en clair au survol ; tout rouge pulse) :
 

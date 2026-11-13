@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Thème connu avant le chargement du CSS : sans elle, flash blanc en mode
+     sombre à chaque rechargement automatique (dashboard.js). -->
+<meta name="color-scheme" content="light dark">
 <meta name="robots" content="noindex, nofollow, noarchive">
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="icon" type="image/png" href="/assets/favicon.png">
@@ -11,8 +14,10 @@
 </head>
 <body>
   <h1>Services</h1>
+  <main>
 $lan_banner
 $sections
+  </main>
 
   <footer class="updated" data-generated="$generated_epoch" data-stale-after="$stale_after">
     <span class="updated-warning" hidden></span>Généré le $updated — make dashboard-refresh

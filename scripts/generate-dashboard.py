@@ -18,6 +18,7 @@
 # (dashboard/assets/logos/) associés à chaque "stack/service" — ajoutés à la
 # main ci-dessous quand un nouveau service exposé via Traefik apparaît.
 import html
+import itertools
 import json
 import math
 import os
@@ -605,6 +606,23 @@ def render_stat_card(icon, value, label, value_class=""):
     return render("stat-card.html", icon=icon, value=value, label=label, value_class=value_class)
 
 
+# Identifiants uniques des bulles d'info (popover), un par définition rendue.
+_INFO_TIP_IDS = itertools.count(1)
+
+
+def render_info_tip(label, text):
+    """Bouton « i » + bulle qui affiche la définition d'une valeur au toucher.
+    L'infobulle native `title=` ne s'ouvre qu'au survol : au téléphone, ces
+    définitions étaient introuvables. Le bouton n'est visible que sans survol
+    (`hover: none`, voir .info-btn dans dashboard.css) ; sur ordinateur le
+    `title=` reste le seul mécanisme. Popover natif, sans JS ni polyfill :
+    `auto` (fermeture au toucher ailleurs, une seule bulle ouverte) et pas
+    `hint`, que Safari iOS ne connaît pas. `label` et `text` sont échappés ici."""
+    tip_id = f"info-tip-{next(_INFO_TIP_IDS)}"
+    return render("info-tip.html", id=tip_id, label=html.escape(label, quote=True),
+                  text=html.escape(text))
+
+
 def render_stat_item(value, label, value_class="", title=""):
     """`title` rend une infobulle native (comme les libellés de tracker repliés
     de clearr) : toutes les valeurs de la carte Torrents en portent une, la
@@ -612,7 +630,8 @@ def render_stat_item(value, label, value_class="", title=""):
     exactement (voir render_torrents_files_card)."""
     title_attr = f' title="{html.escape(title, quote=True)}"' if title else ""
     return render("stat-multi-item.html", value=value, label=label,
-                  value_class=value_class, title_attr=title_attr)
+                  value_class=value_class, title_attr=title_attr,
+                  info=render_info_tip(label, title) if title else "")
 
 
 def render_multi_stat_column(items):
@@ -770,7 +789,7 @@ def render_needle_gauge_card(title, icon, first, second, state=None):
     `state` : voyant d'état global, voir render_stat_header."""
     items = [
         render("needle-legend-item.html", value=value, label=label, tooltip=tooltip,
-               swatch_class=swatch_class)
+               swatch_class=swatch_class, info=render_info_tip(label, tooltip))
         for (value, label, tooltip), swatch_class in
         ((first, "needle-swatch-first"), (second, "needle-swatch-second"))
     ]
@@ -1047,12 +1066,13 @@ def render_scheduled_tasks_card(data_root, running):
         # qu'une liste de noms. Le glyphe hérite de la couleur du point.
         '<li title="{description}"><span class="status-dot status-dot-{cls}"></span>'
         '<span class="status-mark status-mark-{cls}" aria-hidden="true">{mark}</span>'
-        '{label}<span class="visually-hidden"> — {state}</span></li>'.format(
+        '{label}<span class="visually-hidden"> — {state}</span>{info}</li>'.format(
             cls="good" if ok else "critical",
             mark="✓" if ok else "✕",
             label=html.escape(label),
             state="OK" if ok else "en échec",
             description=html.escape(description),
+            info=render_info_tip(label, description),
         )
         for label, ok, description in items
     )
