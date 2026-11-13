@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
-# Collecte, en LECTURE SEULE, les preuves pour tenir la liste blanche du custom
-# format « Langue : MULTi (groupe vérifié) » (arr/profiles/custom-formats.json) :
-#   - preuve forte : les fichiers MULTi déjà en bibliothèque (Sonarr + Radarr),
-#     dont l'arr a lu les pistes audio (mediaInfo.audioLanguages) ;
-#   - indice seulement : les releases MULTi récentes de Nyaa (une recherche
-#     Prowlarr) et, avec --pages, la description de leur page Nyaa.
-# N'écrit rien nulle part : la décision et l'édition du JSON restent à faire
-# après accord de l'utilisateur (voir SKILL.md).
+# Tient la LISTE NOIRE du custom format « Langue : MULTi (groupe non exclu) »
+# (arr/profiles/custom-formats.json), qui fait compter un MULTi anime comme de
+# la VF sauf si son groupe est exclu. Liste noire depuis le 2026-11-13 (liste
+# blanche avant : aucun nouveau groupe ne pouvait plus prouver qu'il était bon,
+# ses releases n'étant jamais téléchargées). Tout est en LECTURE SEULE :
+#   - défaut : bilan par groupe, d'après les fichiers MULTi en bibliothèque
+#     (pistes audio lues par l'arr, mediaInfo.audioLanguages) et une recherche
+#     MULTi sur Nyaa (indice seulement, --pages lit les descriptions) ;
+#   - --controle : le filet de détection, appelé par /server-report : tout
+#     fichier MULTi en bibliothèque SANS audio FR, à remplacer, et dont le
+#     groupe est à exclure ;
+#   - --verifier : après `make arr-overrides`, CF .NET contre prédiction Python.
+# La décision et l'édition du JSON restent à faire après accord (SKILL.md).
 #
 #   python3 .claude/skills/multi-groupes/multi_groupes.py [--pages] [--json]
+#   python3 .claude/skills/multi-groupes/multi_groupes.py --controle [--tout] [--json]
+#   python3 .claude/skills/multi-groupes/multi_groupes.py --verifier
 import argparse
 import collections
 import html
@@ -25,23 +32,23 @@ from concurrent.futures import ThreadPoolExecutor
 import regex  # même moteur que la validation .NET / Python des custom formats
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-CF_NAME = "Langue : MULTi (groupe vérifié)"
+CF_NAME = "Langue : MULTi (groupe non exclu)"
+NO_GROUP = "(sans groupe)"
 
-# Seuil pour proposer un AJOUT : assez de fichiers, sur plusieurs œuvres (un
-# groupe peut sortir une série avec VF et une autre sans), et aucun sans FR.
-MIN_FILES = 5
-MIN_TITLES = 2
 FR_AUDIO = {"fre", "fra", "fr", "french"}
 # Catégorie Newznab « TV/Anime », côté Prowlarr.
 TV_ANIME_CATEGORY = 5070
 
-# Groupes exclus, avec leur mesure. Mémoire OBLIGATOIRE et pas une déduction :
-# un fichier sans FR finit remplacé, et sa preuve disparaît alors de la
-# bibliothèque (VARYG ressortait « 4 FR / 0 sans FR » le soir même). Y ajouter
-# tout groupe dont un MULTi sans FR est constaté, AVANT de remplacer le fichier.
-EXCLUDED_GROUPS = {
+# Pourquoi chaque groupe de la regex d'exclusion y est. Mémoire OBLIGATOIRE :
+# un fichier sans FR finit remplacé et sa preuve disparaît de la bibliothèque
+# (VARYG ressortait « 4 FR / 0 sans FR » le soir même). Le script signale
+# toute divergence entre ce dict et la regex du CF.
+EXCLUSION_NOTES = {
     "VARYG": "2026-10-07 : 9 MULTi sur 13 sans audio FR (Smoking Behind the "
              "Supermarket with You, jpn/eng/hin/tha), fichiers remplacés depuis",
+    "Anime-DL": "2026-11-13 : 8 MULTi sur 8 sans audio FR, sur 3 œuvres (titres "
+                "`MULTI.NO-VF`, grabés parce que `NO-VF` comptait comme VF ; "
+                "ex. TOUGEN.ANKI.S02E04, audio jpn/spa)",
 }
 
 spec = importlib.util.spec_from_file_location(
@@ -51,47 +58,86 @@ spec.loader.exec_module(aao)
 
 
 def load_cf():
+    """(multi, groupes_exclus, vf_explicite) : les trois specs du CF, compilées."""
     cfs = json.load(open(os.path.join(REPO_ROOT, "arr", "profiles", "custom-formats.json")))
     cf = next(c for c in cfs if c["name"] == CF_NAME)
-    by_impl = {}
-    for s in cf["specifications"]:
-        by_impl.setdefault((s["implementation"], s["negate"]), s["value"])
+    by_impl = {(s["implementation"], s["negate"]): s["value"] for s in cf["specifications"]}
     return (regex.compile(by_impl[("ReleaseTitleSpecification", False)], regex.I),
-            regex.compile(by_impl[("ReleaseGroupSpecification", False)], regex.I),
+            regex.compile(by_impl[("ReleaseGroupSpecification", True)], regex.I),
             regex.compile(by_impl[("ReleaseTitleSpecification", True)], regex.I))
 
 
-def has_fr_audio(media_info):
-    langs = re.split(r"[/,\s]+", ((media_info or {}).get("audioLanguages") or "").lower())
-    return bool(FR_AUDIO & set(langs))
+def excluded_in_regex(excluded):
+    """Les noms de groupe littéraux de ^(A|B)$, pour le contrôle de cohérence."""
+    m = re.fullmatch(r"\^\((.*)\)\$", excluded.pattern)
+    return set(m.group(1).split("|")) if m else set()
 
 
-def library_evidence(env, multi):
-    """{groupe: {"fr": n, "sans_fr": n, "titres": set, "exemples_sans_fr": [...]}}"""
-    out = collections.defaultdict(lambda: {"fr": 0, "sans_fr": 0, "titres": set(), "exemples_sans_fr": [],
-                                           "noms": []})
+def audio_status(media_info):
+    """'fr', 'sans_fr' ou 'non_tagué' : une piste sans tag de langue peut être
+    du FR (cas The Simpsons S37E11/E13), à confirmer par ffprobe."""
+    mi = media_info or {}
+    langs = [l for l in re.split(r"[/,\s]+", (mi.get("audioLanguages") or "").lower()) if l]
+    if FR_AUDIO & set(langs):
+        return "fr"
+    if "und" in langs or (mi.get("audioStreamCount") or 0) > len(langs):
+        return "non_tagué"
+    return "sans_fr"
+
+
+def library_files(env, multi):
+    """Tous les fichiers en bibliothèque dont le nom porte MULTi (hors
+    Multi-Subs) et dont l'arr a lu les pistes audio."""
+    out = []
     sources = (("Sonarr", aao.SONARR_CONTAINER, aao.SONARR_URL, env.get("SONARR_API_KEY"), "/series", "seriesId"),
                ("Radarr", aao.RADARR_CONTAINER, aao.RADARR_URL, env.get("RADARR_API_KEY"), "/movie", "movieId"))
     for label, ct, url, key, items_path, id_param in sources:
         if not key:
-            print(f"note: clé {label} absente, fichiers {label} ignorés", file=sys.stderr)
+            print(f"ERREUR {label} : clé d'API absente, fichiers ignorés", file=sys.stderr)
             continue
-        items = {i["id"]: i["title"] for i in aao.api_get(ct, url, key, items_path)}
+        try:
+            profiles = {p["id"]: p["name"] for p in aao.api_get(ct, url, key, "/qualityprofile")}
+            items = aao.api_get(ct, url, key, items_path)
+        except Exception as e:
+            print(f"ERREUR {label} : {e}", file=sys.stderr)
+            continue
         file_path = "/episodefile" if label == "Sonarr" else "/moviefile"
-        for item_id, title in items.items():
-            for f in aao.api_get(ct, url, key, f"{file_path}?{id_param}={item_id}"):
+        for item in items:
+            for f in aao.api_get(ct, url, key, f"{file_path}?{id_param}={item['id']}"):
                 name = f.get("sceneName") or os.path.basename(f.get("relativePath") or "")
-                group = f.get("releaseGroup")
-                if not group or not multi.search(name) or not (f.get("mediaInfo") or {}).get("audioLanguages"):
+                if not multi.search(name) or not (f.get("mediaInfo") or {}).get("audioLanguages"):
                     continue
-                g = out[group]
-                g["titres"].add(title)
-                g["noms"].append(name)
-                if has_fr_audio(f.get("mediaInfo")):
-                    g["fr"] += 1
-                else:
-                    g["sans_fr"] += 1
-                    g["exemples_sans_fr"].append(f"{name} (audio {f['mediaInfo']['audioLanguages']})")
+                out.append({"arr": label, "oeuvre": item["title"], "annee": item.get("year"),
+                            "profil": profiles.get(item.get("qualityProfileId"), "?"),
+                            "groupe": f.get("releaseGroup") or NO_GROUP, "nom": name,
+                            "fichier": f.get("relativePath"), "audio": f["mediaInfo"]["audioLanguages"],
+                            "statut": audio_status(f.get("mediaInfo")),
+                            # sous-titres FR : le fichier vaut au moins une VOSTFR (minimum du profil Anime)
+                            "st_fr": bool(FR_AUDIO & set(re.split(r"[/,\s]+", (f["mediaInfo"].get("subtitles") or "").lower())))})
+    return out
+
+
+def by_group(files, explicit_vf):
+    """{groupe: {"fr", "sans_fr", "non_tagué", "vf_explicite", "titres", "exemples_sans_fr", "noms"}}
+
+    Un MULTi qui annonce aussi la VF (`MULTi.VFF`, `MULTi.VF2`…) ne dit rien de
+    la pratique MULTi du groupe : le CF est nié sur ces titres. Avec FR, il
+    n'entre pas dans « fr » (faux « À AJOUTER » de WHY7726 le 2026-11-13, du
+    temps de la liste blanche). Sans FR, il compte en « sans_fr » : le groupe a
+    menti sur la VF."""
+    out = collections.defaultdict(lambda: {"fr": 0, "sans_fr": 0, "non_tagué": 0, "vf_explicite": 0,
+                                           "titres": set(), "exemples_sans_fr": [], "noms": []})
+    for f in files:
+        g = out[f["groupe"]]
+        # noms garde aussi les VF explicites : --verifier y teste la négation du CF
+        g["noms"].append(f["nom"])
+        if f["statut"] == "fr" and explicit_vf.search(f["nom"]):
+            g["vf_explicite"] += 1
+            continue
+        g["titres"].add(f["oeuvre"])
+        g[f["statut"]] += 1
+        if f["statut"] != "fr":
+            g["exemples_sans_fr"].append(f"{f['nom']} (audio {f['audio']})")
     return out
 
 
@@ -122,12 +168,13 @@ def parse_any(env, title):
     return None
 
 
-def verify(env, lib, multi, whitelist, explicit_vf):
+def verify(env, groups, multi, excluded, explicit_vf):
     """Après `make arr-overrides` : le CF tel que l'arr le calcule (.NET) doit
     coïncider avec la prédiction Python, sur des titres réels de chaque groupe
-    connu. Un désaccord = groupe parsé autrement qu'on ne le croit, ou regex
-    que les deux moteurs lisent différemment."""
-    titles = [n for g in lib.values() for n in g["noms"][:8]]
+    connu (sans groupe compris : la spec niée laisse alors passer). Un
+    désaccord = groupe parsé autrement qu'on ne le croit, ou regex que les
+    deux moteurs lisent différemment."""
+    titles = [n for g in groups.values() for n in g["noms"][:8]]
     with ThreadPoolExecutor(6) as ex:
         parsed = list(ex.map(lambda t: (t, parse_any(env, t)), titles))
     n = hits = 0
@@ -137,7 +184,7 @@ def verify(env, lib, multi, whitelist, explicit_vf):
             continue
         group, net_cfs = p
         n += 1
-        py = bool(multi.search(t)) and bool(group and whitelist.search(group)) and not explicit_vf.search(t)
+        py = bool(multi.search(t)) and not (group and excluded.search(group)) and not explicit_vf.search(t)
         net = CF_NAME in net_cfs
         hits += net
         if py != net:
@@ -146,6 +193,53 @@ def verify(env, lib, multi, whitelist, explicit_vf):
     for d in dis[:20]:
         print(f"  {d}")
     return 1 if dis else 0
+
+
+def controle(files, excluded, as_json, tout):
+    """Le filet : fichiers MULTi sans audio FR encore en bibliothèque, regroupés
+    par œuvre et groupe, avec l'action qu'ils appellent :
+      - « exclure le groupe » si le groupe n'est pas encore dans la regex ;
+      - « remplacer » si le fichier ne vaut même pas une VOSTFR (pas de
+        sous-titres FR) ou si le profil exige la VF (`… VF`).
+    Un fichier sans audio FR mais sous-titré FR, d'un groupe déjà exclu, sur un
+    profil qui accepte la VOSTFR, n'appelle rien (il vaut le minimum du
+    profil, et sans upgrade rien ne le remplacera) : masqué sauf --tout.
+    Sortie vide = rien à signaler."""
+    rows = collections.OrderedDict()
+    for f in sorted(files, key=lambda f: (f["oeuvre"].lower(), f["nom"])):
+        if f["statut"] == "fr":
+            continue
+        k = (f["arr"], f["oeuvre"], f["groupe"])
+        r = rows.setdefault(k, {"arr": f["arr"], "oeuvre": f["oeuvre"], "annee": f["annee"],
+                                "profil": f["profil"], "groupe": f["groupe"],
+                                "groupe_exclu": f["groupe"] != NO_GROUP and bool(excluded.search(f["groupe"])),
+                                "sans_fr": 0, "non_tagué": 0, "sans_st_fr": 0, "audio": set(), "exemples": []})
+        r[f["statut"]] += 1
+        r["sans_st_fr"] += not f["st_fr"]
+        r["audio"].add(f["audio"])
+        r["exemples"].append(f["nom"])
+    out = []
+    for r in rows.values():
+        actions = []
+        if not r["groupe_exclu"] and r["groupe"] != NO_GROUP and r["sans_fr"]:
+            actions.append("exclure le groupe")
+        if r["sans_st_fr"] or r["profil"].endswith("VF"):
+            actions.append("remplacer")
+        if r["non_tagué"]:
+            actions.append("confirmer par ffprobe (piste non taguée)")
+        if actions or tout:
+            out.append(dict(r, audio=sorted(r["audio"]), exemples=r["exemples"][:3], actions=actions))
+    if as_json:
+        print(json.dumps(out, ensure_ascii=False, indent=1))
+        return 0
+    for r in out:
+        etat = "groupe déjà exclu" if r["groupe_exclu"] else "groupe NON exclu"
+        detail = (f"{r['sans_fr']} sans FR" + (f", {r['non_tagué']} piste non taguée" if r["non_tagué"] else "")
+                  + (f", dont {r['sans_st_fr']} sans sous-titres FR non plus" if r["sans_st_fr"] else ", sous-titres FR présents"))
+        print(f"[{r['arr']}/{r['profil']}] {r['oeuvre']} ({r['annee']}) — {r['groupe']} ({etat}) : "
+              f"{detail} ; audio {', '.join(r['audio'])} ; action : {', '.join(r['actions']) or 'aucune'} ; "
+              f"ex. {r['exemples'][0]}")
+    return 0
 
 
 def nyaa_declaration(info_url):
@@ -174,7 +268,7 @@ def nyaa_declaration(info_url):
     return "audio non précisé"
 
 
-def nyaa_candidates(env, multi, explicit_vf, pages):
+def nyaa_candidates(env, multi, explicit_vf, excluded, pages):
     pk = env.get("PROWLARR_API_KEY")
     if not pk:
         print("note: clé Prowlarr absente, pas de candidats Nyaa", file=sys.stderr)
@@ -194,55 +288,62 @@ def nyaa_candidates(env, multi, explicit_vf, pages):
         if g:
             out[g].append({"titre": r["title"], "page": r.get("infoUrl"), "declaration": None})
     if pages:
-        # Deux pages par groupe hors liste blanche suffisent pour un indice.
-        _, whitelist, _ = load_cf()
+        # Deux pages par groupe non exclu suffisent pour un indice : une
+        # déclaration « audio sans FR » désigne un groupe à surveiller.
         for g, items in out.items():
-            if not whitelist.search(g) and g not in EXCLUDED_GROUPS:
+            if not excluded.search(g):
                 for c in items[:2]:
                     c["declaration"] = nyaa_declaration(c["page"])
     return out
 
 
-def verdict(group, in_list, lib):
-    if group in EXCLUDED_GROUPS:
-        return "À RETIRER (exclu)" if in_list else "exclu"
-    fr, sans = (lib["fr"], lib["sans_fr"]) if lib else (0, 0)
-    titres = len(lib["titres"]) if lib else 0
-    if in_list:
-        if sans:
-            return "À RETIRER"
-        if fr < MIN_FILES or titres < MIN_TITLES:
-            return "garder (preuve faible)"
-        return "garder"
-    if sans:
-        return "exclu (MULTi sans FR constatée)"
-    if fr >= MIN_FILES and titres >= MIN_TITLES:
-        return "À AJOUTER"
-    if fr:
-        return "preuve insuffisante"
-    return "candidat (aucun fichier)"
+def verdict(group, is_excluded, lib):
+    if is_excluded:
+        return "exclu"
+    if group == NO_GROUP:
+        return "sans groupe (non excluable)" if lib["sans_fr"] else "sans groupe"
+    if lib and lib["sans_fr"]:
+        return "À EXCLURE"
+    if lib and lib["non_tagué"]:
+        return "à confirmer (piste non taguée)"
+    if lib and lib["fr"]:
+        return "accepté (FR constaté)"
+    return "accepté (non vérifié)"
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--pages", action="store_true", help="lit aussi la description des pages Nyaa (indice)")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--controle", action="store_true",
+                    help="filet de détection : fichiers MULTi sans audio FR en bibliothèque, puis s'arrête")
+    ap.add_argument("--tout", action="store_true",
+                    help="avec --controle : liste aussi les fichiers qui n'appellent aucune action")
     ap.add_argument("--verifier", action="store_true",
                     help="compare le CF calculé par l'arr (.NET) à la prédiction Python, puis s'arrête")
     args = ap.parse_args()
     env = aao.load_env_file(os.path.join(REPO_ROOT, "arr", ".env"))
-    multi, whitelist, explicit_vf = load_cf()
-    lib = library_evidence(env, multi)
+    multi, excluded, explicit_vf = load_cf()
+    in_regex = excluded_in_regex(excluded)
+    if in_regex != set(EXCLUSION_NOTES):
+        print(f"ERREUR cohérence : regex d'exclusion {sorted(in_regex)} ≠ EXCLUSION_NOTES "
+              f"{sorted(EXCLUSION_NOTES)}", file=sys.stderr)
+    files = library_files(env, multi)
+    if args.controle:
+        return controle(files, excluded, args.json, args.tout)
+    groups = by_group(files, explicit_vf)
     if args.verifier:
-        return verify(env, lib, multi, whitelist, explicit_vf)
-    cand = nyaa_candidates(env, multi, explicit_vf, args.pages)
+        return verify(env, groups, multi, excluded, explicit_vf)
+    cand = nyaa_candidates(env, multi, explicit_vf, excluded, args.pages)
     rows = []
-    for g in sorted(set(lib) | set(cand), key=str.lower):
-        in_list = bool(whitelist.search(g))
-        l = lib.get(g)
+    for g in sorted(set(groups) | set(cand), key=str.lower):
+        is_excl = g != NO_GROUP and bool(excluded.search(g))
+        l = groups.get(g)
         rows.append({
-            "groupe": g, "liste_blanche": in_list, "verdict": verdict(g, in_list, l),
+            "groupe": g, "exclu": is_excl, "verdict": verdict(g, is_excl, l),
             "fichiers_fr": l["fr"] if l else 0, "fichiers_sans_fr": l["sans_fr"] if l else 0,
+            "fichiers_non_tagués": l["non_tagué"] if l else 0,
+            "fichiers_vf_explicite": l["vf_explicite"] if l else 0,
             "oeuvres": sorted(l["titres"]) if l else [],
             "exemples_sans_fr": l["exemples_sans_fr"][:3] if l else [],
             "nyaa_recent": len(cand.get(g, [])),
@@ -252,18 +353,17 @@ def main():
     if args.json:
         print(json.dumps(rows, ensure_ascii=False, indent=1))
         return
-    print(f"liste blanche actuelle : {whitelist.pattern}")
-    print(f"seuil d'ajout : ≥ {MIN_FILES} fichiers MULTi avec audio FR, sur ≥ {MIN_TITLES} œuvres, 0 sans FR\n")
+    print(f"groupes exclus : {excluded.pattern}\n")
     for r in rows:
-        print(f"[{r['verdict']}] {r['groupe']}{' (liste blanche)' if r['liste_blanche'] else ''} — "
-              f"fichiers {r['fichiers_fr']} FR / {r['fichiers_sans_fr']} sans FR sur {len(r['oeuvres'])} œuvre(s) ; "
-              f"Nyaa récent : {r['nyaa_recent']} {r['nyaa_declarations'] or ''}")
-        if r["groupe"] in EXCLUDED_GROUPS:
-            print(f"    exclusion : {EXCLUDED_GROUPS[r['groupe']]}")
+        print(f"[{r['verdict']}] {r['groupe']} — "
+              f"fichiers {r['fichiers_fr']} FR / {r['fichiers_sans_fr']} sans FR"
+              + (f" / {r['fichiers_non_tagués']} non tagués" if r["fichiers_non_tagués"] else "")
+              + f" sur {len(r['oeuvres'])} œuvre(s) ; Nyaa récent : {r['nyaa_recent']} {r['nyaa_declarations'] or ''}"
+              + (f" ; {r['fichiers_vf_explicite']} MULTi+VF explicite non comptés" if r["fichiers_vf_explicite"] else ""))
+        if r["groupe"] in EXCLUSION_NOTES:
+            print(f"    exclusion : {EXCLUSION_NOTES[r['groupe']]}")
         for e in r["exemples_sans_fr"]:
             print(f"    sans FR : {e}")
-        if r["nyaa_exemple"] and not r["liste_blanche"]:
-            print(f"    ex. Nyaa : {r['nyaa_exemple']}")
 
 
 if __name__ == "__main__":

@@ -84,7 +84,7 @@
       },
       "scores": {
         "Langue : VF (hors MULTi)": 3000,
-        "Langue : MULTi (groupe vérifié)": 3000,
+        "Langue : MULTi (groupe non exclu)": 3000,
         "Langue : VOSTFR": 2000,
         "Résolution : 1080p": 200,
         "Codec : AV1": 30,
@@ -109,7 +109,7 @@
       },
       "scores": {
         "Langue : VF (hors MULTi)": 3000,
-        "Langue : MULTi (groupe vérifié)": 3000,
+        "Langue : MULTi (groupe non exclu)": 3000,
         "Langue : VOSTFR": 2000,
         "Résolution : 1080p": 200,
         "Codec : AV1": 30,

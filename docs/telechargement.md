@@ -253,12 +253,21 @@ titrées VOSTFR, la règle « VOSTFR minimum » donne d'elle-même la VOF.
 > sans français quand un tracker français l'annonce, mais **12 % sans
 > français pour un `MULTi` de Nyaa** (pistes multiples d'une plateforme).
 > Ces 12 % viennent tous d'un seul groupe, **VARYG** (9 MULTi sur 13 sans
-> français). D'où des profils anime qui ne comptent un `MULTi` comme de la VF
-> que pour une **liste blanche de groupes vérifiés** : Tsundere-Raws,
-> Manostro, BYOR, ToonsHub, KAF, TenmaLand, SUPPLY, BATGirl, FW, GL0P
-> (181 fichiers MULTi en bibliothèque, tous avec l'audio français, au
-> 2026-10-07), puis FDRY le 2026-10-25 (8 fichiers FR sur 2 œuvres). Un groupe n'y entre qu'après lecture de ses fichiers : le skill
-> Claude `multi-groupes` propose les ajouts et retraits.
+> français). D'où des profils anime qui comptent un `MULTi` comme de la VF
+> **sauf pour une liste noire de groupes** : VARYG et Anime-DL au
+> 2026-11-13. Un `NO-VF` dans le titre (`MULTI.NO-VF`) n'est jamais lu
+> comme une VF.
+>
+> Liste noire depuis le 2026-11-13. Avant, c'était une liste blanche (un
+> groupe n'était accepté qu'après lecture de ses fichiers), mais un groupe
+> hors liste n'était jamais téléchargé et ne pouvait donc jamais faire ses
+> preuves.
+
+> [!WARNING]
+> Sans upgrade, un `MULTi` sans français téléchargé comme VF **reste en
+> place**. `/server-report` le détecte (fichier MULTi en bibliothèque sans
+> piste audio française). Le skill Claude `multi-groupes` propose alors
+> d'exclure le groupe, puis `/remplacer-release` remplace le fichier.
 
 #### Comment les profils les appliquent
 
@@ -269,8 +278,8 @@ Six profils, déclarés dans `arr/profiles/` et appliqués chaque nuit par
 |---|---|---|---|---|---|
 | Sonarr | `Séries` | séries, défaut | VOSTFR | VF ou MULTi | 2160p > 1080p > 720p |
 | Sonarr | `Séries VF` | séries pour enfants | VF ou MULTi | — | 2160p > 1080p > 720p |
-| Sonarr | `Anime` | anime, défaut | VOSTFR | VF explicite, ou MULTi d'un groupe vérifié | 1080p > 720p |
-| Sonarr | `Anime VF` | anime pour enfants | VF explicite, ou MULTi d'un groupe vérifié | — | 1080p > 720p |
+| Sonarr | `Anime` | anime, défaut | VOSTFR | VF explicite, ou MULTi d'un groupe non exclu | 1080p > 720p |
+| Sonarr | `Anime VF` | anime pour enfants | VF explicite, ou MULTi d'un groupe non exclu | — | 1080p > 720p |
 | Radarr | `Films` | films, défaut | VOSTFR | VF ou MULTi | 2160p > 1080p > 720p |
 | Radarr | `Films VF` | films pour enfants | VF ou MULTi | — | 2160p > 1080p > 720p |
 
@@ -286,7 +295,7 @@ avec des ordres de grandeur qui fixent les priorités :
 
 | Ordre | Custom format | Score |
 |---|---|---|
-| 1. langue | VF : `Langue : VF` (séries, films ; `MULTi` compris), ou en anime `Langue : VF (hors MULTi)` + `Langue : MULTi (groupe vérifié)` | 3000 |
+| 1. langue | VF : `Langue : VF` (séries, films ; `MULTi` compris), ou en anime `Langue : VF (hors MULTi)` + `Langue : MULTi (groupe non exclu)` | 3000 |
 | | `Langue : VOSTFR` | 2000 |
 | | *minimum du profil* | 2000, ou 3000 pour un profil `… VF` |
 | 2. résolution | `Résolution : 2160p` / `1080p` | 300 / 200 |
@@ -371,6 +380,10 @@ folders, tags…) peut être ajusté librement dans les UI.
 
 ### Pièges connus
 
+- **`NO-VF` contient `VF`.** Jusqu'au 2026-11-13, un titre
+  `MULTI.NO-VF` (groupe Anime-DL) était lu comme une VF : 8 épisodes sans
+  audio français (mais sous-titrés) ont été grabés comme VF. `NO-VF` est
+  désormais exclu explicitement de toutes les règles « VF ».
 - **Un torrent mort ne passe jamais en échec côté arr.** Tracker en 403,
   aucun seeder, métadonnées jamais reçues : Sonarr/Radarr ne voient que
   « en téléchargement » et attendent sans fin (18 jours vécus). Le filtre

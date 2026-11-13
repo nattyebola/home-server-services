@@ -8,6 +8,13 @@
         "negate": false,
         "required": true,
         "value": "\\b(MULTi(?![ ._-]?Subs?)|TRUEFRENCH|FRENCH|VFF|VFQ|VFI|VF2|VOF|VF)\\b(?![^()]*\\))(?<!\\([^)]*)"
+      },
+      {
+        "name": "Pas de « NO-VF » (audio français absent, annoncé)",
+        "implementation": "ReleaseTitleSpecification",
+        "negate": true,
+        "required": true,
+        "value": "\\bNO[ ._-]?VF\\b"
       }
     ]
   },
@@ -20,11 +27,18 @@
         "negate": false,
         "required": true,
         "value": "\\b(TRUEFRENCH|FRENCH|VFF|VFQ|VFI|VF2|VOF|VF)\\b(?![^()]*\\))(?<!\\([^)]*)"
+      },
+      {
+        "name": "Pas de « NO-VF » (audio français absent, annoncé)",
+        "implementation": "ReleaseTitleSpecification",
+        "negate": true,
+        "required": true,
+        "value": "\\bNO[ ._-]?VF\\b"
       }
     ]
   },
   {
-    "name": "Langue : MULTi (groupe vérifié)",
+    "name": "Langue : MULTi (groupe non exclu)",
     "specifications": [
       {
         "name": "MULTi annoncé",
@@ -34,11 +48,11 @@
         "value": "\\bMULTi(?![ ._-]?Subs?)\\b(?![^()]*\\))(?<!\\([^)]*)"
       },
       {
-        "name": "Groupe dont les MULTi ont l'audio FR (ffprobe)",
+        "name": "Groupe exclu : MULTi sans audio FR constaté",
         "implementation": "ReleaseGroupSpecification",
-        "negate": false,
+        "negate": true,
         "required": true,
-        "value": "^(Tsundere-?Raws|Manostro|BYOR|ToonsHub|KAF|TenmaLand|SUPPLY|BATGirl|FW|GL0P|FDRY)$"
+        "value": "^(VARYG|Anime-DL)$"
       },
       {
         "name": "Pas déjà compté par Langue : VF (hors MULTi)",

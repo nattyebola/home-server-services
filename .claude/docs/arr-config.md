@@ -272,10 +272,10 @@ ou aux connexions arr → Jellyfin.
     sans FR quand un tracker français annonce VF/VOSTFR, 2 % pour une VOSTFR
     Nyaa, **12 % pour un `MULTi` Nyaa** (multi de plateforme sans FR), 100 %
     sans marqueur. D'où `Langue : VF (hors MULTi)` sur les profils anime,
-    complété le 2026-10-07 par `Langue : MULTi (groupe vérifié)` (3000) : les
+    complété le 2026-10-07 par `Langue : MULTi (groupe vérifié)` (3000, liste noire depuis, voir plus bas) : les
     12 % sont tous VARYG (9/13 sans FR), les autres groupes mesurés 58/58 avec
-    audio FR. **Liste blanche** (`ReleaseGroupSpecification`), pas liste noire :
-    un groupe inconnu (T3KASHi…) reste rejeté. Sans elle, 314 épisodes perdaient
+    audio FR. Liste blanche à l'origine (`ReleaseGroupSpecification`) :
+    un groupe inconnu (T3KASHi…) restait rejeté. Sans elle, 314 épisodes perdaient
     une MULTi VF pour une VOSTFR (737 releases Tsundere-Raws sur Nyaa, dont les
     tags FR entre parenthèses sont ignorés). Spec niée sur la VF explicite pour
     ne pas compter double (221 titres `MULTI.VFF`). Validé : 0 désaccord .NET /
@@ -284,10 +284,23 @@ ou aux connexions arr → Jellyfin.
     sur ≥ 2 œuvres, 0 sans FR ; 181 fichiers MULTi, 0 sans FR, pour les 10
     groupes ; `--verifier` : 0 désaccord sur 101 titres). FDRY ajouté le
     2026-10-25 (8 fichiers FR, 0 sans FR, 2 œuvres hors anime ; `--verifier` :
-    0 désaccord sur 116 titres). Liste tenue
-    par le skill `multi-groupes` (preuve = audio des fichiers en
-    bibliothèque ; `EXCLUDED_GROUPS` garde la mémoire des exclusions, la
-    base d'analyse n'existant plus). Les
+    0 désaccord sur 116 titres).
+    **Passée en liste noire le 2026-11-13** (choix utilisateur) : CF renommé
+    `Langue : MULTi (groupe non exclu)`, spec de groupe **niée**,
+    `^(VARYG|Anime-DL)$`. La liste blanche s'auto-bloquait : un groupe hors
+    liste n'était jamais grabé, donc jamais prouvé. FDRY y était entré sur
+    8 fichiers tous `MULTi.VFF`, qui ne prouvaient rien (le CF est nié sur
+    la VF explicite). Le risque accepté : sans upgrade, un MULTi sans FR
+    reste en place. Filet passif : `multi_groupes.py --controle` dans
+    `/server-report`. Un MULTi sans groupe parsé est accepté. Le même jour,
+    `\bNO[ ._-]?VF\b` nié sur `Langue : VF` et `Langue : VF (hors MULTi)` :
+    `\bVF\b` lisait une VF dans `MULTI.NO-VF`, et 8 épisodes Anime-DL sans
+    audio FR (sous-titrés FR) avaient été grabés à 3000. `--verifier` : 0
+    désaccord sur 159 titres. CF renommé sur place
+    (`PUT /customformat/<id>`), `apply-arr-overrides.py` ne supprimant pas
+    les CF orphelins. Liste tenue par le skill `multi-groupes`
+    (`EXCLUSION_NOTES` garde la mesure de chaque exclusion, le fichier
+    fautif finissant remplacé). Les
     lookarounds anti-suffixe entre parenthèses sont gardés (titres de post
     qui listent tous les tags).
   - **Anime 1080p max** : 30 épisodes sur 1 441 (2 %) ont une 2160p avec

@@ -73,6 +73,9 @@ ARRS = {
 # (japonais, anglais…) y est juste, et la forcer en French inventerait une VF
 # (faux positif sur une VOSTFR anime le 2026-10-11).
 FRENCH_TAGS = re.compile(r"\b(MULTI|MULTi|VFF|VFQ|VF|VF2|TRUEFRENCH|FRENCH)\b")
+# `MULTI.NO-VF` (Anime-DL) annonce l'ABSENCE de VF : sans ce garde, \bVF\b le
+# lirait comme une VF et l'alerte pousserait à forcer French.
+NO_VF = re.compile(r"\bNO[ ._-]?VF\b", re.I)
 
 # Même mécanisme que scripts/apply-arr-overrides.py et
 # scripts/search-missing.py, dupliqué plutôt qu'importé (chaque script du repo
@@ -186,7 +189,7 @@ def suspicious_language(candidate):
     """Vrai si le nom du fichier annonce du français que la détection n'a pas
     vu. Purement indicatif — l'appelant décide."""
     name = os.path.basename(candidate.get("path", ""))
-    if not FRENCH_TAGS.search(name):
+    if not FRENCH_TAGS.search(name) or NO_VF.search(name):
         return False
     return not any(l.get("name") == "French" for l in candidate.get("languages") or [])
 

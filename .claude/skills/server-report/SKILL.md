@@ -1,6 +1,6 @@
 ---
 name: server-report
-description: Passe en revue l'état complet du serveur (containers, cron, disque, sauvegarde, imports arr en attente, titres suivis sans fichier, montées de version en attente, logs de tous les services) et rapporte en français uniquement ce qui ne va pas, en écartant le bruit déjà résolu. À utiliser quand l'utilisateur demande un rapport d'état, un check de santé du serveur, ou de repasser sur les logs/l'état du projet.
+description: Passe en revue l'état complet du serveur (containers, cron, disque, sauvegarde, imports arr en attente, titres suivis sans fichier, MULTi anime sans audio français, montées de version en attente, logs de tous les services) et rapporte en français uniquement ce qui ne va pas, en écartant le bruit déjà résolu. À utiliser quand l'utilisateur demande un rapport d'état, un check de santé du serveur, ou de repasser sur les logs/l'état du projet.
 ---
 
 # server-report — audit d'état + logs du serveur
@@ -216,7 +216,7 @@ python3 scripts/image-versions.py pending
 Liste vide → « aucune montée de version en attente » dans la ligne de
 couverture, rien d'autre. Sinon, lister chaque entrée (`service from → to`,
 plusieurs entrées d'un même service fusionnées) dans le bloc « À traiter »
-(section 9). **Ne pas lancer le skill `changelogs`** ni lire les notes de
+(section 10). **Ne pas lancer le skill `changelogs`** ni lire les notes de
 version, et ne jamais marquer une entrée traitée : l'utilisateur lancera
 `/changelogs` (décidé le 2026-10-20, remplace l'enchaînement automatique
 du 2026-10-16). Une montée de version n'est pas une anomalie et n'a pas de
@@ -241,7 +241,35 @@ couverture. Sinon, une ligne par titre dans le bloc « À traiter » :
 `[type] titre (année) — sorti le …`. Une ligne `ERREUR` sur stderr (arr
 injoignable) est une anomalie, avec une ligne dans le tableau.
 
-## 9. Format du rapport — anomalies seulement
+## 9. MULTi sans audio français (filet de la liste noire)
+
+Depuis le 2026-11-13, un `MULTi` anime vaut VF sauf pour une liste noire de
+groupes (skill `multi-groupes`). Sans upgrade, un MULTi sans français grabé
+comme VF reste en place, et rien d'autre ne le voit : c'est ce filet.
+
+```bash
+python3 .claude/skills/multi-groupes/multi_groupes.py --controle
+```
+
+Lecture seule, aucune requête aux indexeurs. Ne liste que les fichiers qui
+appellent une action (un MULTi sans FR mais sous-titré FR, d'un groupe déjà
+exclu, sur un profil qui accepte la VOSTFR, est masqué : il vaut le
+minimum du profil).
+
+Sortie vide → « aucun MULTi sans FR » dans la ligne de couverture. Sinon,
+une ligne de tableau par œuvre et groupe, en **action requise** :
+
+| Action affichée | Statut |
+|---|---|
+| `exclure le groupe` | action requise, `/multi-groupes` (inscrire l'exclusion **avant** de remplacer) |
+| `remplacer` | action requise, `/remplacer-release` |
+| `confirmer par ffprobe` | à surveiller : une piste sans tag peut être du FR |
+
+Une ligne `ERREUR` sur stderr (arr injoignable, ou regex d'exclusion
+incohérente avec `EXCLUSION_NOTES`) est une anomalie, avec une ligne dans
+le tableau.
+
+## 10. Format du rapport — anomalies seulement
 
 Structure :
 
