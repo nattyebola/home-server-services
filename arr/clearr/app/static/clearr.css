@@ -146,6 +146,20 @@ tr.collapsing {
   text-decoration: underline;
 }
 
+/* En-tête de tri (_sort_header.html) : un vrai <button>, pour le clavier et le
+   lecteur d'écran, mais habillé comme le texte de l'en-tête qu'il remplit
+   (petites capitales grises, taille .72rem héritée du <tr>). Sans cette remise
+   à zéro, le style par défaut du navigateur (fond gris, bordure, police
+   système) s'appliquait. */
+.sort-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
 /* Fiche détail : libellés en colonne fixe pour que les valeurs s'alignent,
    sans passer par une <table> (le contenu est une liste de paires, pas un
    tableau de données). */

@@ -1,5 +1,5 @@
 <div class="modal-header">
-  <h2 class="modal-title h5" id="modal-title"">
+  <h2 class="modal-title h5" id="modal-title">
     {% if orphans %}Supprimer {{ orphans|length }} fichier(s) orphelin(s) de library/{% else %}Aucun orphelin dans library/{% endif %}
   </h2>
   <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
@@ -33,9 +33,9 @@
   {# Empreinte de la liste affichée : le POST refuse si elle a changé (core.orphans_fingerprint). #}
   <input type="hidden" name="fingerprint" value="{{ fingerprint }}">
   {% if orphans %}
-  <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
+  <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal" autofocus>Annuler</button>
   <button type="button" class="btn btn-danger btn-sm" data-post="/library/orphans" data-target="#tab-content">Supprimer les {{ orphans|length }} fichier(s)</button>
   {% else %}
-  <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Fermer</button>
+  <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal" autofocus>Fermer</button>
   {% endif %}
 </form>

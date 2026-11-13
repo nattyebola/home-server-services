@@ -410,7 +410,8 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
 - **Définitions au téléphone : bouton « i » + popover** (2026-11-13,
   demandé, `render_info_tip()` / `info-tip.html`). Toute valeur qui porte un
   `title=` de définition (Torrents, Tunnel VPN, légendes des jauges, tâches
-  planifiées) a aussi son bouton, **visible seulement en
+  planifiées) a aussi son bouton, **placé avant le libellé** (alignés en
+  colonne, demandé), **visible seulement en
   `(hover: none) and (pointer: coarse)`** — `hover: none` seul attrape aussi
   un navigateur sans pointeur (Chrome headless l'affichait). `popover`
   `auto`, pas `hint` (absent de Safari iOS) ; bulle centrée, pas d'ancrage

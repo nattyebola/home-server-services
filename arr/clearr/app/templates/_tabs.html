@@ -1,59 +1,60 @@
-{# role="tablist"/"tab" + aria-selected : Bootstrap les exige pour ce composant,
-   et sans eux la barre n'est qu'une liste de liens pour un lecteur d'écran.
-   `active` n'était passé par AUCUNE route (webapp.py), donc la comparaison
-   portait sur un Undefined et l'onglet courant n'était jamais mis en évidence —
-   aucun repère de « où suis-je » dans un outil dont les trois vues ont des
-   sémantiques de suppression différentes.
+{# Barre de navigation entre les vues, PAS un widget d'onglets ARIA : chaque
+   entrée recharge une vue depuis le serveur. role="tablist"/"tab" (posés le
+   2026-08-09, retirés le 2026-11-13) promettaient la navigation aux flèches
+   et des tabpanel qui n'ont jamais existé ; un <nav> + aria-current="page"
+   dit exactement ce qui est.
+   Le style nav-tabs de Bootstrap n'en dépend pas.
+   `active` doit être passé par chaque route (webapp.py) : sans lui, aucune
+   entrée n'est marquée — aucun repère de « où suis-je » dans un outil dont
+   les vues ont des sémantiques de suppression différentes.
+   data-focus-key : clearr.js rend le focus à l'entrée cliquée après le
+   remplacement du fragment, qui contient cette barre.
    tab_visible (webapp.TAB_SERVICES) : un onglet dont le service est arrêté
    n'est pas affiché.
    Pictos de la colonne TYPE devant chaque libellé (2026-10-08), aimant pour
    Torrents. #}
 {% from "_kind_icon.html" import kind_icon %}
-<ul class="nav nav-tabs mb-3" role="tablist">
-  <li class="nav-item" role="presentation">
-    <a href="#" role="tab" class="nav-link {{ 'active' if active == 'torrents' else '' }}"
-       aria-selected="{{ 'true' if active == 'torrents' else 'false' }}"
+<nav aria-label="Vues">
+<ul class="nav nav-tabs mb-3">
+  <li class="nav-item">
+    <a href="#" class="nav-link {{ 'active' if active == 'torrents' else '' }}"
        {% if active == 'torrents' %}aria-current="page"{% endif %}
-       data-get="/tab/torrents" data-target="#tab-content">{{ kind_icon("torrents", decorative=True) }} Torrents</a>
+       data-get="/tab/torrents" data-target="#tab-content" data-focus-key="tab-torrents">{{ kind_icon("torrents", decorative=True) }} Torrents</a>
   </li>
   {% if tab_visible('bd') %}
-  <li class="nav-item" role="presentation">
+  <li class="nav-item">
     {# BD = les torrents déposés sous completed/bd, la bibliothèque de komga/.
        Même source et même gabarit que Torrents, ce n'est qu'un filtre — voir
        webapp.TORRENT_TABS. Sémantique de suppression DIFFÉRENTE des autres
        onglets : sans hardlink vers library/, supprimer le torrent supprime la
        BD elle-même. #}
-    <a href="#" role="tab" class="nav-link {{ 'active' if active == 'bd' else '' }}"
-       aria-selected="{{ 'true' if active == 'bd' else 'false' }}"
+    <a href="#" class="nav-link {{ 'active' if active == 'bd' else '' }}"
        {% if active == 'bd' %}aria-current="page"{% endif %}
-       data-get="/tab/bd" data-target="#tab-content">{{ kind_icon("bd", decorative=True) }} BD</a>
+       data-get="/tab/bd" data-target="#tab-content" data-focus-key="tab-bd">{{ kind_icon("bd", decorative=True) }} BD</a>
   </li>
   {% endif %}
   {% if tab_visible('series') %}
-  <li class="nav-item" role="presentation">
-    <a href="#" role="tab" class="nav-link {{ 'active' if active == 'series' else '' }}"
-       aria-selected="{{ 'true' if active == 'series' else 'false' }}"
+  <li class="nav-item">
+    <a href="#" class="nav-link {{ 'active' if active == 'series' else '' }}"
        {% if active == 'series' %}aria-current="page"{% endif %}
-       data-get="/tab/series" data-target="#tab-content">{{ kind_icon("series", decorative=True) }} Séries</a>
+       data-get="/tab/series" data-target="#tab-content" data-focus-key="tab-series">{{ kind_icon("series", decorative=True) }} Séries</a>
   </li>
   {% endif %}
   {% if tab_visible('animes') %}
-  <li class="nav-item" role="presentation">
+  <li class="nav-item">
     {# Animés = les séries dont Sonarr dit seriesType == "anime" (core.is_anime).
        Même source, même gabarit et mêmes routes de suppression que Séries : ce
        n'est qu'un filtre, voir webapp.ARR_TABS. #}
-    <a href="#" role="tab" class="nav-link {{ 'active' if active == 'animes' else '' }}"
-       aria-selected="{{ 'true' if active == 'animes' else 'false' }}"
+    <a href="#" class="nav-link {{ 'active' if active == 'animes' else '' }}"
        {% if active == 'animes' %}aria-current="page"{% endif %}
-       data-get="/tab/animes" data-target="#tab-content">{{ kind_icon("anime", decorative=True) }} Animés</a>
+       data-get="/tab/animes" data-target="#tab-content" data-focus-key="tab-animes">{{ kind_icon("anime", decorative=True) }} Animés</a>
   </li>
   {% endif %}
   {% if tab_visible('films') %}
-  <li class="nav-item" role="presentation">
-    <a href="#" role="tab" class="nav-link {{ 'active' if active == 'films' else '' }}"
-       aria-selected="{{ 'true' if active == 'films' else 'false' }}"
+  <li class="nav-item">
+    <a href="#" class="nav-link {{ 'active' if active == 'films' else '' }}"
        {% if active == 'films' %}aria-current="page"{% endif %}
-       data-get="/tab/films" data-target="#tab-content">{{ kind_icon("film", decorative=True) }} Films</a>
+       data-get="/tab/films" data-target="#tab-content" data-focus-key="tab-films">{{ kind_icon("film", decorative=True) }} Films</a>
   </li>
   {% endif %}
   {# « Fichiers orphelins » à droite des onglets (2026-10-08, pour libérer la
@@ -63,7 +64,7 @@
      son contexte). La purge en masse des absents (ex-« Purger les ABS ») a été
      retirée le 2026-10-07 : un absent se supprime ligne à ligne. #}
   {% if active == 'torrents' %}
-  <li class="nav-item ms-auto align-self-center" role="presentation">
+  <li class="nav-item ms-auto align-self-center">
     <a href="#" class="btn btn-outline-secondary btn-sm" data-get="/library/orphans/confirm?{{ qs }}" data-target="#modal-body"
        title="Chercher les fichiers de library/ qu'aucun torrent ne couvre et qu'aucun arr ne connaît">
       Fichiers orphelins
@@ -71,3 +72,4 @@
   </li>
   {% endif %}
 </ul>
+</nav>

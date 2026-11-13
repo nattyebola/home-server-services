@@ -1,0 +1,21 @@
+{# Ligne d'en-têtes triables, commune aux 3 gabarits de tableau (Torrents/BD,
+   Séries/Animés, Films) — un seul bloc plutôt que trois copies, comme
+   title_cell dans _meta.html.
+   Modèle « tableau triable » : un <button> dans chaque <th scope="col">, et
+   aria-sort sur la seule colonne triée (pas de aria-sort="none" ailleurs).
+   La flèche est décorative : le sens est porté par aria-sort.
+   data-focus-key : clearr.js rend le focus au même en-tête après le
+   remplacement du fragment par le serveur. #}
+{% macro sort_header_row(columns, reverse, th_class='') -%}
+<tr class="text-body-secondary text-uppercase" style="font-size:.72rem;">
+  {% for col in columns %}
+  <th scope="col"{% if th_class %} class="{{ th_class }}"{% endif %}{% if col.active %} aria-sort="{{ 'descending' if reverse else 'ascending' }}"{% endif %}>
+    <button type="button" class="sort-btn link-body-emphasis {{ 'fw-semibold text-decoration-underline' if col.active else 'text-decoration-none' }}"
+            data-get="{{ col.url }}" data-target="#tab-content" data-focus-key="sort-{{ col.key }}">
+      {{- col.label }}{% if col.active %}<span aria-hidden="true">{{ ' ▼' if reverse else ' ▲' }}</span>{% endif -%}
+    </button>
+  </th>
+  {% endfor %}
+  <th scope="col"><span class="visually-hidden">Actions</span></th>
+</tr>
+{%- endmacro %}

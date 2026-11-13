@@ -401,17 +401,22 @@ h3.stat-label { margin: 0; font-weight: 600; }
    téléphone. Le bouton n'existe qu'à l'écran tactile (pas de survol ET
    pointeur grossier : `hover: none` seul vaut aussi pour un navigateur sans
    pointeur du tout) et seulement si le navigateur connaît les popovers : sans
-   eux il n'ouvrirait rien. Sur ordinateur, title= reste le seul mécanisme. */
+   eux il n'ouvrirait rien. Sur ordinateur, title= reste le seul mécanisme.
+   Placé AVANT le libellé (demandé le 2026-11-13) : les boutons d'une même
+   colonne s'alignent, quelle que soit la longueur du libellé. */
 .info-btn { display: none; }
 @media (hover: none) and (pointer: coarse) {
   @supports selector(:popover-open) {
     .info-btn {
       display: inline-flex; align-items: center; justify-content: center; flex: none;
       /* 24 px : taille de cible tactile minimale (WCAG 2.5.8). */
-      width: 24px; height: 24px; margin-left: .35rem; padding: 0; vertical-align: middle;
+      width: 24px; height: 24px; margin-right: .35rem; padding: 0; vertical-align: middle;
       border: 1px solid currentColor; border-radius: 50%; background: transparent;
       color: inherit; font: 700 .7rem/1 system-ui, sans-serif; cursor: pointer;
     }
+    /* Libellé sur deux lignes (« En bibliothèque ») : la 2e ligne reste
+       alignée sur le texte, pas sous le bouton. */
+    .stat-multi-label { display: flex; align-items: center; }
   }
 }
 /* Fermée : masquée ; ouverte : bulle centrée à l'écran (placement par

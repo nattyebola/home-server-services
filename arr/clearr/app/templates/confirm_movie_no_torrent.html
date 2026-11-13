@@ -1,5 +1,5 @@
 <div class="modal-header">
-  <h2 class="modal-title h5" id="modal-title" text-truncate" title="Supprimer : {{ movie_title }}">Supprimer : {{ movie_title }}</h2>
+  <h2 class="modal-title h5 text-truncate" id="modal-title" title="Supprimer : {{ movie_title }}">Supprimer : {{ movie_title }}</h2>
   <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
 </div>
 <div class="modal-body">
@@ -20,6 +20,6 @@
   <input type="hidden" name="sort" value="{{ sort }}">
   <input type="hidden" name="reverse" value="{{ '1' if reverse else '0' }}">
   <input type="hidden" name="filter" value="{{ filter_str }}">
-  <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
+  <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal" autofocus>Annuler</button>
   <button type="button" class="btn btn-danger btn-sm" data-post="/films/{{ movie_id }}/delete" data-target="#tab-content">Confirmer la suppression</button>
 </form>

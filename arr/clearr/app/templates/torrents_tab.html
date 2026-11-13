@@ -1,7 +1,9 @@
 {% from "_meta.html" import title_cell %}
+{% from "_sort_header.html" import sort_header_row %}
 {% from "_kind_icon.html" import kind_icon %}
 {% include "_tabs.html" %}
-{% if message %}<div class="alert alert-{{ message_kind }} py-2">{{ message }}</div>{% endif %}
+{# data-flash : déplacé par clearr.js dans #alert-zone (role="status"), pour être annoncé. #}
+{% if message %}<div class="alert alert-{{ message_kind }} py-2" data-flash>{{ message }}</div>{% endif %}
 {% if mount_warning %}<div class="alert alert-danger py-2">⚠ {{ mount_warning }}</div>{% endif %}
 
 <div class="d-flex flex-wrap gap-3 align-items-center justify-content-between mb-2">
@@ -40,7 +42,7 @@
     <div class="btn-group btn-group-sm" role="group" aria-label="{{ group_label }}">
       {% for f in shown %}
       <input type="radio" class="btn-check" name="kind-filter" id="kind-{{ f.key }}" value="{{ f.key }}" data-kind-filter>
-      <label class="btn btn-outline-secondary" for="kind-{{ f.key }}" title="{{ kind_descriptions[f.kind] }}">{{ kind_icon(f.kind) }} {{ f.label }} <span class="small">{{ f.count }}</span></label>
+      <label class="btn btn-outline-secondary" for="kind-{{ f.key }}" title="{{ kind_descriptions[f.kind] }}">{{ kind_icon(f.kind, decorative=True) }} {{ f.label }} <span class="small">{{ f.count }}</span></label>
       {% endfor %}
     </div>
     {% endif %}
@@ -53,7 +55,7 @@
     <input type="hidden" name="sort" value="{{ sort }}">
     <input type="hidden" name="reverse" value="{{ '1' if reverse else '0' }}">
     <input type="search" class="form-control form-control-sm" name="filter" value="{{ filter_str }}"
-           placeholder="Filtrer par nom…" data-live autocomplete="off">
+           aria-label="Filtrer par nom" placeholder="Filtrer par nom…" data-live autocomplete="off">
   </form>
   </div>
   {# Bouton « Fichiers orphelins » : dans la barre d'onglets (_tabs.html)
@@ -67,17 +69,7 @@
 <div class="table-responsive">
 <table class="table table-sm table-hover align-middle small mb-0 table-sticky-actions">
   <thead>
-    <tr class="text-body-secondary text-uppercase" style="font-size:.72rem;">
-      {% for col in columns %}
-      <th class="text-nowrap"{% if col.active %} aria-sort="{{ 'descending' if reverse else 'ascending' }}"{% else %} aria-sort="none"{% endif %}>
-        <a href="#" class="link-body-emphasis text-decoration-none {{ 'fw-semibold text-decoration-underline' if col.active else '' }}"
-           data-get="{{ col.url }}" data-target="#tab-content">
-          {{ col.label }}{% if col.active %}{{ ' ▼' if reverse else ' ▲' }}{% endif %}
-        </a>
-      </th>
-      {% endfor %}
-      <th></th>
-    </tr>
+    {{ sort_header_row(columns, reverse, th_class='text-nowrap') }}
   </thead>
   <tbody>
     {% for g in groups %}
@@ -106,7 +98,7 @@
       </td>
       <td class="text-end">
         <a href="#" class="btn btn-sm btn-outline-danger btn-delete" data-get="/torrents/{{ g.parent.id }}/confirm?{{ qs }}&amp;tab={{ tab }}"
-           data-target="#modal-body" title="Supprimer ce torrent" aria-label="Supprimer ce torrent">✕</a>
+           data-target="#modal-body" title="Supprimer ce torrent" aria-label="Supprimer {{ g.parent.name }}">✕</a>
       </td>
     </tr>
     {% for c in g.children %}
@@ -126,7 +118,7 @@
     {# Affichée par clearr.js (syncKindEmpty) quand le filtre par type ne
        laisse aucune ligne : sans data-kind, le CSS du filtre ne la masque pas. #}
     {% if groups and not is_bd %}
-    <tr data-kind-empty hidden><td colspan="7" class="text-body-secondary py-3">Aucun torrent de ce type{% if filter_str %} pour ce filtre{% endif %}.</td></tr>
+    <tr data-kind-empty hidden><td colspan="{{ columns|length + 1 }}" class="text-body-secondary py-3">Aucun torrent de ce type{% if filter_str %} pour ce filtre{% endif %}.</td></tr>
     {% endif %}
   </tbody>
 </table>

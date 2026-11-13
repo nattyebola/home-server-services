@@ -1066,7 +1066,7 @@ def render_scheduled_tasks_card(data_root, running):
         # 2026-11-13 : deux puces par ligne disaient deux fois la même chose.
         '<li title="{description}">'
         '<span class="status-mark status-mark-{cls}" aria-hidden="true">{mark}</span>'
-        '{label}<span class="visually-hidden"> — {state}</span>{info}</li>'.format(
+        '{info}{label}<span class="visually-hidden"> — {state}</span></li>'.format(
             cls="good" if ok else "critical",
             mark="✓" if ok else "✕",
             label=html.escape(label),

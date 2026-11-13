@@ -46,6 +46,7 @@ touchent toutes les stacks.
 | Seerr propose de redemander un titre déjà là | pas de bibliothèque Jellyfin sur `library/` | [Médias](medias.md#seerr) |
 | Seerr montre un anime en **une seule saison**, ou sa demande récupère la plus ancienne | métadonnées anime sur TMDB au lieu de TVDB | [Médias](medias.md#pièges-connus) |
 | clearr : bandeau rouge après une suppression, ou **tous** les torrents « absent » | arr injoignable au moment de la suppression ; données Transmission non montées | [clearr](clearr.md#pièges-connus) |
+| clearr : « Pas de réponse de clearr » après une suppression | connexion coupée pendant la suppression : elle a pu avoir lieu | [clearr](clearr.md#pièges-connus) |
 | clearr : un onglet (BD, Séries, Animés, Films) a disparu | son service (Komga, Sonarr, Radarr) ne répond pas ; cache de 30 s après un `make up` | [clearr](clearr.md#pièges-connus) |
 | Un port paraît ouvert au WAN quand on teste depuis le serveur | `/etc/hosts` fait résoudre le domaine vers l'IP LAN | [Installation](installation.md#hôte--etchosts) |
 | Un service plante en boucle sur `Permission denied` / `EACCES` au premier démarrage | dossier de données créé en root par Docker (démarré sans `make up`) | [plus bas](#arborescences-fantômes-en-root) |

@@ -98,6 +98,17 @@ série entière : des saisons non suivies se lisent dans la colonne SAISONS
   couvre et qu'aucun arr ne connaît. Si la liste a changé entre l'affichage et
   le clic, rien n'est supprimé : il faut rouvrir la fenêtre.
 
+**Fenêtre de confirmation et résultat** :
+
+- À l'ouverture, le focus est sur **Annuler** : un Entrée réflexe ferme la
+  fenêtre, il ne supprime rien. À la fermeture, le focus revient sur l'élément
+  cliqué, ou sur l'onglet actif si la ligne a disparu.
+- Le résultat d'une suppression (succès, échec partiel) s'affiche **au-dessus
+  des onglets**, et un lecteur d'écran l'annonce.
+- L'interface se pilote au clavier : en-têtes de tri et onglets sont
+  atteignables par Tab, et le focus reste sur l'élément activé après le
+  rechargement de la vue.
+
 ## Sécurité
 
 - **Aucune authentification** : clearr est LAN-only (`clearr-lan-only`) et sur
@@ -118,6 +129,7 @@ série entière : des saisons non suivies se lisent dans la colonne SAISONS
 | **Tous** les torrents en « absent » (loupe) d'un coup, bandeau rouge « problème de montage » | données Transmission non montées (disque absent, montage raté) — ne rien supprimer | vérifier le disque et le montage, puis `make restart STACK=arr` |
 | Onglet BD, Séries, Animés ou Films absent | son service (Komga, Sonarr, Radarr) ne répond pas, ou vient de démarrer (cache de 30 s) | `docker ps` ; attendre 30 s et recharger. Pour Komga, la sonde passe par Traefik : Traefik arrêté masque aussi BD |
 | Torrent cross-seed en ABS alors que le film est en bibliothèque (avant le 2026-11-04) | l'original venait d'un tracker public : l'arr l'a retiré au ratio 1.5 avec ses données, et le lien cross-seed (alors un symlink) pointait dans le vide | ne doit plus arriver (liens en hardlink). Sinon : supprimer le torrent depuis clearr (le film reste), ou recréer son fichier par hardlink depuis `library/` puis vérifier le torrent |
+| « Pas de réponse de clearr : impossible de savoir si la suppression a eu lieu » | la connexion a coupé pendant la suppression (clearr ou Traefik redémarré) : le serveur a pu supprimer quand même | recharger l'onglet et regarder si le titre est encore là **avant** de réessayer |
 | Un pack de films emporte d'autres films | un torrent = un seul lot de fichiers | la confirmation (web et Kodi ≥ 1.1.1) liste les autres titres touchés |
 
 ## Tests

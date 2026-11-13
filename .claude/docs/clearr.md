@@ -41,6 +41,41 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   `bootstrap.min.css`/`.min.js` **sans le bundle** — donc pas de Popper,
   donc **aucun tooltip / dropdown / popover Bootstrap n'est disponible**
   (les infobulles passent par un `title=` natif).
+  Attributs lus par `clearr.js` en plus des trois verbes : `data-focus-key`
+  (élément à refocaliser dans le fragment rechargé), `data-flash` (message de
+  résultat à déplacer dans `#alert-zone`), `data-form`, `autofocus` (modale).
+- **Front : règles arbitrées le 2026-11-13** (revue modern-web-guidance) :
+  - **Une seule requête à la fois vers `#tab-content`** (`claimTabContent()`) :
+    clic d'onglet, tri et filtre en direct annulent la requête en vol et le
+    filtre en attente ; le filtre annule **dès la frappe**. Avant : la
+    dernière réponse arrivée gagnait (filtre tapé puis clic « Séries » → vue
+    Torrents 300 ms plus tard ; frappes perdues quand une réponse arrivait
+    pendant la saisie). Un POST n'est jamais annulé (le serveur supprimerait
+    quand même), il annule seulement ce qui écraserait son résultat.
+  - **Résultat d'une suppression = `data-flash`**, déplacé dans `#alert-zone`
+    (seule zone `role="status"` de la page). Resté dans `#tab-content`, il
+    n'était pas annoncé.
+  - **Focus** : rendu après chaque remplacement par `data-focus-key` (onglets,
+    en-têtes de tri) ou par nom (champ de filtre). Modale ouverte par script
+    → Bootstrap ne rend pas le focus au déclencheur : `modalOpener`, repli sur
+    l'onglet actif si la ligne a disparu. **Bootstrap 5.3 ignore `autofocus`**
+    dans une modale (il focalise le conteneur) : `clearr.js` le fait sur
+    `shown.bs.modal`. `autofocus` sur **Annuler** dans tout écran de
+    confirmation.
+  - **Barre d'onglets = `<nav aria-label="Vues">` + `aria-current="page"`**,
+    pas `role="tablist"` (qui promettait les flèches et des tabpanel). Bandeau
+    du haut en `<header>`.
+  - **En-têtes de tri** : macro `_sort_header.html` (un `<button class="sort-btn">`
+    par `<th scope="col">`, `aria-sort` sur la seule colonne triée, flèche
+    `aria-hidden`), commune aux trois gabarits de tableau.
+  - **Croix ✕ nommées par leur titre** (`aria-label="Supprimer <nom>"`) : la
+    même étiquette sur chaque ligne ne disait pas laquelle on supprimait.
+  - Message d'échec réseau d'un POST : « impossible de savoir si la
+    suppression a eu lieu », jamais « rien n'a été supprimé » (la connexion
+    peut tomber après réception par le serveur).
+  - **Piège** : `class="modal-title h5" id="modal-title" text-truncate"`
+    (régression du 2026-08-09, corrigée le 2026-11-13) — attribut cassé, sans
+    erreur visible autre qu'un titre de modale qui ne se tronquait plus.
   Pour vendorer un asset : `curl`, **jamais `WebFetch`** (qui peut reformater
   du contenu non-HTML — `curl` donne les octets exacts), et vérifier
   l'intégrité par un second téléchargement + comparaison sha256 avant de
@@ -375,7 +410,9 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
 - **Suppression toujours confirmée par une modale**, composant Modal natif
   de Bootstrap plutôt qu'un `<dialog>` fait main : focus trap / Échap /
   clic-sur-le-fond déjà corrects, les réimplémenter aurait été strictement
-  moins bien.
+  moins bien. (Noté le 2026-11-13 : un `<dialog>` + `showModal()` natif ne
+  serait plus « fait main » — il fournit page inerte, Échap et retour du
+  focus. Choix maintenu, pas de raison de migrer une modale qui marche.)
 - **Les écrans de confirmation annoncent aussi les fichiers sans torrent**
   et marquent les torrents encore en seed (🌱) ou arrêtés (⏸,
   `SEEDING_STATUSES`) : `execute_delete_series` supprime les torrents

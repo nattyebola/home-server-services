@@ -1,24 +1,16 @@
 {% from "_meta.html" import title_cell %}
+{% from "_sort_header.html" import sort_header_row %}
 {% from "_file_filter.html" import file_toolbar, file_empty_rows with context %}
 {% include "_tabs.html" %}
-{% if message %}<div class="alert alert-{{ message_kind }} py-2">{{ message }}</div>{% endif %}
+{# data-flash : déplacé par clearr.js dans #alert-zone (role="status"), pour être annoncé. #}
+{% if message %}<div class="alert alert-{{ message_kind }} py-2" data-flash>{{ message }}</div>{% endif %}
 
 {{ file_toolbar() }}
 
 <div class="table-responsive">
 <table class="table table-sm table-hover align-middle small mb-0">
   <thead>
-    <tr class="text-body-secondary text-uppercase" style="font-size:.72rem;">
-      {% for col in columns %}
-      <th{% if col.active %} aria-sort="{{ 'descending' if reverse else 'ascending' }}"{% else %} aria-sort="none"{% endif %}>
-        <a href="#" class="link-body-emphasis text-decoration-none {{ 'fw-semibold text-decoration-underline' if col.active else '' }}"
-           data-get="{{ col.url }}" data-target="#tab-content">
-          {{ col.label }}{% if col.active %}{{ ' ▼' if reverse else ' ▲' }}{% endif %}
-        </a>
-      </th>
-      {% endfor %}
-      <th></th>
-    </tr>
+    {{ sort_header_row(columns, reverse) }}
   </thead>
   <tbody>
     {% for m in rows %}
@@ -29,7 +21,7 @@
       <td>{{ title_cell(m.title, m.meta, details_url='/films/' ~ m.id ~ '/details') }}</td>
       <td class="text-end">
         <a href="#" class="btn btn-sm btn-outline-danger btn-delete" data-get="/films/{{ m.id }}/confirm?{{ qs }}"
-           data-target="#modal-body" title="Supprimer ce film" aria-label="Supprimer ce film">✕</a>
+           data-target="#modal-body" title="Supprimer ce film" aria-label="Supprimer le film {{ m.title }}">✕</a>
       </td>
     </tr>
     {% else %}

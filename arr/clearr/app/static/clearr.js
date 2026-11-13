@@ -8,24 +8,58 @@
 // fragment ciblé en entier depuis le serveur ("on relance tout puis on
 // redessine").
 (function () {
+  var modalEl = document.getElementById("modal");
+
   function formParams(form) {
     return new URLSearchParams(new FormData(form)).toString();
   }
 
-  function showModalIfTarget(target) {
-    if (target === "#modal-body") {
-      bootstrap.Modal.getOrCreateInstance(document.getElementById("modal")).show();
+  // --- Modale : ouverture, focus initial, retour du focus ---------------------
+  // Ouverte par script (pas par data-bs-toggle) : Bootstrap ne sait donc pas
+  // quel élément l'a ouverte et ne lui rend pas le focus à la fermeture — le
+  // focus tombait sur <body>, et le clavier repartait du haut de la page.
+  // modalOpener garde le déclencheur ; s'il a disparu entre-temps (la
+  // suppression a remplacé #tab-content), le focus va à l'onglet actif.
+  var modalOpener = null;
+
+  // Bootstrap 5.3 met le focus sur le conteneur de la modale et ignore
+  // l'attribut autofocus du contenu injecté : on le fait ici. Les écrans de
+  // confirmation le posent sur « Annuler » — l'action sûre, pour qu'un Entrée
+  // réflexe ferme la modale au lieu de supprimer.
+  function focusAutofocus() {
+    var target = modalEl.querySelector("[autofocus]");
+    if (target) target.focus();
+  }
+
+  function openModal() {
+    if (modalEl.classList.contains("show")) {
+      focusAutofocus();   // déjà ouverte : shown.bs.modal ne se redéclenchera pas
+    } else {
+      bootstrap.Modal.getOrCreateInstance(modalEl).show();
     }
   }
 
   function hideModal() {
-    var instance = bootstrap.Modal.getInstance(document.getElementById("modal"));
+    var instance = bootstrap.Modal.getInstance(modalEl);
     if (instance) instance.hide();
   }
 
+  modalEl.addEventListener("shown.bs.modal", focusAutofocus);
+  modalEl.addEventListener("hidden.bs.modal", function () {
+    var target = modalOpener && modalOpener.isConnected
+      ? modalOpener
+      : document.querySelector('#tab-content [aria-current="page"]');
+    modalOpener = null;
+    if (target) target.focus();
+  });
+
+  // --- Zone d'annonce ----------------------------------------------------------
   // Zone permanente hors de #tab-content (voir page.html) : y écrire une erreur
   // plutôt que dans la cible évite d'effacer la barre d'onglets ou les boutons
   // de la modale, ce qui laissait l'utilisateur sans aucun moyen de réessayer.
+  // C'est aussi la seule zone role="status" de la page : le message de résultat
+  // d'une suppression, rendu par le serveur DANS le fragment (data-flash), y
+  // est déplacé — resté dans #tab-content, il n'était pas annoncé du tout.
   function showAlert(html) {
     var zone = document.getElementById("alert-zone");
     if (!zone) return;
@@ -33,16 +67,24 @@
     zone.scrollIntoView({ block: "nearest" });
   }
 
-  function clearAlert() {
-    var zone = document.getElementById("alert-zone");
-    if (zone) zone.innerHTML = "";
-  }
-
   function failed(message) {
     showAlert('<div class="alert alert-danger m-0 mb-3">' + message + "</div>");
   }
 
-  async function swapInto(target, resp) {
+  function adoptFlash(el) {
+    var zone = document.getElementById("alert-zone");
+    if (!zone) return;
+    var flash = el.querySelector("[data-flash]");
+    if (flash) {
+      zone.replaceChildren(flash);
+      zone.scrollIntoView({ block: "nearest" });
+    } else {
+      zone.replaceChildren();
+    }
+  }
+
+  // `after(el)` : rejoué après le remplacement (remise du focus, voir plus bas).
+  async function swapInto(target, resp, after) {
     var body = await resp.text();
     // Une réponse d'erreur (503 quand transmission-vpn est injoignable, 403
     // cross-origin) NE doit pas remplacer la cible : le handler renvoie un
@@ -53,10 +95,44 @@
     }
     var el = document.querySelector(target);
     if (!el) return;
-    clearAlert();
     el.innerHTML = body;
-    showModalIfTarget(target);
+    adoptFlash(el);
     syncFragmentState();
+    if (target === "#modal-body") openModal();
+    if (after) after(el);
+  }
+
+  // --- Une seule requête à la fois vers #tab-content --------------------------
+  // Clic d'onglet, tri et filtre en direct écrivent tous dans #tab-content.
+  // Sans coordination, la DERNIÈRE réponse arrivée gagnait, pas la dernière
+  // action : taper dans le filtre puis cliquer aussitôt « Séries » laissait
+  // partir la recherche du filtre 300 ms plus tard, et sa réponse remplaçait
+  // la vue Séries par la vue Torrents. La ligne visée pouvait alors changer
+  // entre la lecture et le clic sur une croix. Règle : toute nouvelle action
+  // annule la requête en vol et le filtre en attente.
+  var liveTimer;
+  var tabRequest = null;
+
+  function cancelTabRequest() {
+    clearTimeout(liveTimer);
+    if (tabRequest) tabRequest.abort();
+    tabRequest = null;
+  }
+
+  function claimTabContent() {
+    cancelTabRequest();
+    tabRequest = new AbortController();
+    return tabRequest.signal;
+  }
+
+  // Le focus est perdu à chaque remplacement de #tab-content (l'élément
+  // focalisé est détruit). data-focus-key désigne l'élément équivalent dans le
+  // nouveau fragment : l'onglet ou l'en-tête de tri qu'on vient d'activer.
+  function refocus(key) {
+    return function (el) {
+      var target = key && el.querySelector('[data-focus-key="' + key + '"]');
+      if (target) target.focus();
+    };
   }
 
   // Désactive le déclencheur le temps de la requête et affiche un spinner
@@ -218,10 +294,18 @@
     if (get) {
       e.preventDefault();
       if (get.dataset.busy) return;
+      var getTarget = get.getAttribute("data-target");
+      var signal;
+      if (getTarget === "#tab-content") {
+        signal = claimTabContent();
+      } else if (getTarget === "#modal-body") {
+        modalOpener = get;
+      }
       var doneGet = busy(get);
-      fetch(get.getAttribute("data-get")).then(function (resp) {
-        return swapInto(get.getAttribute("data-target"), resp);
-      }).catch(function () {
+      fetch(get.getAttribute("data-get"), { signal: signal }).then(function (resp) {
+        return swapInto(getTarget, resp, refocus(get.getAttribute("data-focus-key")));
+      }).catch(function (err) {
+        if (err && err.name === "AbortError") return;   // remplacée par une action plus récente
         // Rejet réseau réel (conteneur en redémarrage après make update,
         // Wi-Fi coupé) : sans .catch(), la promesse était rejetée sans que
         // rien n'apparaisse à l'écran.
@@ -233,6 +317,9 @@
     if (post) {
       e.preventDefault();
       if (post.dataset.busy) return;   // garde anti double-soumission
+      // Le POST lui-même n'est jamais annulé (le serveur supprimerait quand
+      // même) : on annule seulement ce qui pourrait écraser son résultat.
+      if (post.getAttribute("data-target") === "#tab-content") cancelTabRequest();
       var donePost = busy(post);
       // data-form : le déclencheur n'est pas toujours DANS le formulaire qu'il
       // soumet — le pied d'une modale Bootstrap est un frère de son corps, et
@@ -250,8 +337,11 @@
         return swapInto(post.getAttribute("data-target"), resp);
       }).catch(function () {
         hideModal();
-        failed("La suppression n'a pas pu être envoyée — rien n'a été supprimé. "
-               + "Vérifiez que clearr répond, puis réessayez.");
+        // Pas « rien n'a été supprimé » : la connexion peut tomber APRÈS que
+        // le serveur a reçu la demande (Traefik ou clearr redémarré pendant
+        // une suppression de série), et la suppression a alors bien eu lieu.
+        failed("Pas de réponse de clearr : impossible de savoir si la suppression a eu lieu. "
+               + "Rechargez l'onglet pour voir l'état réel avant de réessayer.");
       }).finally(donePost);
       return;
     }
@@ -274,41 +364,29 @@
   // perdrait le focus après la première frappe une fois le clic lui-même
   // corrigé. On retrouve l'input équivalent dans le nouveau HTML par son
   // name et on lui rend le focus + la position du curseur.
-  var liveTimer;
-  var liveAbort = null;
   document.addEventListener("input", function (e) {
     var input = e.target.closest("[data-live]");
     if (!input) return;
+    // Annulée DÈS la frappe, pas au départ de la requête suivante : une
+    // réponse arrivée pendant qu'on tape remettait dans le champ l'ancienne
+    // valeur, et les caractères tapés entre-temps étaient perdus.
+    cancelTabRequest();
     var form = input.closest("form");
     var name = input.getAttribute("name");
-    var cursor = input.selectionStart;
-    clearTimeout(liveTimer);
     liveTimer = setTimeout(function () {
       var url = form.getAttribute("data-live-get") + "?" + formParams(form);
       var target = form.getAttribute("data-live-target");
-      // Le débounce espace les frappes mais n'annule pas les requêtes en vol.
-      // Taper dans le filtre puis cliquer aussitôt sur un onglet mettait deux
-      // réponses en course vers #tab-content : si celle du filtre (qui recharge
-      // tout l'état Transmission) arrivait après, elle écrasait la vue Séries
-      // par du contenu Torrents, sans action de l'utilisateur — et la ligne
-      // visée pouvait avoir changé entre la lecture et le clic sur une croix.
-      if (liveAbort) liveAbort.abort();
-      liveAbort = new AbortController();
-      fetch(url, { signal: liveAbort.signal }).then(function (resp) {
-        if (!resp.ok) throw new Error("http");
-        return resp.text();
-      }).then(function (html) {
-        var el = document.querySelector(target);
-        if (!el) return;
-        clearAlert();
-        el.innerHTML = html;
-        showModalIfTarget(target);
-        syncFragmentState();
-        var newInput = el.querySelector('[name="' + name + '"]');
-        if (newInput) {
-          newInput.focus();
-          if (typeof cursor === "number") newInput.setSelectionRange(cursor, cursor);
-        }
+      // Lu au départ de la requête, pas à la frappe : le curseur a pu bouger
+      // pendant le délai.
+      var cursor = input.selectionStart;
+      fetch(url, { signal: claimTabContent() }).then(function (resp) {
+        return swapInto(target, resp, function (el) {
+          var newInput = el.querySelector('[name="' + name + '"]');
+          if (newInput) {
+            newInput.focus();
+            if (typeof cursor === "number") newInput.setSelectionRange(cursor, cursor);
+          }
+        });
       }).catch(function (err) {
         if (err && err.name === "AbortError") return;   // annulation voulue
         failed("Le filtre n'a pas pu être appliqué — réessayez.");

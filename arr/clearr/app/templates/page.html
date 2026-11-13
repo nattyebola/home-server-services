@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow, noarchive">
+{# Thème connu du navigateur avant le chargement des feuilles de style : pas de
+   flash blanc au premier rendu en thème sombre (Bootstrap ne pose color-scheme
+   qu'une fois son CSS chargé, via data-bs-theme). #}
+<meta name="color-scheme" content="light dark">
 <title>clearr</title>
 <link rel="icon" type="image/png" href="/static/favicon.png?v={{ v }}">
 <link rel="stylesheet" href="/static/bootstrap.min.css?v={{ v }}">
@@ -21,15 +25,15 @@
 </script>
 </head>
 <body>
-<nav class="navbar navbar-expand bg-body-tertiary border-bottom mb-3">
+<header class="navbar navbar-expand bg-body-tertiary border-bottom mb-3">
   <div class="container-fluid px-3">
     {# h1 : la page n'avait AUCUN titre, et son premier élément de titre était
        un h5 dans une modale — saut de h1 à h5, navigation par titres
        impossible au lecteur d'écran (WCAG 1.3.1). .h5 garde l'apparence. #}
     <h1 class="navbar-brand h5 mb-0 fw-semibold">clearr</h1>
-    <span class="text-body-secondary small d-none d-sm-inline">nettoyage Transmission / Sonarr / Radarr</span>
+    <span class="text-body-secondary small d-none d-sm-inline">nettoyage Transmission / Sonarr / Radarr / Komga</span>
   </div>
-</nav>
+</header>
 
 {# Zone d'alerte PERMANENTE, hors de #tab-content. Deux rôles :
    - le handler RuntimeError renvoyait un fragment nu que clearr.js injectait
@@ -37,9 +41,10 @@
      donc la barre d'onglets, laissant un rectangle rouge sur une page vide,
      sans aucun élément d'interface pour réessayer. Transmission redémarre à
      chaque reconnexion VPN, le cas est courant ;
-   - role="status" fait annoncer le résultat d'une suppression, qui ne l'était
-     pas du tout (WCAG 4.1.3) : après confirmation, ni succès ni échec partiel
-     n'étaient restitués. #}
+   - role="status" fait annoncer le résultat d'une suppression (WCAG 4.1.3) :
+     le serveur le rend dans le fragment avec data-flash, et clearr.js le
+     déplace ici. Resté dans #tab-content (jusqu'au 2026-11-13), il n'était
+     pas annoncé du tout. #}
 <div class="container-fluid px-3">
   <div id="alert-zone" role="status" aria-live="polite"></div>
 </div>
