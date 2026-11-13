@@ -146,6 +146,13 @@ tr.collapsing {
   text-decoration: underline;
 }
 
+/* Icône devant « clearr » dans le bandeau (page.html) : la favicon, à la
+   hauteur du texte. */
+.brand-icon {
+  width: 1.5em;
+  height: 1.5em;
+}
+
 /* En-tête de tri (_sort_header.html) : un vrai <button>, pour le clavier et le
    lecteur d'écran, mais habillé comme le texte de l'en-tête qu'il remplit
    (petites capitales grises, taille .72rem héritée du <tr>). Sans cette remise
