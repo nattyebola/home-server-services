@@ -4,6 +4,12 @@ server.geany
 # rtk (proxy CLI branché sur Claude Code par un hook global) écrit son état et
 # ses filtres par dépôt — outil de l'utilisateur, pas de l'infra
 .rtk/
+# skills tierces installées par `npx skills add` (pack modern-web-guidance) :
+# contenu externe re-téléchargeable, pas de l'infra — seules les skills du
+# projet (.claude/skills/<nom>/) sont versionnées
+.agents/
+.claude/skills/modern-web-guidance
+skills-lock.json
 
 # Python bytecode cache (scripts/*.py, arr/clearr/app/)
 __pycache__/
