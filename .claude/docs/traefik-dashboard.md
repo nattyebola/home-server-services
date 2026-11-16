@@ -300,6 +300,11 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   sur une carte de service arrêtée ou un placeholder (arrêt possiblement
   volontaire). Ratios : le total seul, la session repart de zéro à chaque
   redémarrage.
+- **Deux sections principales de même rang (2026-11-13, demandé)** :
+  « Services » (`section-services.html`, sous-sections Public / Local (LAN) /
+  Stack non lancée en `h3.subsection-title`) et « Monitoring », titres
+  `h2.main-title` de même taille. Le `h1` « Tableau de bord » est
+  `visually-hidden`.
 - **Une section vide n'est pas affichée** (plus de placeholder « aucun ») ; la
   section Monitoring ne s'affiche que si `vpn/transmission-vpn` tourne, pas
   seulement si `transmission-stats.py` a réussi — évite un message d'erreur

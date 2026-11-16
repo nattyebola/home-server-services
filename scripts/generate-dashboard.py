@@ -1471,15 +1471,20 @@ def main():
 
     public_cards, local_cards, down_cards = build_cards(running, unhealthy, starting)
 
-    # Chaque section n'est incluse que si elle a du contenu — pas de
-    # placeholder "aucun"/"indisponible" pour une section vide.
+    # Deux sections principales de même rang : Services (sous-sections
+    # Public / Local / Stack non lancée) et Monitoring. Chaque section n'est
+    # incluse que si elle a du contenu — pas de placeholder "aucun"/"indisponible"
+    # pour une section vide.
     sections = []
+    service_sections = []
     if public_cards:
-        sections.append(render("section-grid.html", title="Public", cards="\n".join(public_cards)))
+        service_sections.append(render("section-grid.html", title="Public", cards="\n".join(public_cards)))
     if local_cards:
-        sections.append(render("section-grid.html", title="Local (LAN)", cards="\n".join(local_cards)))
+        service_sections.append(render("section-grid.html", title="Local (LAN)", cards="\n".join(local_cards)))
     if down_cards:
-        sections.append(render("section-grid.html", title="Stack non lancée", cards="\n".join(down_cards)))
+        service_sections.append(render("section-grid.html", title="Stack non lancée", cards="\n".join(down_cards)))
+    if service_sections:
+        sections.append(render("section-services.html", subsections="\n".join(service_sections)))
     stats_html = build_stats_section(running, env_shared.get("DATA_ROOT"), REPO_ROOT / "sauvegarde")
     if stats_html:
         sections.append(stats_html)

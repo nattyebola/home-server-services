@@ -40,7 +40,10 @@ body {
   margin: 0; padding: 2.5rem 1.5rem; font-family: system-ui, sans-serif;
   background: var(--page-bg); color: var(--page-fg);
 }
-h1 { font-size: 1.4rem; margin: 0 0 1.5rem; }
+/* Deux sections principales de même rang, Services et Monitoring (h2) ; le h1
+   « Tableau de bord » n'existe que pour les lecteurs d'écran. */
+.main-title { font-size: 1.4rem; margin: 0 0 1.5rem; }
+#monitoring-section > .section-header-row { margin-bottom: 1.5rem; }
 
 /* Contenu de la section Monitoring (jauges/tableaux, pas l'essentiel du
    dashboard) masqué par défaut — titre + switch restent toujours visibles,
@@ -85,7 +88,10 @@ h1 { font-size: 1.4rem; margin: 0 0 1.5rem; }
 }
 .lan-open-banner code { font-size: .95em; }
 section { max-width: 960px; margin: 0 auto 2.5rem; }
-section h2 {
+/* Sous-sections de Services : déjà dans la colonne du parent. */
+section section { margin-bottom: 2rem; }
+section section:last-child { margin-bottom: 0; }
+.subsection-title {
   font-size: .8rem; text-transform: uppercase; letter-spacing: .08em;
   opacity: .6; margin: 0 0 .75rem;
 }
@@ -390,7 +396,7 @@ a.card:hover { transform: translateY(-2px); }
 }
 
 /* Titres des cartes du Monitoring en <h3> (2026-11-13) : vrais titres pour
-   les lecteurs d'écran (h1 Services > h2 Monitoring > h3 carte). Ce reset
+   les lecteurs d'écran (h2 Monitoring > h3 carte, au même rang que h2 Services > h3 Public/Local). Ce reset
    neutralise les marges et la graisse du <h3> du navigateur, pour un rendu
    identique à l'ancien <span> ; les règles .stats-flow ci-dessus, plus
    spécifiques, gardent la main sur le bandeau. */
