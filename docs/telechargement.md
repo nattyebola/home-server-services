@@ -53,7 +53,8 @@ flowchart LR
     LAN(("🏠 LAN")) --> Traefik
     Traefik -->|"traefik-restricted<br>+ filtre LAN"| Proxy["transmission-proxy"]
     Proxy -->|"vpn-internal"| TVPN["transmission-vpn"]
-    Arr["Prowlarr / Sonarr /<br>Radarr / cross-seed"] -->|"vpn-internal<br>transmission-vpn:9091"| TVPN
+    Arr["Prowlarr / Sonarr /<br>Radarr / clearr"] -->|"traefik-restricted<br>transmission-proxy:8080"| Proxy
+    XS["cross-seed"] -->|"vpn-internal<br>transmission-vpn:9091"| TVPN
     Browser["Navigateur du LAN"] -->|"IP_LAN:8118"| WebProxy["webproxy"] --> TVPN
     TVPN ==>|"tunnel OpenVPN"| Internet(("🌍"))
 ```
@@ -61,8 +62,10 @@ flowchart LR
 - Le client torrent se configure sur
   `https://transmission.<DOMAIN>/transmission/rpc`. Aucun port n'est publié sur
   l'hôte.
-- Les arr joignent `transmission-vpn:9091` **directement** par
-  `vpn-internal`. `transmission-proxy` ne sert qu'à l'accès humain.
+- Les arr et clearr passent par **`transmission-proxy:8080`** (depuis le
+  2026-11-16). Seul cross-seed joint encore `transmission-vpn:9091` en direct.
+  Raison : sur `vpn-internal`, le client BitTorrent pouvait appeler les arr
+  et clearr.
 - **`webproxy`** expose le Privoxy de l'image pour qu'un navigateur du LAN
   sorte par l'IP du tunnel (contourner un blocage géographique).
 - **10 téléchargements simultanés** (`TRANSMISSION_DOWNLOAD_QUEUE_SIZE`, défaut
@@ -471,11 +474,12 @@ folders, tags…) peut être ajusté librement dans les UI.
   la même release a l'air d'un upgrade d'elle-même (12 grabs de *Coyote vs.
   Acme* le 29/09). Impossible sans upgrade ; à garder en tête si on les
   réactive.
-- **Les arr demandent un login, même depuis le LAN** (`authenticationRequired:
-  enabled`, posé par `make arr-overrides`). Avec `disabledForLocalAddresses`,
-  toute IP Docker comptait comme locale : jellyfin, seerr ou nextcloud-web,
-  exposés au WAN, lisaient la clé API sur `/initialize.json`. Les appels par
-  clé API (Seerr, cross-seed, clearr, scripts) ne sont pas concernés.
+- **Pas de login sur les arr depuis le LAN** (`authenticationRequired:
+  disabledForLocalAddresses`, posé par `make arr-overrides`, 2026-11-16).
+  Toute IP Docker compte comme locale : c'est sûr **seulement** parce que les
+  arr ne partagent aucun réseau avec un service exposé (voir
+  [Architecture](architecture.md#réseaux)). Depuis le WAN, le filtre LAN de
+  Traefik répond 403 avant. Preuve : `make check-isolation`.
   Réglage relu au démarrage seulement : redémarrer l'arr après un changement.
 - **`trustedNetworks` = le réseau Docker du proxy**, pas le LAN : il désigne
   les proxies dont on croit le `X-Forwarded-For` (l'IP réelle du client dans

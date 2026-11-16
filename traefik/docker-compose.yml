@@ -75,10 +75,19 @@ services:
       # serait en root). Rotation : scripts/logrotate.conf.
       - ${DATA_ROOT}/.traefik/log:/var/log/traefik
       - /etc/localtime:/etc/localtime:ro
+    # Forme dictionnaire (et pas liste) : imposée par `aliases` ci-dessous,
+    # compose refuse de mélanger les deux.
     networks:
-      - socket-proxy
-      - traefik-public
-      - traefik-restricted
+      socket-proxy: {}
+      traefik-public: {}
+      traefik-restricted:
+        # Les arr ne sont plus sur traefik-public (voir le bloc `networks:` de
+        # sonarr dans arr/docker-compose.yml) mais doivent notifier Jellyfin :
+        # sur ce réseau, ce nom résout vers Traefik, qui relaie au routeur
+        # jellyfin habituel (vrai certificat, aucun conteneur de plus). Le flux
+        # reste à sens unique : Jellyfin ne peut pas joindre les arr en retour.
+        aliases:
+          - jellyfin.${DOMAIN}
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8082/ping"]
       interval: 30s

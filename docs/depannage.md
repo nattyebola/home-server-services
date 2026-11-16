@@ -11,6 +11,9 @@ touchent toutes les stacks.
 | Symptôme | Cause probable | Voir |
 |---|---|---|
 | Téléchargement fini, **jamais importé**, aucune erreur | remote path mapping absent, ou entrée `importBlocked`/`importPending` dans la file | [Téléchargement](telechargement.md#pièges-connus-1) |
+| Les arr **redemandent un login** depuis le LAN | `trustedNetworks` ne couvre plus le réseau d'où Traefik les joint (`traefik-restricted`), ou arr pas redémarré après `make arr-overrides` | [Téléchargement](telechargement.md) |
+| Jellyfin **ne se rafraîchit plus** après un import, test de la connexion Jellyfin en échec | alias `jellyfin.<DOMAIN>` absent de Traefik (recréé sans), ou port 443 au lieu de **8443** | [Architecture](architecture.md#réseaux) |
+| `make check-isolation` en échec sur un conteneur exposé | un arr ou clearr a rejoint `traefik-public`/`vpn-internal` : le retirer, sinon repasser les arr en `enabled` | [Architecture](architecture.md#réseaux) |
 | Torrent à **0 % depuis des jours**, toujours « en téléchargement » dans Sonarr/Radarr | tracker en erreur (403), aucun seeder ou métadonnées jamais reçues : l'arr ne le passe jamais en échec. le cron horaire le fait remplacer après 24 h s'il n'a aucune donnée, `make stalled-torrents` le liste ; compteur « Figés à 0 % » du dashboard | [Téléchargement](telechargement.md#pièges-connus-1) |
 | Tâche **« Torrents bloqués » en rouge**, journal `réseau : aucune annonce tracker réussie depuis 2 h` | VPN ou connexion coupé : aucun torrent ne parle à son tracker. Le cron ne retire rien pendant la coupure ni dans les 24 h suivantes ; voir l'état du conteneur `vpn-transmission-vpn-1` | [Téléchargement](telechargement.md#pièges-connus-1) |
 | REPACK grabé puis refusé à l'import (« Not a Custom Format upgrade ») | `downloadPropersAndRepacks` revenu à `preferAndUpgrade` ; relancer `make arr-overrides` | [Téléchargement](telechargement.md#pièges-connus-1) |

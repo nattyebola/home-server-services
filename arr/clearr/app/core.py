@@ -6,10 +6,9 @@
 # Anciennement scripts/torrent-cleanup.py (TUI seule, tournait sur l'hôte via
 # `docker exec <container> curl ...` pour atteindre Transmission/Sonarr/
 # Radarr/Prowlarr). Ce module tourne maintenant DANS un conteneur (service
-# `clearr`, arr/docker-compose.yml) qui rejoint directement les réseaux
-# `vpn-internal` et `default` (arr) : plus de docker exec, de simples requêtes
-# HTTP vers les noms de service Docker (transmission-vpn/sonarr/radarr/
-# prowlarr). Monte ${DATA_ROOT}:/data_root comme sonarr/radarr (même mount
+# `clearr`, arr/docker-compose.yml) qui rejoint `clearr-arr` et
+# `traefik-restricted` : plus de docker exec, de simples requêtes HTTP vers
+# les noms de service Docker (transmission-proxy/sonarr/radarr/prowlarr). Monte ${DATA_ROOT}:/data_root comme sonarr/radarr (même mount
 # unique, même raison : link() refuse de traverser deux montages Docker
 # distincts même sur le même disque physique, voir CLAUDE.md) — core.py et
 # arr partagent donc désormais le même référentiel de chemins, plus besoin de
@@ -90,7 +89,10 @@ SIDECAR_EXTENSIONS = (".nfo", ".srt", ".sub", ".idx", ".ass", ".ssa", ".vtt",
 # confirmation, un torrent arrêté n'apportant plus rien à personne.
 SEEDING_STATUSES = (5, 6)
 
-RPC_URL = "http://transmission-vpn:9091/transmission/rpc"
+# Par transmission-proxy et jamais transmission-vpn:9091 en direct (2026-11-16) :
+# clearr a quitté vpn-internal, où le client BitTorrent pouvait l'appeler sans
+# authentification (voir le bloc `networks:` de clearr, arr/docker-compose.yml).
+RPC_URL = "http://transmission-proxy:8080/transmission/rpc"
 
 PROWLARR_URL = "http://prowlarr:9696"
 PROWLARR_INDEXER_URL = PROWLARR_URL + "/api/v1/indexer"

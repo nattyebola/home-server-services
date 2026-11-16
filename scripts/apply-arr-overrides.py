@@ -163,11 +163,15 @@ NYAA_ANIME_CATEGORY = 1
 # --- connexion "Emby/Jellyfin" de Sonarr/Radarr (refresh ciblé de Jellyfin) ---
 #
 # Entièrement déclarée ici : nom, cible réseau, mapping de chemins et
-# déclencheurs. Rien de tout ça n'est propre au déploiement — `jellyfin:8096`
-# est le nom de service Docker (jellyfin/docker-compose.yml) et le mapping
-# découle des montages du repo (Sonarr/Radarr voient /data_root/library via leur
-# mount unique, Jellyfin voit /library via le sien, voir docs/medias.md). Seule
-# la clé API est un secret, donc la seule valeur en .env (JELLYFIN_API_KEY).
+# déclencheurs. Cible `https://jellyfin.<DOMAIN>` (2026-11-16), plus
+# `jellyfin:8096` : les arr ont quitté traefik-public, où Jellyfin pouvait les
+# joindre en retour. Sur traefik-restricted, ce nom est un alias de Traefik
+# (traefik/docker-compose.yml), qui relaie au routeur jellyfin : flux à sens
+# unique, vrai certificat. DOMAIN vient de .env.shared au moment de l'exécution
+# (voir jellyfin_fields). Le mapping découle des montages du repo
+# (Sonarr/Radarr voient /data_root/library via leur mount unique, Jellyfin voit
+# /library via le sien, voir docs/medias.md). Seule la clé API est un secret,
+# donc la seule valeur en .env (JELLYFIN_API_KEY).
 #
 # Déclencheurs : onDownload/onUpgrade/onRename couvrent l'arrivée d'un fichier
 # (le rôle d'origine de ces connexions, 2026-07-24). Les deux déclencheurs de
@@ -185,9 +189,11 @@ JELLYFIN_IMPLEMENTATION = "MediaBrowser"
 JELLYFIN_CONFIG_CONTRACT = "MediaBrowserSettings"
 JELLYFIN_CONNECTION_NAME = "Jellyfin"
 JELLYFIN_FIELDS = {
-    "host": "jellyfin",
-    "port": 8096,
-    "useSsl": False,
+    # 8443 et pas 443 : c'est le port d'écoute de l'entrypoint websecure DANS
+    # le conteneur Traefik (publié en 443:8443 sur l'hôte, voir
+    # traefik/docker-compose.yml). L'alias mène au conteneur, pas à l'hôte.
+    "port": 8443,
+    "useSsl": True,
     "urlBase": "",
     # notify=False : pas de notification à l'écran des clients Jellyfin, on ne
     # veut que le rafraîchissement de bibliothèque.
@@ -548,7 +554,11 @@ RADARR_NAMING_OVERRIDES = {"renameMovies": True}
 # qu'écrit en dur : Docker le réattribue à chaque recréation du réseau, et une
 # valeur figée ferait silencieusement revenir la panne ci-dessus — le cron
 # quotidien rattrape le changement tout seul.
-TRAEFIK_NETWORK = "traefik-public"
+# traefik-restricted depuis le 2026-11-16 : c'est par lui que Traefik joint les
+# arr (voir le bloc `networks:` de sonarr, arr/docker-compose.yml). Garder
+# traefik-public ici ferait tenir Traefik pour un client ordinaire : chaque
+# requête relayée redemanderait le login.
+TRAEFIK_NETWORK = "traefik-restricted"
 # Repli si le réseau est introuvable : la plage où Docker pioche par défaut.
 # Ni une valeur vide (le PUT partirait en 400) ni un subnet deviné ne seraient
 # préférables — celle-ci est juste dans le cas courant, et fausse exactement
@@ -576,21 +586,27 @@ def trusted_proxy_networks():
     return ",".join(subnets), True
 
 
-# `authenticationRequired: enabled` (2026-09-29) : login exigé MÊME depuis une
-# adresse locale. `disabledForLocalAddresses` tenait toute IP RFC1918 pour
-# locale, y compris celle d'un conteneur Docker : jellyfin, seerr et
-# nextcloud-web — les services exposés au WAN — partagent traefik-public avec
-# les arr et lisaient sans authentification /initialize.json, qui renvoie la
-# clé API en clair (200 mesuré depuis jellyfin). Contrepartie acceptée : un
-# login par navigateur sur le LAN. Les appelants programmatiques (Seerr,
-# cross-seed, Prowlarr -> applications, clearr, ce script) passent par la clé
-# API et ne sont pas concernés. `trustedNetworks` reste utile : il fait
-# journaliser l'IP réelle du client plutôt que celle de Traefik.
+# `authenticationRequired: disabledForLocalAddresses` (2026-11-16) : pas de
+# login depuis le LAN. Historique : `enabled` du 2026-09-29 au 2026-11-16, parce
+# que ce mode tient TOUTE IP RFC1918 pour locale, conteneurs Docker compris, et
+# que jellyfin/nextcloud-web/komga/dashboard (traefik-public) puis
+# transmission-vpn et webproxy (vpn-internal) partageaient un réseau avec les
+# arr : ils lisaient /initialize.json, qui renvoie la clé API en clair (200
+# mesuré depuis jellyfin). Ce qui rend le mode sûr aujourd'hui n'est PAS ici
+# mais dans arr/docker-compose.yml : les arr n'ont plus aucun réseau commun avec
+# un service exposé. Leurs seuls voisins (seerr, cross-seed, clearr, Traefik,
+# transmission-proxy) détiennent déjà les clés ou n'ont pas d'autre rôle.
+# Côté WAN, l'`ipAllowList` de Traefik refuse avant les arr, et une fenêtre
+# `make switch-lan-only-middleware` laisse arriver une IP publique : login.
+# Si un arr rejoint un jour traefik-public ou vpn-internal, revenir à
+# `enabled` dans le même commit.
+# `trustedNetworks` est indispensable à ce mode (sans lui, tout XFF fait exiger
+# le login, voir plus haut) et fait aussi journaliser l'IP réelle du client.
 #
 # `allowedHosts` vient avec : les Servarr REFUSENT le PUT (400, "Allowed Hosts
 # is required when 'Authentication Required' is not 'Enabled'") tant que ce
-# champ est vide — c'est leur garde anti-DNS-rebinding, qui devient obligatoire
-# dès qu'on rouvre l'accès sans mot de passe. Les noms ne sont pas décoratifs,
+# champ est vide — c'est leur garde anti-DNS-rebinding, obligatoire dès que
+# l'accès sans mot de passe est ouvert, donc aujourd'hui. Les noms ne sont pas décoratifs,
 # chacun correspond à un appelant réel :
 #   <service>.<domaine>  le navigateur, via Traefik (seul chemin exposé — les
 #                        ports des arr ne sont publiés sur aucune interface) ;
@@ -602,7 +618,7 @@ def trusted_proxy_networks():
 # et seulement au prochain sync — d'où la liste explicite plutôt qu'un `*`.
 def host_overrides(networks, domain, service):
     return {
-        "authenticationRequired": "enabled",
+        "authenticationRequired": "disabledForLocalAddresses",
         "trustedNetworks": networks,
         "allowedHosts": f"{service}.{domain},{service},localhost,127.0.0.1",
     }
@@ -639,7 +655,12 @@ def set_field(body, name, value):
     body["fields"].append({"name": name, "value": value})
 
 
-def jellyfin_body(skeleton, jellyfin_key, triggers):
+def jellyfin_fields(domain):
+    """JELLYFIN_FIELDS complétés de l'hôte, qui dépend du déploiement."""
+    return {"host": f"jellyfin.{domain}", **JELLYFIN_FIELDS}
+
+
+def jellyfin_body(skeleton, jellyfin_key, triggers, domain):
     """Applique la config Jellyfin voulue sur un squelette — la connexion
     existante, ou /notification/schema pour une création (même principe que
     build_profile_body pour les profils qualité).
@@ -655,7 +676,7 @@ def jellyfin_body(skeleton, jellyfin_key, triggers):
     body["configContract"] = JELLYFIN_CONFIG_CONTRACT
     body["includeHealthWarnings"] = False
     body["tags"] = []
-    for name, value in JELLYFIN_FIELDS.items():
+    for name, value in jellyfin_fields(domain).items():
         set_field(body, name, value)
     if jellyfin_key:
         set_field(body, "apiKey", jellyfin_key)
@@ -688,7 +709,7 @@ def jellyfin_signature(notification):
             bool(notification.get("includeHealthWarnings")))
 
 
-def apply_jellyfin_connection(label, container, base_url, api_key, jellyfin_key, triggers):
+def apply_jellyfin_connection(label, container, base_url, api_key, jellyfin_key, triggers, domain):
     """Provisionne la connexion Emby/Jellyfin de cet arr (création incluse).
 
     Deux niveaux de service selon que JELLYFIN_API_KEY (arr/.env) est renseignée :
@@ -698,6 +719,9 @@ def apply_jellyfin_connection(label, container, base_url, api_key, jellyfin_key,
     créée — MissingIntegration, donc une note et pas une erreur (la connexion
     est documentée comme optionnelle dans docs/installation.md : un déploiement sans
     Jellyfin ne doit pas voir le cron quotidien sortir en échec)."""
+    if not domain:
+        raise MissingIntegration(f"{label} : DOMAIN absent de .env.shared — "
+                                 "connexion Jellyfin laissée telle quelle")
     notifications = api_get(container, base_url, api_key, "/notification")
     target = next((n for n in notifications
                    if n["implementation"] == JELLYFIN_IMPLEMENTATION), None)
@@ -715,10 +739,10 @@ def apply_jellyfin_connection(label, container, base_url, api_key, jellyfin_key,
                 f"{label} : implémentation {JELLYFIN_IMPLEMENTATION} absente de "
                 "/notification/schema — nom changé côté Servarr ?")
         api_write(container, base_url, api_key, "POST", "/notification",
-                  jellyfin_body(skeleton, jellyfin_key, triggers))
+                  jellyfin_body(skeleton, jellyfin_key, triggers, domain))
         return [f"{label} connexion Jellyfin créée"]
 
-    body = jellyfin_body(target, jellyfin_key, triggers)
+    body = jellyfin_body(target, jellyfin_key, triggers, domain)
     if jellyfin_signature(target) == jellyfin_signature(body):
         return []
     api_put(container, base_url, api_key, f"/notification/{target['id']}", body)
@@ -1224,7 +1248,7 @@ def main():
         run(f"{label} (profils)", lambda: apply_profiles_config(label, container, url, key, config))
     run("Sonarr (Jellyfin)", lambda: apply_jellyfin_connection(
         "Sonarr", SONARR_CONTAINER, SONARR_URL, sonarr_api_key, jellyfin_api_key,
-        SONARR_JELLYFIN_TRIGGERS))
+        SONARR_JELLYFIN_TRIGGERS, domain))
     # Étape à part pour la même raison que les deux précédentes. Ne dépend
     # d'aucun service tiers : le writer est local à l'arr, contrairement à la
     # connexion Jellyfin qui a besoin d'une clé.
@@ -1242,7 +1266,7 @@ def main():
         SONARR_NAMING_OVERRIDES))
     run("Radarr (Jellyfin)", lambda: apply_jellyfin_connection(
         "Radarr", RADARR_CONTAINER, RADARR_URL, radarr_api_key, jellyfin_api_key,
-        RADARR_JELLYFIN_TRIGGERS))
+        RADARR_JELLYFIN_TRIGGERS, domain))
     run("Radarr (metadata)", lambda: apply_xbmc_metadata(
         "Radarr", RADARR_CONTAINER, RADARR_URL, radarr_api_key, RADARR_XBMC_METADATA_FIELDS))
     run("Radarr (mediamanagement)", lambda: apply_config_overrides(

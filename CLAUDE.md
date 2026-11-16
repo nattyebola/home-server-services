@@ -56,10 +56,13 @@ Ne pas proposer d'y revenir sans demande explicite de l'utilisateur.
   `postgres:18-alpine`** (un majeur ne relit pas le répertoire de données :
   dump + réimport à la main, fin de vie 11/2030 ; 15 → 18 le 2026-11-13,
   marche dans `docs/nextcloud.md`).
-- **Arr : `authenticationRequired: enabled`** (2026-09-29), login même depuis
-  le LAN. `disabledForLocalAddresses` laissait les conteneurs WAN de
-  `traefik-public` lire la clé API (`/initialize.json`). Sonde du dashboard
-  sur `/Content/…`, servi sans auth.
+- **Arr : `authenticationRequired: disabledForLocalAddresses`** (2026-11-16),
+  pas de login depuis le LAN. Tient **parce que** arr et clearr n'ont aucun
+  réseau commun avec un service exposé : ni `traefik-public` (Jellyfin via
+  l'alias `jellyfin.${DOMAIN}` de Traefik), ni `vpn-internal` (Transmission
+  via `transmission-proxy`). Un arr qui y revient = repasser en `enabled`
+  (`enabled` du 2026-09-29 au 2026-11-16 : clé API lue sur `/initialize.json`
+  depuis jellyfin). `make check-isolation` après tout changement réseau.
 - **Secrets et valeurs propres au déploiement** : `.env` par stack +
   `.env.shared` (gitignorés) avec leur `.example`. `LAN_CIDR` alimente les
   `ipAllowList` — jamais en dur dans un compose file. Toujours `make <cible>
@@ -155,6 +158,9 @@ dépend d'un ordonnanceur, d'une file d'attente ou d'un échappement.
   (`/etc/modules-load.d/ip-tables.conf`) — à vérifier sur toute machine neuve.
 - **Réseau externe d'une autre stack = nom préfixé** : `name: vpn_vpn-internal`,
   `name: arr_default`.
+- **Arr et clearr : jamais sur `traefik-public` ni `vpn-internal`** (voir
+  Socle). Un port Docker se joint en direct, l'ipAllowList ne protège que le
+  chemin Traefik. Traefik écoute **8443** dans son conteneur (443 sur l'hôte).
 - **Hardlinks impossibles entre deux bind-mounts**, même disque et même
   `st_dev` : un seul mount `${DATA_ROOT}:/data_root` pour sonarr/radarr +
   remote path mapping. cross-seed n'a pas de remote path mapping : il garde
@@ -189,7 +195,8 @@ server/
 │                           provision.py, apply-arr-overrides.py, search-missing.py,
 │                           manual-import.py, backup.sh/restore.sh, generate-dashboard.py,
 │                           transmission-stats.py, lan-only-middleware.sh,
-│                           require-running.sh, vpn-bench.py, image-versions.py
+│                           require-running.sh, vpn-bench.py, image-versions.py,
+│                           check-isolation.sh
 ├── traefik/ jellyfin/ nextcloud/ vpn/ arr/ seerr/ komga/   une stack par dossier
 │   └── arr/{clearr,profiles,cross-seed,scripts}/
 ├── dashboard/              templates/ + assets/ ; html/ généré

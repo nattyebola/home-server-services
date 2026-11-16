@@ -17,16 +17,16 @@ services:
     volumes:
       - ${DATA_ROOT}/.arr/prowlarr/config:/config
       - /etc/localtime:/etc/localtime:ro
+    # Même trio que sonarr/radarr ci-dessous (voir leur bloc `networks:`).
+    # Prowlarr a aussi sa propre section Download Clients (recherche
+    # interactive manuelle, catégorie `bd`) : il joint Transmission par
+    # transmission-proxy, comme eux.
     networks:
       - default
-      - traefik-public
+      - traefik-restricted
       # Interrogé par clearr pour résoudre les noms de tracker — voir le bloc
       # `networks:` de clearr plus bas.
       - clearr-arr
-      # Prowlarr a aussi sa propre section Download Clients (recherche
-      # interactive manuelle, indépendante de Sonarr/Radarr) — besoin du
-      # même accès direct à transmission-vpn:9091 qu'eux.
-      - vpn-internal
     # /ping est un endpoint Servarr non authentifié (mêmes apps que
     # sonarr/radarr ci-dessous), fait exprès pour ce genre de check.
     healthcheck:
@@ -51,7 +51,7 @@ services:
       # définis une seule fois dans traefik/docker-compose.yml, voir CLAUDE.md
       - "traefik.http.routers.prowlarr.middlewares=prowlarr-lan-only@file,security-headers@docker,hsts@docker"
       - "traefik.http.services.prowlarr.loadbalancer.server.port=9696"
-      - "traefik.docker.network=traefik-public"
+      - "traefik.docker.network=traefik-restricted"
     logging:
       driver: json-file
       options:
@@ -75,7 +75,7 @@ services:
       # le même disque physique (confirmé le 2026-07-23 : Cross-device link
       # malgré un st_dev identique). Les chemins internes deviennent
       # /data_root/.transmission/data et /data_root/library — cf. remote
-      # path mapping (host transmission-vpn) et root folders à reconfigurer
+      # path mapping (host transmission-proxy) et root folders à reconfigurer
       # côté Sonarr en conséquence.
       - ${DATA_ROOT}:/data_root
       # Le DOSSIER, pas chaque script : un montage de fichier suit l'inode, et
@@ -90,15 +90,25 @@ services:
     # prochaine commande compose, voir CLAUDE.md.
     environment:
       CROSSSEED_API_KEY: ${CROSSSEED_API_KEY}
+    # Aucun réseau partagé avec un service exposé (2026-11-16) : c'est ce qui
+    # permet `authenticationRequired: disabledForLocalAddresses` (pas de login
+    # depuis le LAN, voir scripts/apply-arr-overrides.py). Les arr tiennent
+    # toute IP privée pour locale, conteneurs compris : sur traefik-public,
+    # jellyfin/nextcloud-web/komga/dashboard lisaient /initialize.json (clé
+    # API) ; sur vpn-internal, transmission-vpn (client BitTorrent) et webproxy
+    # en faisaient autant. Voisins restants : seerr, cross-seed (default),
+    # clearr (clearr-arr) — ils détiennent déjà les clés API — et sur
+    # traefik-restricted Traefik et transmission-proxy (nginx sans autre rôle).
+    #   - Transmission : joint par transmission-proxy:8080 (traefik-restricted),
+    #     plus jamais transmission-vpn:9091 en direct.
+    #   - Jellyfin : https://jellyfin.${DOMAIN}, alias de Traefik sur
+    #     traefik-restricted (voir traefik/docker-compose.yml).
+    # Ne rejoindre ni traefik-public ni vpn-internal : la sonde
+    # d'isolement redeviendrait rouge et le login LAN obligatoire.
     networks:
       - default
-      - traefik-public
+      - traefik-restricted
       - clearr-arr
-      # Atteint transmission-vpn directement par nom de conteneur
-      # (transmission-vpn:9091) — pas via transmission-proxy, qui n'existe
-      # que pour l'accès humain LAN-only. Rejoindre ce réseau ne concerne
-      # que sonarr, pas transmission-vpn : aucun risque pour son routing VPN.
-      - vpn-internal
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8989/ping"]
       interval: 30s
@@ -121,7 +131,7 @@ services:
       # définis une seule fois dans traefik/docker-compose.yml, voir CLAUDE.md
       - "traefik.http.routers.sonarr.middlewares=sonarr-lan-only@file,security-headers@docker,hsts@docker"
       - "traefik.http.services.sonarr.loadbalancer.server.port=8989"
-      - "traefik.docker.network=traefik-public"
+      - "traefik.docker.network=traefik-restricted"
     logging:
       driver: json-file
       options:
@@ -148,11 +158,11 @@ services:
     # même raison que sonarr : seule la clé du webhook cross-seed.
     environment:
       CROSSSEED_API_KEY: ${CROSSSEED_API_KEY}
+    # Même isolement que sonarr ci-dessus.
     networks:
       - default
-      - traefik-public
+      - traefik-restricted
       - clearr-arr
-      - vpn-internal
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:7878/ping"]
       interval: 30s
@@ -175,7 +185,7 @@ services:
       # définis une seule fois dans traefik/docker-compose.yml, voir CLAUDE.md
       - "traefik.http.routers.radarr.middlewares=radarr-lan-only@file,security-headers@docker,hsts@docker"
       - "traefik.http.services.radarr.loadbalancer.server.port=7878"
-      - "traefik.docker.network=traefik-public"
+      - "traefik.docker.network=traefik-restricted"
     logging:
       driver: json-file
       options:
@@ -242,9 +252,10 @@ services:
       # atteignables depuis Internet. Le middleware ne protège que le chemin
       # Traefik, pas le port. Seul Traefik a besoin de l'atteindre.
       - traefik-restricted
-      # Atteint transmission-vpn directement par nom de conteneur, comme
-      # sonarr/radarr/prowlarr ci-dessus — plus de docker exec.
-      - vpn-internal
+      # PAS vpn-internal (2026-11-16) : transmission-vpn, client BitTorrent
+      # exposé aux pairs, y joignait clearr en direct (200 mesuré) et pouvait
+      # donc déclencher ses suppressions. Transmission est joint par
+      # transmission-proxy sur traefik-restricted (core.RPC_URL).
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
       interval: 30s
@@ -340,9 +351,8 @@ services:
         max-file: "3"
 
 networks:
-  traefik-public:
-    external: true
-  # Réseau de clearr côté Traefik — voir son bloc `networks:`.
+  # Réseau des arr et de clearr côté Traefik — voir le bloc `networks:` de
+  # sonarr. Plus aucun service de cette stack sur traefik-public.
   traefik-restricted:
     external: true
   # Réseau clearr <-> prowlarr/sonarr/radarr, à l'écart de `default` que

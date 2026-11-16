@@ -19,7 +19,7 @@ flowchart LR
     Users(("👥"))
 
     Sonarr & Radarr -->|"import + .nfo"| Lib
-    Sonarr & Radarr -.->|"rafraîchissement ciblé<br>jellyfin:8096"| Jellyfin
+    Sonarr & Radarr -.->|"rafraîchissement ciblé<br>jellyfin.DOMAIN:8443 via Traefik"| Jellyfin
     Lib -->|"/library (lecture seule)"| Jellyfin
     Jellyfin -->|"jellyfin-kodi (sync)"| Kodi
     Users -->|"demande"| Seerr

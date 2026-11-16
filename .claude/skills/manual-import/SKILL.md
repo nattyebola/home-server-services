@@ -141,7 +141,7 @@ piste audio, en VO).
 ## Purger une entrée qui ne s'importera jamais
 
 Pour la famille 3, après accord de l'utilisateur. Les arr exigent une clé
-API même en local (`authenticationRequired: enabled`) : elle est lue dans
+API même en local (l'API exige `X-Api-Key` quel que soit `authenticationRequired`) : elle est lue dans
 `arr/.env` et passée **sur stdin** (`-H @-`), jamais dans la ligne de
 commande, où `ps` la montrerait. `-f` fait échouer la commande sur un 4xx
 au lieu de sortir en 0.

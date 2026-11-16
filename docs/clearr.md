@@ -112,7 +112,9 @@ série entière : des saisons non suivies se lisent dans la colonne SAISONS
 ## Sécurité
 
 - **Aucune authentification** : clearr est LAN-only (`clearr-lan-only`) et sur
-  `traefik-restricted`, jamais joignable depuis un service public.
+  `traefik-restricted`, jamais joignable depuis un service public ni depuis
+  le client BitTorrent (retiré de `vpn-internal` le 2026-11-16). Preuve :
+  `make check-isolation`.
 - **Aucun socket Docker** : il parle à Transmission et aux arr par HTTP.
 - **Aucun chemin à supprimer ne vient du navigateur** : tout est recalculé
   côté serveur au moment de la confirmation.

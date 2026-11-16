@@ -17,7 +17,7 @@ questions, dans cet ordre :
 
 ## 0. Prérequis — appeler les API sans exposer les clés
 
-Les arr exigent une clé même en local (`authenticationRequired: enabled`).
+Les arr exigent une clé même en local (l'API exige `X-Api-Key` quel que soit `authenticationRequired`).
 Les clés sont dans `arr/.env` ; les passer **sur stdin** (`-H @-`), jamais
 dans la ligne de commande (`?apikey=…` ou `-H "X-Api-Key: $KEY"`), où `ps`
 la montrerait — même règle que les scripts du repo. `-f` fait échouer sur un

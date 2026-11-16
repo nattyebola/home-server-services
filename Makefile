@@ -13,7 +13,7 @@ STACKS := traefik jellyfin nextcloud vpn arr seerr komga
 # reflète donc l'état d'après redémarrage.
 UPDATE_STACKS := nextcloud vpn jellyfin arr seerr komga traefik
 
-.PHONY: help require-env-shared network up down restart restart-all config logs update rebuild update-all backup restore cron-install dashboard-refresh clearr arr-overrides search-missing stalled-torrents mark-finales kodi-install gnome-install steam-tv-install api-keys provision switch-lan-only-middleware test
+.PHONY: help require-env-shared network up down restart restart-all config logs update rebuild update-all backup restore cron-install dashboard-refresh clearr arr-overrides search-missing stalled-torrents mark-finales kodi-install gnome-install steam-tv-install api-keys provision switch-lan-only-middleware check-isolation test
 
 # `make` sans argument affiche l'aide plutôt que de lancer la première cible
 # (c'était `network`, qui ne dit rien de ce que le reste sait faire).
@@ -319,6 +319,14 @@ provision: ## — crée les objets de config des UI (biblios Jellyfin, objets ar
 # autorité, aussi lancé par cron chaque nuit (scripts/crontab).
 arr-overrides: ## — applique la config arr du dépôt (profils, tailles, délai, Jellyfin…) ; aussi lancé par cron
 	@python3 scripts/apply-arr-overrides.py
+
+# prouve qu'aucun chemin depuis Internet, le tunnel VPN ou un conteneur exposé
+# n'atteint les arr ni clearr hors de l'ipAllowList de Traefik : c'est ce qui
+# rend sûr leur accès sans login depuis le LAN (voir scripts/check-isolation.sh).
+# À relancer après tout changement de réseau Docker, de redirection sur la box
+# ou de middleware LAN-only. Lecture seule ; -v via ARGS=-v.
+check-isolation: ## ARGS=-v — prouve l'isolement WAN/VPN des services sans login (arr, clearr)
+	@bash scripts/check-isolation.sh $(ARGS)
 
 # repose les marqueurs de fin de saison / fin de série / mi-saison dans le
 # <title> des .nfo d'épisode — seul canal qui remonte jusqu'au listing de Kodi

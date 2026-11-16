@@ -13,9 +13,11 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   supprimée le 2026-10-08, à la demande** — avec elle `core.abs_purge_refusal`,
   `build_tree`, `VIEWS`, la colonne BIB et la dernière purge en masse des
   absents (`Maj+P`). Ne pas la réintroduire sans demande.
-  Tourne en conteneur et rejoint `vpn-internal` (externe,
-  `vpn_vpn-internal`) + le réseau `default` d'arr : HTTP direct vers
-  `transmission-vpn:9091`, `sonarr:8989`, `radarr:7878`, `prowlarr:9696`.
+  Tourne en conteneur sur `clearr-arr` + `traefik-restricted` : HTTP direct
+  vers `transmission-proxy:8080`, `sonarr:8989`, `radarr:7878`,
+  `prowlarr:9696`. **Plus sur `vpn-internal` depuis le 2026-11-16** : le
+  client BitTorrent y joignait clearr sans auth (200 mesuré), donc ses
+  suppressions. Vérifié par `make check-isolation`.
   L'ancien script passait par `docker exec <container> curl` depuis l'hôte —
   plus besoin, et surtout pas de socket Docker (voir Socle).
   Monte `${DATA_ROOT}:/data_root` en lecture-écriture, exactement comme

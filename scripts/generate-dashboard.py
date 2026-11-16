@@ -80,11 +80,12 @@ LOGO_FILE = {
 # réflexe à garder : une carte grisée alors que le conteneur est `healthy` peut
 # venir de l'authentification du service, pas du chemin sondé ; vérifier d'abord
 # `curl -o /dev/null -w '%{http_code} %{content_type}'` sur l'URL data-probe.
-# Depuis le 2026-09-29 les arr exigent un login MÊME depuis le LAN
+# Du 2026-09-29 au 2026-11-16 les arr exigeaient un login MÊME depuis le LAN
 # (`authenticationRequired: enabled`, voir scripts/apply-arr-overrides.py) :
-# leur /favicon.ico redirige donc vers /login pour un navigateur sans session.
+# leur /favicon.ico redirigeait vers /login pour un navigateur sans session.
 # /Content/ est servi sans authentification (c'est ce que charge la page de
-# login elle-même) — 200 image/png vérifié sur les trois.
+# login elle-même) — 200 image/png vérifié sur les trois. Gardé depuis le
+# retour à `disabledForLocalAddresses` : valable dans les deux modes.
 SERVARR_PROBE = "/Content/Images/Icons/favicon-32x32.png"
 PROBE_PATH = {
     "vpn/transmission-proxy": "/transmission/web/images/favicon.ico",

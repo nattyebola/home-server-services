@@ -31,10 +31,10 @@
 # Transport : `docker exec <container> curl`, comme apply-arr-overrides.py et
 # transmission-stats.py — pas d'appel depuis l'hôte vers les URLs publiques, ce
 # qui éviterait de dépendre du DNS, des certificats et de l'ipallowlist. Chaque
-# arr est interrogé depuis son propre conteneur ; Jellyfin et Seerr le sont
-# depuis arr-sonarr-1, seul conteneur à joindre les deux (traefik-public pour
-# jellyfin, réseau arr pour seerr) et dont l'image embarque curl — celle de
-# seerr ne l'a pas.
+# arr est interrogé depuis son propre conteneur, Jellyfin aussi (localhost,
+# son image embarque curl) ; Seerr l'est depuis arr-sonarr-1, qui partage son
+# réseau `default` — l'image de seerr n'a pas curl. Plus de Jellyfin depuis
+# arr-sonarr-1 : les arr ont quitté traefik-public le 2026-11-16.
 import json
 import os
 import shlex
@@ -47,8 +47,9 @@ ARR_ENV = os.path.join(REPO_ROOT, "arr", ".env")
 JELLYFIN_ENV = os.path.join(REPO_ROOT, "jellyfin", ".env")
 PROWLARR_INDEXERS = os.path.join(REPO_ROOT, "arr", "profiles", "prowlarr-indexers.json")
 
-# Conteneur servant de client HTTP pour Jellyfin et Seerr (voir en-tête).
+# Conteneur servant de client HTTP pour Seerr (voir en-tête).
 PROXY_CONTAINER = "arr-sonarr-1"
+JELLYFIN_CONTAINER = "jellyfin-jellyfin-1"
 
 # URL par laquelle Sonarr/Radarr joignent Prowlarr en retour : Prowlarr valide
 # cette accessibilité bidirectionnelle au moment du POST de l'application
@@ -56,7 +57,7 @@ PROXY_CONTAINER = "arr-sonarr-1"
 # donc tourner.
 PROWLARR_INTERNAL_URL = "http://prowlarr:9696"
 
-JELLYFIN_URL = "http://jellyfin:8096"
+JELLYFIN_URL = "http://localhost:8096"
 SEERR_URL = "http://seerr:5055"
 
 ARRS = {
@@ -105,11 +106,18 @@ ARR_ROOT_FOLDERS = {
     "radarr": ["/data_root/library/film"],
 }
 
-# 12e — Transmission comme client de téléchargement. Joint par son nom de
-# service sur vpn-internal ; RPC non authentifié (réseau Docker isolé), d'où
-# l'absence d'identifiants. Les catégories donnent les sous-dossiers
+# 12e — Transmission comme client de téléchargement. Joint par le relais
+# transmission-proxy sur traefik-restricted, plus par transmission-vpn:9091 sur
+# vpn-internal (2026-11-16) : les arr ont quitté ce réseau, où le client
+# BitTorrent pouvait les appeler (voir le bloc `networks:` de sonarr,
+# arr/docker-compose.yml). RPC non authentifié, d'où l'absence d'identifiants. Les catégories donnent les sous-dossiers
 # completed/<catégorie> côté Transmission, sur lesquels s'appuie le remote path
 # mapping.
+TRANSMISSION_HOST = "transmission-proxy"
+TRANSMISSION_PORT = 8080
+# Ancienne cible, migrée sur place par migrate_transmission_client (le client
+# et le remote path mapping existants gardent leur id et leurs réglages).
+LEGACY_TRANSMISSION = ("transmission-vpn", 9091)
 ARR_DOWNLOAD_CLIENT = {
     "sonarr": {"tvCategory": "sonarr"},
     "radarr": {"movieCategory": "radarr"},
@@ -153,7 +161,7 @@ PROWLARR_BD_CATEGORY = {
 # `host` doit correspondre au champ `host` du client de téléchargement
 # ci-dessus : c'est par lui que l'arr rattache le mapping au client.
 ARR_REMOTE_PATH_MAPPING = {
-    "host": "transmission-vpn",
+    "host": TRANSMISSION_HOST,
     "remotePath": "/data/completed/",
     "localPath": "/data_root/.transmission/data/completed/",
 }
@@ -367,7 +375,7 @@ def jellyfin_token(admin_user, admin_password):
     token de session obtenu avec les identifiants admin (d'où jellyfin/.env)."""
     auth = ('MediaBrowser Client="server-infra", Device="make", '
             'DeviceId="server-infra-provision", Version="1.0.0"')
-    result = request(PROXY_CONTAINER, f"{JELLYFIN_URL}/Users/AuthenticateByName", "POST",
+    result = request(JELLYFIN_CONTAINER, f"{JELLYFIN_URL}/Users/AuthenticateByName", "POST",
                      secret_header=("Authorization", auth),
                      body={"Username": admin_user, "Pw": admin_password})
     token = (result or {}).get("AccessToken")
@@ -380,15 +388,15 @@ def jellyfin_api_key(token):
     """Réutilise la clé déjà créée pour cette app si elle existe (idempotence),
     sinon en crée une. Jellyfin expose les clés en clair sur /Auth/Keys, ce qui
     permet de les relire après création — l'API ne renvoie rien à la création."""
-    existing = request(PROXY_CONTAINER, f"{JELLYFIN_URL}/Auth/Keys",
+    existing = request(JELLYFIN_CONTAINER, f"{JELLYFIN_URL}/Auth/Keys",
                        secret_header=jellyfin_auth(token))
     for item in (existing or {}).get("Items", []):
         if item.get("AppName") == JELLYFIN_KEY_APP:
             return item["AccessToken"], False
-    request(PROXY_CONTAINER,
+    request(JELLYFIN_CONTAINER,
             f"{JELLYFIN_URL}/Auth/Keys?App={JELLYFIN_KEY_APP.replace(' ', '%20')}",
             "POST", secret_header=jellyfin_auth(token))
-    after = request(PROXY_CONTAINER, f"{JELLYFIN_URL}/Auth/Keys",
+    after = request(JELLYFIN_CONTAINER, f"{JELLYFIN_URL}/Auth/Keys",
                     secret_header=jellyfin_auth(token))
     for item in (after or {}).get("Items", []):
         if item.get("AppName") == JELLYFIN_KEY_APP:
@@ -441,7 +449,7 @@ def provision_jellyfin_libraries(jellyfin_key, data_root, done, skipped):
     /Library/VirtualFolders. Pas besoin des identifiants admin, contrairement à
     la création d'une clé API elle-même — donc `make provision` ne dépend que de
     arr/.env."""
-    existing = request(PROXY_CONTAINER, f"{JELLYFIN_URL}/Library/VirtualFolders",
+    existing = request(JELLYFIN_CONTAINER, f"{JELLYFIN_URL}/Library/VirtualFolders",
                        secret_header=jellyfin_auth(jellyfin_key)) or []
     by_name = {v["Name"]: v for v in existing}
     for library in JELLYFIN_LIBRARIES:
@@ -459,7 +467,7 @@ def provision_jellyfin_libraries(jellyfin_key, data_root, done, skipped):
         # créer le dossier hôte d'abord (/library == ${DATA_ROOT}/library).
         os.makedirs(os.path.join(data_root, "library", library["path"][len("/library/"):]),
                     exist_ok=True)
-        request(PROXY_CONTAINER,
+        request(JELLYFIN_CONTAINER,
                 f"{JELLYFIN_URL}/Library/VirtualFolders"
                 f"?name={urllib.parse.quote(library['name'])}"
                 f"&collectionType={library['collection_type']}&refreshLibrary=true",
@@ -498,11 +506,32 @@ def provision_tags(name, api_key, done, skipped):
         done.append(f"{name} : tag {label} ajouté")
 
 
+def migrate_transmission_client(name, api_key, client, done):
+    """Repointe un client Transmission resté sur LEGACY_TRANSMISSION vers
+    transmission-proxy. PUT du client entier : l'arr le revalide en s'y
+    connectant, donc le relais doit déjà être joignable (arr recréés sur
+    traefik-restricted). Renvoie le client tel qu'à jour."""
+    if (field_value(client, "host"), field_value(client, "port")) != LEGACY_TRANSMISSION:
+        return client
+    for f in client["fields"]:
+        if f["name"] == "host":
+            f["value"] = TRANSMISSION_HOST
+        elif f["name"] == "port":
+            f["value"] = TRANSMISSION_PORT
+    updated = arr_request(name, f"/downloadclient/{client['id']}", "PUT", client, api_key)
+    done.append(f"{name} : client Transmission repointé sur "
+                f"{TRANSMISSION_HOST}:{TRANSMISSION_PORT}")
+    return updated if isinstance(updated, dict) and "id" in updated else client
+
+
 def provision_download_client(name, api_key, done, skipped):
     existing = arr_request(name, "/downloadclient", api_key=api_key)
-    if any(c["implementation"] == "Transmission" for c in existing):
+    current = [c for c in existing if c["implementation"] == "Transmission"]
+    for client in current:
+        migrate_transmission_client(name, api_key, client, done)
+    if current:
         return
-    fields = {"host": "transmission-vpn", "port": 9091, "useSsl": False,
+    fields = {"host": TRANSMISSION_HOST, "port": TRANSMISSION_PORT, "useSsl": False,
               "urlBase": "/transmission/", "addPaused": False}
     fields.update(ARR_DOWNLOAD_CLIENT[name])
     arr_request(name, "/downloadclient", "POST", {
@@ -536,6 +565,7 @@ def provision_prowlarr_bd_category(arr_env, done, skipped):
     client = next((c for c in clients if c["implementation"] == "Transmission"), None)
     if client is None:
         raise Skipped("aucun client Transmission dans Prowlarr — à créer d'abord")
+    client = migrate_transmission_client("prowlarr", api_key, client, done)
 
     categories = client.get("categories") or []
     if any(c.get("clientCategory") == PROWLARR_BD_CATEGORY["clientCategory"] for c in categories):
@@ -556,6 +586,16 @@ def provision_remote_path_mapping(name, api_key, done, skipped):
     if any(m.get("host") == wanted["host"]
            and m.get("remotePath") == wanted["remotePath"]
            and m.get("localPath") == wanted["localPath"] for m in existing):
+        return
+    # Le mapping se rattache au client par son `host` : celui de l'ancienne
+    # cible est repointé plutôt que doublé (voir migrate_transmission_client).
+    legacy = next((m for m in existing if m.get("host") == LEGACY_TRANSMISSION[0]
+                   and m.get("remotePath") == wanted["remotePath"]
+                   and m.get("localPath") == wanted["localPath"]), None)
+    if legacy:
+        legacy["host"] = wanted["host"]
+        arr_request(name, f"/remotepathmapping/{legacy['id']}", "PUT", legacy, api_key)
+        done.append(f"{name} : remote path mapping repointé sur {wanted['host']}")
         return
     arr_request(name, "/remotepathmapping", "POST", dict(wanted), api_key)
     done.append(f"{name} : remote path mapping {wanted['remotePath']} -> {wanted['localPath']} ajouté")

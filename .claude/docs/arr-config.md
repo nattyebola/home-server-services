@@ -167,8 +167,12 @@ ou aux connexions arr → Jellyfin.
   `mapFrom=/data_root/library` / `mapTo=/library` est **obligatoire** : les
   arr voient la bibliothèque sous `/data_root/library/...` (mount unique du
   fix hardlink), Jellyfin sous `/library/...` — sans ça le refresh ciblé ne
-  trouve pas le bon dossier. Cible `jellyfin:8096` en direct (réseau
-  `traefik-public` partagé, pas de passage par Traefik).
+  trouve pas le bon dossier. Cible `https://jellyfin.<DOMAIN>:8443`
+  (2026-11-16, avant `jellyfin:8096` en direct) : sur `traefik-restricted`, ce
+  nom est un alias du conteneur Traefik, qui relaie au routeur jellyfin. Port
+  **8443** (écoute interne de Traefik), pas 443 : l'alias mène au conteneur,
+  pas à l'hôte (« connection refused » sur 443). Flux à sens unique, c'est
+  tout l'intérêt : Jellyfin ne peut plus joindre les arr.
   Déclencheurs voulus : `onSeriesDelete`+`onEpisodeFileDelete` côté Sonarr,
   `onMovieDelete`+`onMovieFileDelete` côté Radarr. Ils étaient **tous à
   `False`** depuis la création des connexions : Jellyfin ne découvrait une
@@ -179,8 +183,8 @@ ou aux connexions arr → Jellyfin.
   voulue est remis à `False`.
   `JELLYFIN_API_KEY` dans `arr/.env` — même clé que celle de Seerr, réutilisée
   plutôt qu'une clé dédiée. Le reste (`JELLYFIN_FIELDS`, triggers) est déclaré
-  **dans le script** et non en `.env` : `jellyfin:8096` est un nom de service
-  Docker et `mapFrom`/`mapTo` découlent des montages du repo, rien là-dedans
+  **dans le script** et non en `.env` : l'hôte se déduit de `DOMAIN`
+  (`.env.shared`) et `mapFrom`/`mapTo` découlent des montages du repo, rien là-dedans
   n'identifie ce déploiement.
   **`MissingIntegration` → `note:` + exit 0**, pas une erreur : `docs/installation.md`
   donne cette connexion pour optionnelle, un déploiement sans Jellyfin verrait
@@ -407,7 +411,8 @@ ou aux connexions arr → Jellyfin.
   `isValid: true` alors que le chemin réel est en 401 — il ne sonde qu'un
   endpoint public. Ne jamais s'en servir seul pour conclure qu'une connexion
   Jellyfin fonctionne ; reproduire la vraie requête
-  (`docker exec arr-sonarr-1 curl -H "X-Emby-Token: …" http://jellyfin:8096/Items?…`).
+  (`docker exec jellyfin-jellyfin-1 curl -H "X-Emby-Token: …" http://localhost:8096/Items?…`
+  — plus depuis arr-sonarr-1, qui n'est plus sur `traefik-public`).
   Réparé le 2026-09-09 en repassant **`EnableLegacyAuthorization` à `true`**
   côté Jellyfin, ce qui réautorise `X-Emby-Token` et `?api_key=` sans rien
   ouvrir en anonyme (sans jeton c'est toujours 401). Écrit **par l'API**
@@ -467,18 +472,31 @@ ou aux connexions arr → Jellyfin.
   ces champs n'était jamais corrigée. Valeurs normalisées (liste triée,
   booléen) pour ne pas réécrire en boucle — vérifié sur les valeurs relues le
   2026-09-29.
-- **`authenticationRequired: enabled` sur les trois arr (2026-09-29)**, donc
-  login même depuis le LAN — choix de l'utilisateur après l'audit. Avec
-  `disabledForLocalAddresses`, toute IP RFC1918 est « locale », y compris
-  celle d'un conteneur : jellyfin/seerr/nextcloud-web (exposés au WAN, sur
-  `traefik-public` avec les arr) lisaient `/initialize.json` sans auth, qui
-  renvoie la **clé API en clair** (200 mesuré depuis jellyfin, 302 après).
-  Écartée : sortir les arr de `traefik-public` (Sonarr/Radarr y joignent
-  `jellyfin:8096`, il aurait fallu un réseau dédié). Conséquence dashboard :
-  `/favicon.ico` redirige vers `/login`, la sonde vise
-  `/Content/Images/Icons/favicon-32x32.png` (`PROBE_PATH`), servi sans auth.
-  Le paragraphe suivant (2026-09-17) garde sa valeur pour `trustedNetworks`
-  et `allowedHosts`, plus pour le login LAN.
+- **`authenticationRequired: disabledForLocalAddresses` sur les trois arr
+  (2026-11-16)** : plus de login depuis le LAN, à la demande. Ce mode tient
+  **toute** IP RFC1918 pour locale, conteneurs compris. Du 2026-09-29 au
+  2026-11-16 il était donc à `enabled` : jellyfin/seerr/nextcloud-web
+  (`traefik-public`) lisaient `/initialize.json` sans auth, qui renvoie la
+  **clé API en clair** (200 mesuré depuis jellyfin). L'audit du 2026-11-16 a
+  trouvé pire : `transmission-vpn` (client BitTorrent) et `webproxy` joignaient
+  aussi les arr **et clearr** (200, sans auth) par `vpn-internal`.
+  Ce qui rend le mode sûr est **réseau** (`arr/docker-compose.yml`, bloc
+  `networks:` de sonarr) : arr et clearr ont quitté `traefik-public` et
+  `vpn-internal` pour `traefik-restricted`. Les deux dépendances qui les y
+  retenaient passent par un relais à sens unique :
+  - Transmission : `transmission-proxy:8080` (client, remote path mapping et
+    client de Prowlarr migrés sur place par `make provision`, `core.RPC_URL`
+    pour clearr ; `client_max_body_size 50m` dans `vpn/proxy/nginx.conf`, un
+    `.torrent` de gros pack dépasse le 1 Mo par défaut de nginx) ;
+  - Jellyfin : alias de Traefik, voir la connexion Jellyfin plus haut.
+  Voisins restants : seerr, cross-seed, clearr (ils ont déjà les clés), Traefik
+  et transmission-proxy. **Preuve : `make check-isolation`** (WAN, sortie
+  AirVPN, chaque conteneur exposé vers chaque IP des arr et de clearr, avec un
+  témoin positif par source ; ~6 min, les ports filtrés attendent leur
+  timeout). 147/147 le 2026-11-16, 20 échecs avant la refonte.
+  `trustedNetworks` suit : `TRAEFIK_NETWORK = "traefik-restricted"`.
+  `/initialize.json` reste lisible depuis le LAN, c'est le prix accepté.
+  Sonde du dashboard inchangée (`/Content/…`, valable dans les deux modes).
 - **`trustedNetworks` des trois arr = le réseau Docker du proxy, pas le LAN**
   (2026-09-17). `authenticationRequired: disabledForLocalAddresses` ne
   reconnaît plus une IP LAN relayée par Traefik : les trois arr s'étaient mis
