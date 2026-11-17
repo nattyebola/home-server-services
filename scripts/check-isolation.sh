@@ -11,6 +11,7 @@
 #   3. Internet -> IP de sortie AirVPN : seul le port pair BitTorrent répond.
 #   4. Conteneurs exposés (client BitTorrent, webproxy, services WAN) ->
 #      arr et clearr : aucune connexion possible, sur aucune de leurs IP.
+#      Seule exception : seerr -> sonarr/radarr par leur IP sur seerr-arr.
 #
 # Le sondeur WAN est vpn-transmission-vpn-1 : il sort par AirVPN, donc c'est un
 # vrai client Internet. Ne JAMAIS sonder l'IP publique depuis l'hôte :
@@ -110,12 +111,23 @@ for spec in "$VPN:vpn-transmission-proxy-1:vpn_vpn-internal:8080" \
             "nextcloud-web-1:traefik-traefik-1:traefik-public:8443" \
             "nextcloud-app-1:nextcloud-bdd-1:nextcloud_default:5432" \
             "komga-komga-1:traefik-traefik-1:traefik-public:8443" \
-            "traefik-dashboard-1:traefik-traefik-1:traefik-public:8443"; do
+            "traefik-dashboard-1:traefik-traefik-1:traefik-public:8443" \
+            "seerr-seerr-1:arr-sonarr-1:arr_seerr-arr:8989"; do
   IFS=: read -r src wit net port <<<"$spec"
   # Le VPN est la sonde elle-même : déjà exigé plus haut (sortie 2), jamais sauté.
   if ! running "$src"; then skip "$src (source)"; continue; fi
   res ouvert "$(probe "$src" "$(ip_on "$wit" "$net")" "$port")" "$src -> témoin ${wit%-1}:$port"
-  for t in $targets; do a=${t#*@}; res fermé "$(probe "$src" "${a%:*}" "${a#*:}")" "$src -> ${t%@*} $a"; done
+  # Seerr pilote sonarr/radarr (il a leurs clés) : leur IP sur seerr-arr est
+  # légitime. Toutes leurs autres IP, Prowlarr et clearr restent à « fermé ».
+  allow=" "
+  if [ "$src" = seerr-seerr-1 ]; then
+    allow=" $(ip_on arr-sonarr-1 arr_seerr-arr) $(ip_on arr-radarr-1 arr_seerr-arr) "
+  fi
+  for t in $targets; do
+    a=${t#*@}
+    case "$allow" in *" ${a%:*} "*) continue;; esac
+    res fermé "$(probe "$src" "${a%:*}" "${a#*:}")" "$src -> ${t%@*} $a"
+  done
 done
 # Le conteneur VPN joint l'hôte par sa passerelle Docker : Traefik doit l'y
 # traiter en inconnu (IP hors LAN_CIDR).

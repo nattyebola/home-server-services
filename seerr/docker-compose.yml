@@ -16,10 +16,12 @@ services:
       - /etc/localtime:/etc/localtime:ro
     networks:
       - traefik-public
-      # Atteint sonarr:8989/radarr:7878 directement par nom de container —
-      # ces deux services sont LAN-only sur traefik-public (middleware
-      # ipallowlist), une requête venant du réseau Docker s'y ferait bloquer.
-      - arr-internal
+      # Joint sonarr:8989/radarr:7878 en direct, sans Traefik (où ils sont
+      # LAN-only), par un réseau qui ne contient qu'eux. PAS arr_default
+      # (jusqu'au 2026-11-17) : Seerr, exposé au WAN, y lisait aussi la clé
+      # API de Prowlarr sur /initialize.json (les arr n'ont pas de login depuis
+      # une IP privée) et joignait cross-seed.
+      - seerr-arr
     healthcheck:
       # /status/appdata et PAS /status : ce dernier interroge l'API GitHub pour
       # savoir s'il existe une version plus récente, donc une panne de GitHub
@@ -56,9 +58,9 @@ services:
 networks:
   traefik-public:
     external: true
-  arr-internal:
+  seerr-arr:
     external: true
-    # arr/docker-compose.yml ne fixe pas de `name:` de projet compose, donc
-    # son réseau "default" est préfixé par le nom du dossier (arr_default) —
-    # même logique que vpn_vpn-internal dans arr/docker-compose.yml.
-    name: arr_default
+    # Créé par arr/docker-compose.yml, qui ne fixe pas de `name:` de projet
+    # compose : le nom est préfixé par le dossier (arr_seerr-arr) — même
+    # logique que vpn_vpn-internal dans arr/docker-compose.yml.
+    name: arr_seerr-arr

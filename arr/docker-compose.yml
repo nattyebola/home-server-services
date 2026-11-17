@@ -96,8 +96,8 @@ services:
     # toute IP privée pour locale, conteneurs compris : sur traefik-public,
     # jellyfin/nextcloud-web/komga/dashboard lisaient /initialize.json (clé
     # API) ; sur vpn-internal, transmission-vpn (client BitTorrent) et webproxy
-    # en faisaient autant. Voisins restants : seerr, cross-seed (default),
-    # clearr (clearr-arr) — ils détiennent déjà les clés API — et sur
+    # en faisaient autant. Voisins restants : seerr (seerr-arr), cross-seed
+    # (default), clearr (clearr-arr) — ils détiennent déjà les clés API — et sur
     # traefik-restricted Traefik et transmission-proxy (nginx sans autre rôle).
     #   - Transmission : joint par transmission-proxy:8080 (traefik-restricted),
     #     plus jamais transmission-vpn:9091 en direct.
@@ -109,6 +109,10 @@ services:
       - default
       - traefik-restricted
       - clearr-arr
+      # Seerr (exposé au WAN) joint sonarr/radarr par ce réseau dédié, plus par
+      # `default` : il y lisait aussi /initialize.json de Prowlarr (clé API,
+      # donc identifiants des trackers) et joignait cross-seed (2026-11-17).
+      - seerr-arr
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8989/ping"]
       interval: 30s
@@ -163,6 +167,7 @@ services:
       - default
       - traefik-restricted
       - clearr-arr
+      - seerr-arr
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:7878/ping"]
       interval: 30s
@@ -239,9 +244,9 @@ services:
       # Absent = pas de lien arr affiché, le reste de la vue fonctionne.
       - DOMAIN=${DOMAIN}
     networks:
-      # `clearr-arr` et PAS `default` : seerr rejoint le réseau `default` du
-      # projet arr pour joindre sonarr/radarr (voir seerr/docker-compose.yml),
-      # et y atteignait donc clearr en direct — même exposition que celle
+      # `clearr-arr` et PAS `default` : seerr rejoignait le réseau `default` du
+      # projet arr pour joindre sonarr/radarr (il est sur `seerr-arr` depuis le
+      # 2026-11-17), et y atteignait donc clearr en direct — même exposition que celle
       # refermée côté traefik-public, par une autre porte. clearr n'a besoin
       # que de prowlarr/sonarr/radarr, qui rejoignent ce réseau dédié.
       - clearr-arr
@@ -355,9 +360,13 @@ networks:
   # sonarr. Plus aucun service de cette stack sur traefik-public.
   traefik-restricted:
     external: true
-  # Réseau clearr <-> prowlarr/sonarr/radarr, à l'écart de `default` que
-  # seerr rejoint — voir le bloc `networks:` de clearr.
+  # Réseau clearr <-> prowlarr/sonarr/radarr, à l'écart de `default` — voir
+  # le bloc `networks:` de clearr.
   clearr-arr:
+  # Réseau seerr <-> sonarr/radarr, seule porte d'un service exposé vers les
+  # arr — voir le bloc `networks:` de sonarr. Seerr le rejoint sous son nom
+  # préfixé arr_seerr-arr (seerr/docker-compose.yml).
+  seerr-arr:
   vpn-internal:
     external: true
     # vpn/docker-compose.yml ne fixe pas de `name:` de projet compose, donc

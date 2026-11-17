@@ -36,7 +36,7 @@ flowchart LR
     traefik --> jellyfin & nextcloud & komga & vpn
     vpn -->|"transmission-proxy"| arr
     jellyfin --> seerr
-    arr -->|"arr_default"| seerr
+    arr -->|"seerr-arr"| seerr
 ```
 
 ## Réseaux
@@ -81,7 +81,8 @@ flowchart TB
 | `traefik-restricted` | `make network` | Traefik, `transmission-proxy`, `clearr`, Prowlarr, Sonarr, Radarr | Services **sans authentification depuis le LAN** : sur `traefik-public`, un service public compromis pourrait les atteindre sans passer par le filtre LAN. Traefik y porte l'alias `jellyfin.<DOMAIN>` : les arr notifient Jellyfin par là (port **8443**), sans que Jellyfin puisse les joindre. |
 | `socket-proxy` | `traefik/` (interne) | `socket-proxy`, `traefik` | Traefik lit les labels via une API Docker restreinte, jamais via `/var/run/docker.sock`. |
 | `vpn_vpn-internal` | `vpn/` (subnet figé) | `transmission-vpn`, `transmission-proxy`, `webproxy`, cross-seed | **Seul** réseau de `transmission-vpn`. Un second réseau casserait le routage du tunnel, voir [Téléchargement](telechargement.md#vpn--transmission). |
-| `arr_default` | `arr/` | arr, cross-seed, Seerr | Seerr y joint `sonarr:8989`/`radarr:7878` sans passer par Traefik, où ils sont LAN-only. |
+| `arr_default` | `arr/` | Prowlarr, Sonarr, Radarr, cross-seed | Réseau interne de la stack arr. **Plus de Seerr** (2026-11-17) : il y lisait la clé API de Prowlarr. |
+| `arr_seerr-arr` | `arr/` | Seerr, Sonarr, Radarr | Seerr y joint `sonarr:8989`/`radarr:7878` sans passer par Traefik, où ils sont LAN-only. Seule porte d'un service exposé vers les arr : Seerr détient déjà leurs clés API. |
 | `clearr-arr` | `arr/` | clearr, Prowlarr, Sonarr, Radarr | clearr interroge les API arr. |
 
 > [!WARNING]
@@ -93,7 +94,8 @@ flowchart TB
 > **Arr et clearr ne rejoignent jamais `traefik-public` ni `vpn-internal`.**
 > Ils n'ont pas de login depuis le LAN, et une IP Docker compte comme LAN :
 > un service exposé (ou le client BitTorrent) qui partage leur réseau lirait
-> leur clé API ou piloterait clearr. Vérifier par `make check-isolation`
+> leur clé API ou piloterait clearr. Seule exception, Seerr : il ne voit que
+> Sonarr et Radarr, par `seerr-arr`, jamais par `arr_default`. Vérifier par `make check-isolation`
 > (≈ 6 min) après tout changement de réseau.
 
 ## Règles communes à tous les services

@@ -60,7 +60,9 @@ Ne pas proposer d'y revenir sans demande explicite de l'utilisateur.
   pas de login depuis le LAN. Tient **parce que** arr et clearr n'ont aucun
   réseau commun avec un service exposé : ni `traefik-public` (Jellyfin via
   l'alias `jellyfin.${DOMAIN}` de Traefik), ni `vpn-internal` (Transmission
-  via `transmission-proxy`). Un arr qui y revient = repasser en `enabled`
+  via `transmission-proxy`). Seule exception, Seerr : sur `seerr-arr` avec
+  Sonarr/Radarr seuls (il a leurs clés), **jamais `arr_default`** (il y lisait
+  la clé de Prowlarr, corrigé le 2026-11-17). Un arr qui y revient = repasser en `enabled`
   (`enabled` du 2026-09-29 au 2026-11-16 : clé API lue sur `/initialize.json`
   depuis jellyfin). `make check-isolation` après tout changement réseau.
 - **Secrets et valeurs propres au déploiement** : `.env` par stack +

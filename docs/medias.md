@@ -23,7 +23,7 @@ flowchart LR
     Lib -->|"/library (lecture seule)"| Jellyfin
     Jellyfin -->|"jellyfin-kodi (sync)"| Kodi
     Users -->|"demande"| Seerr
-    Seerr -->|"arr_default"| Sonarr & Radarr
+    Seerr -->|"seerr-arr"| Sonarr & Radarr
     Seerr -->|"scan des bibliothèques<br>jellyfin:8096"| Jellyfin
 ```
 
@@ -91,8 +91,8 @@ C'est le successeur de Jellyseerr/Overseerr, fusionnés et dépréciés.
 - **« Disponible » vient des bibliothèques Jellyfin**, pas de Sonarr/Radarr.
   Sans bibliothèque Jellyfin sur `library/`, tout paraît absent et Seerr
   propose de redemander l'existant.
-- Seerr joint **`sonarr:8989`/`radarr:7878`** par le réseau `arr_default` et
-  **`jellyfin:8096`** en direct. Il ne passe jamais par le domaine public :
+- Seerr joint **`sonarr:8989`/`radarr:7878`** par le réseau dédié `seerr-arr`
+  (rien d'autre dessus) et **`jellyfin:8096`** en direct. Il ne passe jamais par le domaine public :
   le `rate-limit` de Traefik lui renvoyait des `429` pendant sa synchro
   nocturne, et un 429 y est indiscernable d'un titre supprimé.
 - `externalHostname` porte l'URL publique de Jellyfin (sans `/` final). Sans
@@ -107,6 +107,11 @@ C'est le successeur de Jellyseerr/Overseerr, fusionnés et dépréciés.
 
 ### Pièges connus
 
+- **Seerr sur `arr_default` = clé API de Prowlarr lisible depuis Internet**
+  (corrigé le 2026-11-17). Les arr n'ont pas de login depuis une IP privée,
+  conteneurs compris : un Seerr compromis lisait `/initialize.json` de
+  Prowlarr et joignait cross-seed. Seerr ne rejoint que `seerr-arr`,
+  vérifié par `make check-isolation`.
 - **Répertoire de config créé en root = crash `EACCES` en boucle** : l'image
   tourne en UID 1000 et ne corrige pas les droits de son volume. `make up`
   crée `${DATA_ROOT}/.seerr/config` au préalable ; en cas de doute,

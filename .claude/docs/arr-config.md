@@ -489,7 +489,9 @@ ou aux connexions arr → Jellyfin.
     pour clearr ; `client_max_body_size 50m` dans `vpn/proxy/nginx.conf`, un
     `.torrent` de gros pack dépasse le 1 Mo par défaut de nginx) ;
   - Jellyfin : alias de Traefik, voir la connexion Jellyfin plus haut.
-  Voisins restants : seerr, cross-seed, clearr (ils ont déjà les clés), Traefik
+  Voisins restants : seerr (sur `seerr-arr`, sonarr/radarr seuls depuis le
+  2026-11-17 : sur `arr_default` il lisait la clé de Prowlarr, 200 mesuré),
+  cross-seed, clearr (ils ont déjà les clés), Traefik
   et transmission-proxy. **Preuve : `make check-isolation`** (WAN, sortie
   AirVPN, chaque conteneur exposé vers chaque IP des arr et de clearr, avec un
   témoin positif par source ; ~6 min, les ports filtrés attendent leur
