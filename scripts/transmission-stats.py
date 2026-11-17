@@ -14,8 +14,10 @@
 # docker exec est injoignable, jamais de sortie vide ni de code de retour
 # non-zéro — generate-dashboard.py doit pouvoir afficher un état
 # "indisponible" plutôt que planter toute la régénération du dashboard.
+import calendar
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -39,6 +41,17 @@ HISTORY_RETENTION = 25 * 3600
 # 24 h de scripts/stalled-torrents.py qui, lui, peut retirer : ici ce n'est
 # qu'un signal, et un torrent sain reçoit ses premiers octets en minutes.
 STALLED_ZERO_SECONDS = 3600
+
+# Erreur tracker qui annonce sa propre fin (2026-11-17) : Gemini refuse le
+# cross-seed d'une release récente jusqu'à une date donnée (« Cross-Seed : va
+# boire ton café, ça débute pas avant le 18/11/2026 à 12:46 UTC. »). Pas une
+# anomalie tant que la date n'est pas passée. Seule la date est reconnue, pas
+# la phrase : si Gemini change de formulation, le torrent recompte en
+# erreur, ce qui est l'échec sûr. Marge après la date : Transmission ne
+# réannonce pas à l'instant où l'embargo tombe (intervalle d'annonce de
+# 90 min chez Gemini, plus son backoff après erreur).
+EMBARGO_RE = re.compile(r"pas avant le (\d{2})/(\d{2})/(\d{4}) à (\d{2}):(\d{2}) UTC")
+EMBARGO_GRACE_SECONDS = 3 * 3600
 
 
 def load_env_file(path):
@@ -407,20 +420,38 @@ def is_stalled_at_zero(torrent, now):
             and now - torrent.get("addedDate", now) >= STALLED_ZERO_SECONDS)
 
 
+def is_errored(torrent, now):
+    """error != 0 (1 = avertissement tracker, 2 = erreur tracker, 3 = erreur
+    locale, spec RPC), sauf erreur tracker sous embargo daté non échu."""
+    if torrent.get("error", 0) == 0:
+        return False
+    if torrent.get("error") != 2:
+        return True
+    m = EMBARGO_RE.search(torrent.get("errorString", ""))
+    if not m:
+        return True
+    day, month, year, hour, minute = map(int, m.groups())
+    try:
+        until = calendar.timegm((year, month, day, hour, minute, 0))
+    except (ValueError, OverflowError):
+        return True
+    return now >= until + EMBARGO_GRACE_SECONDS
+
+
 def main():
     session = rpc("session-stats")
     torrents = rpc("torrent-get", {"fields": ["trackerStats", "uploadedEver", "downloadedEver",
-                                               "status", "error", "downloadDir", "files",
+                                               "status", "error", "errorString", "downloadDir", "files",
                                                "percentDone", "haveUnchecked", "addedDate"]})["torrents"]
 
     # status 0 = stopped/paused côté Transmission (spec RPC) — "actifs" =
     # tout le reste (en train de télécharger, de vérifier, ou en seed).
     # error != 0 = torrent en erreur (tracker injoignable, fichier introuvable
     # sur disque, etc. — errorString donne le détail, pas exposé ici, juste
-    # le compte).
+    # le compte). Sauf embargo daté, voir is_errored().
     torrents_active = sum(1 for t in torrents if t.get("status", 0) != 0)
     torrents_paused = sum(1 for t in torrents if t.get("status", 0) == 0)
-    torrents_errored = sum(1 for t in torrents if t.get("error", 0) != 0)
+    torrents_errored = sum(1 for t in torrents if is_errored(t, time.time()))
     torrents_cross_seed = sum(1 for t in torrents if is_cross_seed_entry(t))
     torrents_stalled_zero = sum(1 for t in torrents if is_stalled_at_zero(t, time.time()))
 

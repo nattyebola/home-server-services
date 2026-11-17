@@ -114,7 +114,7 @@ flowchart LR
   | Indexeurs | un indexeur en échec | — | tous répondent |
   | Tâches planifiées | une tâche en retard ou en échec | — | toutes à temps |
   | Disques | un disque plein à 90 % ou plus | à 80 % ou plus | sinon |
-  | Torrents | un import bloqué, ou la moitié des torrents en erreur ou absents | quelques torrents en erreur ou absents, imports inconnus (« — ») | sinon (les imports en attente sont normaux) |
+  | Torrents | un import bloqué, ou la moitié des torrents en erreur ou absents | quelques torrents en erreur ou absents, imports inconnus (« — ») | sinon (les imports en attente sont normaux ; une erreur tracker qui donne sa date de fin, comme l'embargo cross-seed de Gemini, ne compte qu'à partir de 3 h après cette date) |
   | Ratios | ratio total < 1 | entre 1 et 2 | ≥ 2 |
 
   Pas de voyant sur **Débits** (un débit n'est ni bon ni mauvais) ni sur

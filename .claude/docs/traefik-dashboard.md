@@ -181,6 +181,12 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
     et depuis le 2026-08-31 les deux compteurs d'imports. 0 en téléchargement
     n'est pas anormal, contrairement à une erreur. « Actifs » = `status != 0`
     (spec RPC), « surveillés » = tous les torrents présents.
+    **« En erreur » exclut une erreur tracker sous embargo daté** (2026-11-17,
+    demandé : le cross-seed Gemini « ça débute pas avant le JJ/MM/AAAA à
+    HH:MM UTC » jaunissait la carte) jusqu'à la date + 3 h. Seule la date est
+    matchée (`EMBARGO_RE`) : formulation changée = recompté, échec sûr. Ne pas
+    élargir à « toute erreur d'un torrent cross-seed » (cacherait un
+    `Unregistered torrent` ou le plafond de 3 pairs).
     **« Figés à 0 % »** (2026-10-28, demandé ; ajouté pour
     équilibrer les colonnes en 3/3/3) : non en pause, 0 octet reçu
     (`percentDone` et `haveUnchecked` à 0), ajouté depuis plus d'**1 h**

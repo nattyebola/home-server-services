@@ -163,6 +163,13 @@ remote be3.vpn.airdns.org 443
   déduite (seul Gemini touché, ce message précis), pas confirmée côté
   tracker. Ça se résorbe seul en une à deux annonces (intervalle de 90 min) ;
   sinon `transmission-remote -t <ids> --reannounce` plus tard.
+- **Gemini refuse le cross-seed d'une release trop récente.** Un torrent
+  injecté par cross-seed peu après la sortie reste en erreur `Cross-Seed : va
+  boire ton café, ça débute pas avant le <date> UTC.` (vu le 2026-11-17, ratio
+  0, données vérifiées). Rien à faire : l'annonce suivante après la date passe
+  seule ; sinon `--reannounce` à ce moment-là. Le dashboard ne compte pas
+  ce torrent « En erreur » avant la date + 3 h (`is_errored()` de
+  `transmission-stats.py`, qui ne lit que la date du message).
 - **Ne jamais attacher `transmission-vpn` à un second réseau Docker.** L'image
   pousse une route `redirect-gateway def1`, qui couvre aussi `172.16.0.0/12`,
   la plage des réseaux Docker. Un second réseau casse tout le routage sortant
