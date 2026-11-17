@@ -28,7 +28,14 @@ VERBOSE=0; [ "${1:-}" = "-v" ] && VERBOSE=1
 VPN=vpn-transmission-vpn-1
 # Une adresse DANS le LAN, pour forger des en-têtes crédibles.
 LAN_IP=$(python3 -c "import ipaddress,sys; n=ipaddress.ip_network(sys.argv[1], strict=False); print(n[min(50, n.num_addresses-2)])" "$LAN_CIDR")
-ok=0; ko=0
+ok=0; ko=0; skipped=0
+
+# Une stack non déployée ou arrêtée sur cette instance (nextcloud, komga…) n'a
+# aucun conteneur pour servir de point d'attaque : ses sondes sont sautées, pas
+# comptées en échec. Toujours affiché (même sans -v), pour qu'une stack tombée
+# sur l'instance principale ne fasse pas disparaître ses sondes sans bruit.
+running() { [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" = true ]; }
+skip() { skipped=$((skipped+1)); printf '  IGNORÉ %-55s conteneur absent ou arrêté\n' "$1"; }
 
 res() { # attendu obtenu libellé
   if [ "$1" = "$2" ]; then
@@ -105,6 +112,8 @@ for spec in "$VPN:vpn-transmission-proxy-1:vpn_vpn-internal:8080" \
             "komga-komga-1:traefik-traefik-1:traefik-public:8443" \
             "traefik-dashboard-1:traefik-traefik-1:traefik-public:8443"; do
   IFS=: read -r src wit net port <<<"$spec"
+  # Le VPN est la sonde elle-même : déjà exigé plus haut (sortie 2), jamais sauté.
+  if ! running "$src"; then skip "$src (source)"; continue; fi
   res ouvert "$(probe "$src" "$(ip_on "$wit" "$net")" "$port")" "$src -> témoin ${wit%-1}:$port"
   for t in $targets; do a=${t#*@}; res fermé "$(probe "$src" "${a%:*}" "${a#*:}")" "$src -> ${t%@*} $a"; done
 done
@@ -116,13 +125,17 @@ for v in sonarr radarr prowlarr clearr transmission; do
     --resolve "$v.$DOMAIN:443:$GW" "https://$v.$DOMAIN/")" "$VPN -> hôte:443 Host $v"
 done
 # Voisin restant du client BitTorrent : cross-seed, protégé par sa clé.
-XS=$(docker inspect -f '{{(index .NetworkSettings.Networks "vpn_vpn-internal").IPAddress}}' arr-cross-seed-1)
-res 401 "$(docker exec "$VPN" curl --noproxy '*' -s -o /dev/null -w '%{http_code}' -m 4 -X POST "http://$XS:2468/api/webhook")" \
-  "$VPN -> cross-seed sans clé"
+if running arr-cross-seed-1; then
+  XS=$(docker inspect -f '{{(index .NetworkSettings.Networks "vpn_vpn-internal").IPAddress}}' arr-cross-seed-1)
+  res 401 "$(docker exec "$VPN" curl --noproxy '*' -s -o /dev/null -w '%{http_code}' -m 4 -X POST "http://$XS:2468/api/webhook")" \
+    "$VPN -> cross-seed sans clé"
+else skip "$VPN -> cross-seed sans clé"; fi
 # Alias Jellyfin de Traefik : les arr joignent Jellyfin, jamais l'inverse.
-res 200 "$(docker exec arr-sonarr-1 curl -s -o /dev/null -w '%{http_code}' -m 5 "https://jellyfin.$DOMAIN:8443/health")" \
-  "sonarr -> jellyfin (alias Traefik)"
+if running jellyfin-jellyfin-1; then
+  res 200 "$(docker exec arr-sonarr-1 curl -s -o /dev/null -w '%{http_code}' -m 5 "https://jellyfin.$DOMAIN:8443/health")" \
+    "sonarr -> jellyfin (alias Traefik)"
+else skip "sonarr -> jellyfin (alias Traefik)"; fi
 
 echo
-echo "Bilan : $ok OK, $ko ÉCHEC"
+echo "Bilan : $ok OK, $ko ÉCHEC, $skipped IGNORÉ"
 [ $ko -eq 0 ]
