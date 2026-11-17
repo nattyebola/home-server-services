@@ -45,7 +45,11 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OCI_VERSION = "label:org.opencontainers.image.version"
 SOURCES = {
     "traefik/traefik": {"repo": "traefik/traefik", "tier": "app"},
-    "traefik/socket-proxy": {"repo": "Tecnativa/docker-socket-proxy", "tier": "infra"},
+    # Depuis le 2026-11, Tecnativa ne publie plus de release : :latest est
+    # reconstruite chaque semaine depuis master, label de version figé à
+    # « master ». Seule la version d'HAProxy embarquée bouge de façon lisible.
+    "traefik/socket-proxy": {"version": "env:HAPROXY_VERSION", "repo": None, "tier": "infra",
+                             "notes": "https://www.haproxy.org/download/<mineure>/src/CHANGELOG"},
     "traefik/dashboard": {"version": "env:NGINX_VERSION", "repo": "nginx/nginx", "tier": "infra"},
     "jellyfin/jellyfin": {"repo": "jellyfin/jellyfin", "tier": "app"},
     "nextcloud/app": {"version": "env:NEXTCLOUD_VERSION", "repo": "nextcloud/server", "tier": "app"},

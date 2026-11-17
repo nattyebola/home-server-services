@@ -185,5 +185,9 @@ Un tunnel « Dégradé » qui le reste après un redémarrage : voir
   page). Lire `dashboard/refresh.log`, relancer `make dashboard-refresh`.
   Une stack jamais configurée (`.env.example` sans `.env`) ne la fait plus
   échouer depuis le 2026-10-08 : son `config` passe en `--no-interpolate`.
+- **`socket-proxy` recréé à presque chaque `make update-all`** : normal. Son
+  `:latest` est reconstruit chaque semaine depuis master (plus de release
+  amont depuis le 2026-11). Traefik n'est pas redémarré pour autant.
+  `/changelogs` ne le signale que quand la version d'HAProxy embarquée change.
 - **Access log** (`${DATA_ROOT}/.traefik/log/`) : seule trace des requêtes WAN,
   403 des filtres LAN compris.

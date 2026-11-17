@@ -1,5 +1,9 @@
 services:
   socket-proxy:
+    # :latest = HAProxy LTS, reconstruite chaque semaine depuis master (plus de
+    # release amont depuis le 2026-11). Gardée quand même : les correctifs de
+    # sécurité d'HAProxy et d'Alpine arrivent par là. Le recréer ne redémarre
+    # pas traefik. Journal des versions : HAPROXY_VERSION (scripts/image-versions.py).
     image: tecnativa/docker-socket-proxy:latest
     restart: unless-stopped
     # Le strict nécessaire du provider docker de Traefik (hors Swarm) : lister

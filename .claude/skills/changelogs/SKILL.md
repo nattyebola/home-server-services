@@ -53,6 +53,10 @@ Cas particuliers :
 - **Release sans texte** (nextcloud/server, nginx) : se rabattre sur le
   changelog officiel (`https://nextcloud.com/changelog/`,
   `https://nginx.org/en/CHANGES`).
+- **`traefik/socket-proxy`** : la version notée est celle d'HAProxy
+  (l'image n'a plus de release, label figé à « master »). Lire le
+  `CHANGELOG` de la branche mineure (`notes`, remplacer `<mineure>` par
+  `3.4` etc.) ; pour le code Tecnativa, les commits de master.
 - **`haugene/docker-transmission-openvpn`** : sa version n'est pas celle de
   Transmission, lire aussi ce que dit la release sur la version embarquée.
 
