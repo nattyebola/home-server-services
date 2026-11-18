@@ -41,6 +41,7 @@ make steam-tv-install
 | utilisateur | presse-papiers partagé, lancé par `steam-tv` depuis le dépôt | `steam-tv-clipboard` |
 | root | `/etc/systemd/system/getty@tty3.service.d/autologin.conf` | `systemd/getty@tty3-autologin.conf` |
 | root | `/etc/systemd/system/triggerhappy.service.d/root.conf` | `systemd/triggerhappy-root.conf` |
+| root | `/etc/systemd/system/triggerhappy.socket.d/datagram.conf` | `systemd/triggerhappy-datagram.conf` |
 | root | `/etc/triggerhappy/triggers.d/steam-tv.conf` | `triggers.conf` |
 | root | `/usr/local/bin/steam-tv-key` (**copie**) | `steam-tv-key` |
 
@@ -235,7 +236,7 @@ fichiers).
 | Clavier en QWERTY sur tty3 | XKB de gamescope = US par défaut | `XKB_DEFAULT_*` dans `steam-tv` |
 | Touches multimédia sans effet sur tty3 | rien ne les gère hors de GNOME | triggerhappy (cette page) |
 | Une touche ne fait rien | le clavier envoie un autre code | `sudo thd --dump /dev/input/event*`, puis adapter `triggers.conf` |
-| Touches mortes après branchement d'un clavier ou démarrage d'input-remapper | thd en `nobody` (défaut du paquet) ne rouvre pas les nouveaux périphériques | override `triggerhappy-root.conf` (`--user root`) |
+| Touches luminosité mortes après un redémarrage (volume OK) | socket du paquet en flux, `th-cmd` en datagrammes : l'ajout à chaud par udev échoue, thd ignore le clavier virtuel qu'input-remapper crée après lui. Trace : `journalctl -b \| grep th-cmd` (`failed with exit code 1`) | drop-in `triggerhappy-datagram.conf` (`make steam-tv-install`) |
 | `sudo: A terminal is required` | `make steam-tv-install` lancé sans vrai terminal (ex. prompt `!` de Claude Code) | le lancer en SSH ou dans un terminal |
 | Steam refuse de démarrer sur tty3 | Steam déjà ouvert dans GNOME | `steam-tv` le ferme ; sinon le quitter depuis GNOME |
 | Copier-coller absent entre GNOME et Big Picture | deux compositeurs, deux presse-papiers ; ou `xclip` manquant | `steam-tv-clipboard` (lancé par `steam-tv`), `make steam-tv-install` |
