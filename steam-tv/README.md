@@ -118,6 +118,7 @@ flowchart LR
 | Gel | **2 s après la bascule** (`settle`) : `poll()` sur `/sys/class/tty/tty0/active`, que le noyau signale à chaque changement de console (repli : sondage à la seconde). Les 2 s laissent gamescope rendre l'écran ; un aller-retour plus rapide ne gèle rien |
 | Reprise | **instantanée** : ioctl `VT_WAITACTIVE` sur tty3, qui rend la main dès la bascule (repli : sondage à la seconde) |
 | État | `systemctl --user show steam-tv.scope -p FreezerState` (`frozen` / `running`) |
+| Icône Steam dans GNOME | un clic (menu, *Quitter Steam*…) **dégèle** Steam et ses jeux : `dbus-monitor` voit l'appel D-Bus destiné au Steam du scope. Regel après 5 s sans nouveau clic |
 
 Pendant le gel :
 - Steam est **hors ligne** : ni téléchargement, ni mise à jour. Il se reconnecte
@@ -264,7 +265,7 @@ fichiers).
 | Steam ne s'ouvre pas (ou reste figé) dans GNOME | l'instance de tty3 est gelée | `Ctrl+Alt+F3`, quitter Steam depuis Big Picture |
 | Big Picture figé au retour sur tty3 | le dégel n'a pas eu lieu (surveillance arrêtée) | `systemctl --user thaw steam-tv.scope` depuis GNOME ou SSH |
 | Pas de compteur d'IPS sur tty3, option absente de Big Picture | Steam n'injecte pas son overlay sous gamescope ; `mangoapp` manquant | menu Performances ; `make steam-tv-install` puis relancer `steam-tv` |
-| Icône Steam de GNOME sans effet | le Steam de tty3 est gelé | `systemctl --user thaw steam-tv.scope && steam -shutdown` (Big Picture n'a pas d'option « Quitter Steam » hors SteamOS) |
+| Icône Steam de GNOME sans effet | le Steam de tty3 est gelé, et `steam-tv` lancé avant le dégel au clic | relancer `steam-tv` ; sinon `systemctl --user thaw steam-tv.scope && steam -shutdown` |
 | Le son du jeu continue hors de tty3 | jeu hors de `steam-tv.scope` (Steam ≥ 13/11/2026 : un scope par jeu) | `steam-tv` gèle aussi les `app-steam-app*.scope` ; relancer `steam-tv` |
 | Retour au shell de tty3 après une mise à jour | Steam s'est arrêté au lieu de se relancer, gamescope avec lui | `steam-tv` |
 

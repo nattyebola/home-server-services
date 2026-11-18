@@ -78,13 +78,32 @@ while True:
   while vt_shown; do sleep 1; done
 }
 
-# Bloque jusqu'au retour sur la console. VT_WAITACTIVE (0x5607) rend la main dès la
-# bascule, sans sondage : la reprise est instantanée. Repli : sondage à la seconde.
+# Attend le retour sur la console, $1 secondes au plus ; vrai si elle est revenue.
+# VT_WAITACTIVE (0x5607) rend la main dès la bascule, sans sondage.
 wait_vt_shown() {
-  python3 -c 'import fcntl, os, sys
+  timeout "$1" python3 -c 'import fcntl, os, sys
 fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOCTTY)
-fcntl.ioctl(fd, 0x5607, int(sys.argv[2]))' "$vt_dev" "$vt_num" 2>/dev/null && return
-  until vt_shown; do sleep 1; done
+fcntl.ioctl(fd, 0x5607, int(sys.argv[2]))' "$vt_dev" "$vt_num" 2>/dev/null
+  vt_shown
+}
+
+# Icône Steam dans la barre de GNOME : un clic interroge Steam par D-Bus (menu, activation),
+# sans réponse tant qu'il est gelé. tray_watch dégèle Steam et ses jeux dès qu'un tel appel
+# lui est destiné ; pause_when_hidden les regèle après $tray_idle s sans nouveau clic.
+tray_idle=5
+tray_mark=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/steam-tv.tray
+tray_watch() {
+  dbus-monitor --session "type='method_call',interface='com.canonical.dbusmenu'" \
+    "type='method_call',interface='org.kde.StatusNotifierItem'" 2>/dev/null |
+  while read -r line; do
+    [[ $line == "method call "* && $line =~ destination=([^ ]+) ]] || continue
+    vt_shown && continue
+    # Seulement si le destinataire est dans notre scope (pas l'icône d'une autre appli)
+    pid=$(busctl --user status "${BASH_REMATCH[1]}" 2>/dev/null | sed -n 's/^PID=//p')
+    grep -q "/$scope\$" "/proc/$pid/cgroup" 2>/dev/null || continue
+    touch "$tray_mark"
+    systemctl --user thaw "$scope" $(game_scopes)
+  done
 }
 
 # Hors du scope, sinon elle se gèlerait elle-même
@@ -97,14 +116,24 @@ pause_when_hidden() {
     vt_shown && continue
     frozen=("$scope" $(game_scopes))
     systemctl --user freeze "${frozen[@]}" || { sleep 5; continue; }
-    wait_vt_shown
+    until wait_vt_shown 1; do
+      # Dégelé par un clic sur l'icône : regel après $tray_idle s sans nouveau clic
+      [[ $(systemctl --user show -p FreezerState --value "$scope") == running ]] || continue
+      (( $(date +%s) - $(stat -c %Y "$tray_mark" 2>/dev/null || echo 0) > tray_idle )) || continue
+      frozen=("$scope" $(game_scopes))
+      systemctl --user freeze "${frozen[@]}"
+    done
     systemctl --user thaw "${frozen[@]}"
   done
 }
 pause_when_hidden &
 watch_pid=$!
-# À la sortie de gamescope : arrêter la surveillance et ce qui resterait du scope (presse-papiers)
-trap 'kill $watch_pid 2>/dev/null; systemctl --user stop "$scope" 2>/dev/null' EXIT
+tray_watch &
+tray_pid=$!
+# À la sortie de gamescope : arrêter les surveillances (et le dbus-monitor de tray_watch)
+# et ce qui resterait du scope (presse-papiers)
+trap 'pkill -P $tray_pid 2>/dev/null; kill $watch_pid $tray_pid 2>/dev/null
+      systemctl --user stop "$scope" 2>/dev/null' EXIT
 
 here=$(dirname "$(readlink -f "$0")")
 clipboard=$here/steam-tv-clipboard
