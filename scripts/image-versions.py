@@ -4,6 +4,7 @@
 #
 #   <compose config json> | image-versions.py snapshot <stack>   avant le pull
 #   <compose config json> | image-versions.py record <stack>     après le up
+#   image-versions.py host                     logiciels de l'hôte (steam-tv), par update-all
 #   image-versions.py recap --since <epoch>    récap de fin d'update-all
 #   image-versions.py pending                  entrées non traitées (JSON)
 #   image-versions.py mark <id>... | --all     marque des entrées traitées
@@ -67,6 +68,24 @@ SOURCES = {
     "seerr/seerr": {"repo": "seerr-team/seerr", "tier": "app"},
     "komga/komga": {"version": "jar:/app/application.jar", "repo": "gotson/komga", "tier": "app"},
 }
+
+
+# Logiciels de l'HÔTE dont dépend steam-tv/. Seulement observés : ils se
+# mettent à jour seuls (Steam au démarrage, gamescope par apt), update-all
+# ne les touche pas. Comparés à la version vue au passage précédent, gardée
+# dans host-versions.json : le journal date donc la DÉTECTION, pas la montée.
+#   version : steam (manifeste du client) | dpkg:<paquet>
+HOST_SOURCES = {
+    # Version du client = horodatage Unix de son build. Pas de dépôt :
+    # notes dans les annonces « Steam Client Update » de l'appid 593110.
+    "steam-tv/steam": {"version": "steam", "repo": None, "tier": "app",
+                       "notes": "https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/"
+                                "?appid=593110&count=30&maxlength=0&feeds=steam_community_announcements"},
+    "steam-tv/gamescope": {"version": "dpkg:gamescope", "repo": "ValveSoftware/gamescope", "tier": "app"},
+}
+HOME = os.path.expanduser("~")
+# Posé par `make steam-tv-install` : sans lui, steam-tv n'est pas utilisé ici.
+STEAM_TV_MARKER = os.path.join(HOME, ".local", "bin", "steam-tv")
 
 
 def load_env_file(path):
@@ -250,6 +269,86 @@ def cmd_record(stack):
     os.remove(path)
 
 
+def steam_version():
+    """Client Steam installé : plus grand `version` des manifestes de
+    ~/.steam/steam/package (le client 64 bits `steamrt64` cohabite avec
+    l'ancien `ubuntu12`, figé ; c'est le plus récent qui tourne)."""
+    package = os.path.join(HOME, ".steam", "steam", "package")
+    versions = []
+    try:
+        names = os.listdir(package)
+    except FileNotFoundError:
+        return None
+    for name in names:
+        if not (name.startswith("steam_client_") and name.endswith(".manifest")):
+            continue
+        with open(os.path.join(package, name), errors="replace") as f:
+            m = re.search(r'"version"\s+"(\d+)"', f.read())
+        if m:
+            versions.append(int(m.group(1)))
+    return str(max(versions)) if versions else None
+
+
+def host_version(how):
+    kind, _, key = how.partition(":")
+    if kind == "steam":
+        return steam_version()
+    if kind == "dpkg":
+        out = subprocess.run(["dpkg-query", "-W", "-f", "${Version}", key],
+                             capture_output=True, text=True, check=False)
+        if out.returncode != 0:
+            return None
+        # « 3.16.20+ds-1 » → « 3.16.20 » : le suffixe Debian n'a pas de changelog amont.
+        return re.sub(r"[+~-].*$", "", out.stdout.strip()) or None
+    return None
+
+
+def cmd_host():
+    if not os.path.lexists(STEAM_TV_MARKER):
+        return  # steam-tv pas installé sur cette instance : rien à surveiller
+    path = os.path.join(JOURNAL_DIR, "host-versions.json")
+    try:
+        with open(path) as f:
+            before = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        before = {}
+    after = {key: host_version(src["version"]) for key, src in HOST_SOURCES.items()}
+    now = datetime.datetime.now().astimezone()
+    entries = []
+    for key, new in after.items():
+        old = before.get(key)
+        # Premier passage (rien de connu) : on pose la référence, sans entrée.
+        # Version illisible (Steam désinstallé...) : l'ancienne référence est gardée.
+        if not new:
+            after[key] = old
+            continue
+        if not old or old == new:
+            continue
+        src = HOST_SOURCES[key]
+        entries.append({
+            "id": f"{now:%Y%m%dT%H%M%S}-{key.replace('/', '-')}",
+            "date": now.isoformat(timespec="seconds"),
+            "epoch": int(now.timestamp()),
+            "service": key,
+            "image": None,
+            "from": old,
+            "to": new,
+            "from_id": None,
+            "to_id": None,
+            "repo": src.get("repo"),
+            "notes": src.get("notes"),
+            "tier": src.get("tier", "infra"),
+            "processed": None,
+        })
+        print(f"  ↑ {key} : {old} → {new}")
+    os.makedirs(JOURNAL_DIR, exist_ok=True)
+    if entries:
+        append_journal(entries)
+    with open(path + ".tmp", "w") as f:
+        json.dump(after, f)
+    os.replace(path + ".tmp", path)
+
+
 def read_journal():
     try:
         with open(JOURNAL) as f:
@@ -298,7 +397,7 @@ def main():
     # Désactivé : make update n'écrit rien, en silence. La lecture
     # (pending/mark) reste possible, avec un mot pour expliquer un vide.
     if not ENABLED:
-        if cmd in ("snapshot", "record", "recap"):
+        if cmd in ("snapshot", "record", "recap", "host"):
             return
         print("image-versions: journal désactivé (UPDATE_JOURNAL=1 dans .env.shared pour l'activer)",
               file=sys.stderr)
@@ -306,6 +405,8 @@ def main():
         cmd_snapshot(args[1])
     elif cmd == "record" and len(args) == 2:
         cmd_record(args[1])
+    elif cmd == "host" and len(args) == 1:
+        cmd_host()
     elif cmd == "recap" and len(args) == 3 and args[1] == "--since":
         cmd_recap(int(args[2]))
     elif cmd == "pending":

@@ -269,6 +269,12 @@ fichiers).
 | Le son du jeu continue hors de tty3 | jeu hors de `steam-tv.scope` (Steam ≥ 13/11/2026 : un scope par jeu) | `steam-tv` gèle aussi les `app-steam-app*.scope` ; relancer `steam-tv` |
 | Retour au shell de tty3 après une mise à jour | Steam s'est arrêté au lieu de se relancer, gamescope avec lui | `steam-tv` |
 
+> [!TIP]
+> Montées de version : avec `UPDATE_JOURNAL=1`, `make update-all` note les
+> versions de Steam et de gamescope (sans les mettre à jour) ; `/changelogs`
+> dans Claude Code résume ce qui peut toucher steam-tv
+> ([exploitation](../docs/exploitation.md#suivi-des-versions)).
+
 > [!NOTE]
 > Après une montée de version de gamescope, si la luminosité ne répond plus,
 > revérifier le nom de la propriété :

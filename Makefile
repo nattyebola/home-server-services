@@ -262,7 +262,7 @@ rebuild: require-env-shared network ## STACK=<nom> SERVICE=<nom> — recrée UN 
 # passage un service isolé qui serait tombé — voulu). Les stacks sautées sont
 # listées à la fin, `make update STACK=<nom>` reste le moyen d'en mettre une
 # à jour sans la démarrer au préalable... à ceci près qu'il la démarrera.
-update-all: ## — `update` sur les stacks démarrées, prune les images orphelines, régénère le dashboard, récap des versions
+update-all: ## — `update` sur les stacks démarrées, prune les images orphelines, régénère le dashboard, récap des versions (+ Steam/gamescope de steam-tv, notés sans MAJ)
 	@# Sans ce garde, un daemon injoignable ferait sortir tous les `docker ps`
 	@# vides : chaque stack serait déclarée arrêtée, donc sautée, et update-all
 	@# se terminerait en SUCCÈS sans avoir rien mis à jour.
@@ -280,6 +280,7 @@ update-all: ## — `update` sur les stacks démarrées, prune les images orpheli
 	docker image prune -f; \
 	$(MAKE) dashboard-refresh; \
 	echo ""; \
+	python3 scripts/image-versions.py host; \
 	python3 scripts/image-versions.py recap --since $$start; \
 	echo ""; \
 	if [ -n "$$skipped" ]; then \

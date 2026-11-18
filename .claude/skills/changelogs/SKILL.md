@@ -15,6 +15,9 @@ changé ajoute une ligne à `$DATA_ROOT/.update-journal/journal.jsonl`, avec
 Seulement si `.env.shared` contient `UPDATE_JOURNAL=1` (sinon `pending`
 le signale sur stderr : le dire et s'arrêter).
 
+`update-all` note aussi Steam et gamescope sur l'hôte (`steam-tv/*`,
+`image-versions.py host`), sans les mettre à jour, si steam-tv est installé.
+
 Une montée sans changement de version (rebuild linuxserver `-lsNNN`,
 modif de code de clearr) n'est pas notée : il n'y a rien à lire.
 
@@ -59,6 +62,20 @@ Cas particuliers :
   `3.4` etc.) ; pour le code Tecnativa, les commits de master.
 - **`haugene/docker-transmission-openvpn`** : sa version n'est pas celle de
   Transmission, lire aussi ce que dit la release sur la version embarquée.
+- **`steam-tv/steam`** (client Steam de l'hôte, noté par `update-all` sans
+  le mettre à jour ; seulement si `make steam-tv-install` a été fait) :
+  `from`/`to` sont l'**horodatage Unix du build** (`date -d @<to>`), la
+  `date` de l'entrée est celle de la détection, pas de la montée. Notes :
+  `curl -s "<notes>"`, garder les `newsitems` titrés « Steam Client Update »
+  (`date` en epoch, `contents` en BBCode) publiés entre la date de build de
+  `from` (exclue) et celle de `to` + quelques jours. Un build sans annonce
+  correspondante = correctif silencieux, le dire.
+- **`steam-tv/gamescope`** (paquet Ubuntu) : version Debian sans suffixe ;
+  releases GitHub `ValveSoftware/gamescope`.
+- **Pour `steam-tv/*`**, juger contre `steam-tv/` (script `steam-tv`, ses
+  options gamescope, `steam-tv-fps`, gel des scopes `app-steam-app*`) et
+  `steam-tv/README.md` : Big Picture/gamepadui, HDR, overlay `mangoapp`,
+  Proton, Linux, contrôleurs. Ignorer boutique, social, Windows/macOS, Deck.
 
 ## 3. Trier selon CE serveur
 
