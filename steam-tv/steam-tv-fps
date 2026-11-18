@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Fait suivre à mangoapp le réglage « Afficher les IPS dans le coin » du menu Performances.
+# Hors SteamOS, ce menu ne règle que l'ancien compteur de l'overlay Steam
+# (InGameOverlayShowFPSCorner dans localconfig.vdf), invisible sous gamescope. mangoapp,
+# lui, relit son fichier de config (MANGOHUD_CONFIGFILE) dès qu'il est modifié.
+# Lancé par steam-tv dans le scope de gamescope (gelé avec lui). Sondage toutes les 2 s.
+set -u
+userdata=$HOME/.steam/steam/userdata
+
+# Fichier de config de mangoapp : créé par gamescope, visible dans l'environnement de mangoapp
+mangoapp_config() {
+  local pid
+  pid=$(pgrep -u "$USER" -x mangoapp | head -n1) || return 1
+  tr '\0' '\n' < "/proc/$pid/environ" | sed -n 's/^MANGOHUD_CONFIGFILE=//p'
+}
+
+# 0 = masquer, 1-4 = coin, pour le compte connecté (localconfig.vdf le plus récent)
+corner() {
+  local f
+  f=$(ls -t "$userdata"/*/config/localconfig.vdf 2>/dev/null | head -n1)
+  [[ -n $f ]] || return 0
+  sed -n 's/^[[:space:]]*"InGameOverlayShowFPSCorner"[[:space:]]*"\([0-9]\)".*/\1/p' "$f" | head -n1
+}
+
+while sleep 2; do
+  cfg=$(mangoapp_config) || continue
+  [[ -n $cfg && -w $cfg ]] || continue
+  case $(corner) in
+    0) want=no_display ;;
+    2) want=position=top-right ;;
+    3) want=position=bottom-right ;;
+    4) want=position=bottom-left ;;
+    *) want=position=top-left ;;
+  esac
+  # Steam réaffiche mangoapp au lancement d'un jeu (message de contrôle, sans toucher au
+  # fichier) : « Masquer » est donc réécrit à chaque tour, un coin seulement s'il change.
+  if [[ $want == no_display || $(<"$cfg") != "$want" ]]; then
+    printf '%s\n' "$want" > "$cfg"
+  fi
+done

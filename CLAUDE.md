@@ -198,6 +198,7 @@ server/
 │                           manual-import.py, backup.sh/restore.sh, generate-dashboard.py,
 │                           transmission-stats.py, lan-only-middleware.sh,
 │                           require-running.sh, vpn-bench.py, image-versions.py,
+│                           askpass.sh (sudo sans terminal : fenêtre GNOME),
 │                           check-isolation.sh
 ├── traefik/ jellyfin/ nextcloud/ vpn/ arr/ seerr/ komga/   une stack par dossier
 │   └── arr/{clearr,profiles,cross-seed,scripts}/

@@ -9,8 +9,16 @@ if [[ -n ${WAYLAND_DISPLAY:-}${DISPLAY:-} ]]; then
   exit 1
 fi
 
+# Depuis la mise à jour de Steam du 2026-11-13, chaque jeu tourne dans son propre scope
+# (app-steam-app<id>-<pid>.scope), hors de steam-tv.scope : il faut le geler aussi.
+# Un seul Steam par utilisateur (voir plus bas) : tous ces scopes sont les siens.
+game_scopes() {
+  systemctl --user list-units --type=scope --state=active --plain --no-legend \
+    'app-steam-app*.scope' | awk '{print $1}'
+}
+
 # Un Steam resté gelé (session précédente interrompue) ne répondrait pas à -shutdown
-systemctl --user thaw steam-tv.scope 2>/dev/null
+systemctl --user thaw steam-tv.scope $(game_scopes) 2>/dev/null
 
 # Un utilisateur = une seule instance de Steam : celle de GNOME doit être fermée d'abord.
 if pgrep -u "$USER" -x steam >/dev/null; then
@@ -87,9 +95,10 @@ pause_when_hidden() {
     # aller-retour rapide entre consoles ne gèle rien.
     sleep "$settle"
     vt_shown && continue
-    systemctl --user freeze "$scope" || { sleep 5; continue; }
+    frozen=("$scope" $(game_scopes))
+    systemctl --user freeze "${frozen[@]}" || { sleep 5; continue; }
     wait_vt_shown
-    systemctl --user thaw "$scope"
+    systemctl --user thaw "${frozen[@]}"
   done
 }
 pause_when_hidden &
@@ -97,14 +106,31 @@ watch_pid=$!
 # À la sortie de gamescope : arrêter la surveillance et ce qui resterait du scope (presse-papiers)
 trap 'kill $watch_pid 2>/dev/null; systemctl --user stop "$scope" 2>/dev/null' EXIT
 
-clipboard="$(dirname "$(readlink -f "$0")")/steam-tv-clipboard"
+here=$(dirname "$(readlink -f "$0")")
+clipboard=$here/steam-tv-clipboard
+fps=$here/steam-tv-fps   # coin / masquer du menu Performances → mangoapp
+
+# Overlay de performances de Big Picture (compteur d'IPS, menu Performances) : gamescope
+# lance mangoapp (compilé par build-mangoapp.sh) et annonce à Steam qu'il est là.
+# Sous gamescope -e, Steam n'injecte pas son overlay classique : sans mangoapp, pas d'IPS.
+mangoapp=()
+export PATH="$HOME/.local/bin:$PATH"
+if command -v mangoapp >/dev/null; then
+  mangoapp=(--mangoapp)
+  # read_cfg : le fichier MANGOHUD_CONFIGFILE (coin, masquer, écrits par steam-tv-fps)
+  # reste lu, ce qui suit s'applique par-dessus. IPS seuls, en gros (24 px par défaut,
+  # minuscule en 4K).
+  export MANGOHUD_CONFIG=read_cfg,fps_only,font_size=48
+else
+  echo "mangoapp absent : pas de compteur d'IPS (make steam-tv-install)." >&2
+fi
 
 # -e : intégration Steam (overlay, réglages d'affichage et HDR pilotés depuis Big Picture)
 # -W/-H : sortie 4K de la TV ; fréquence = mode préféré de l'écran
-# Le presse-papiers est dans le scope : gelé avec gamescope, il ne bloque pas sur un Xwayland figé.
+# Presse-papiers et pont IPS dans le scope : gelés avec gamescope, ils ne bloquent pas sur un Xwayland figé.
 systemd-run --user --scope --quiet --collect --unit="$scope" -- \
-  bash -c '"$1" & exec "${@:2}"' _ "$clipboard" \
-  gamescope -e -f --hdr-enabled --adaptive-sync -W 3840 -H 2160 \
+  bash -c '"$1" & "$2" & exec "${@:3}"' _ "$clipboard" "$fps" \
+  gamescope -e -f --hdr-enabled --adaptive-sync -W 3840 -H 2160 "${mangoapp[@]}" \
   -- /usr/games/steam -gamepadui >"$log_dir/steam-tv.log" 2>&1
 status=$?
 

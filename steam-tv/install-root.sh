@@ -11,6 +11,9 @@ render() { sed "s/__USER__/$user/g" "$1"; }
 
 # xprop (x11-utils) : luminosité ; triggerhappy : raccourcis globaux ; xclip : presse-papiers partagé
 apt-get install -y triggerhappy x11-utils xclip
+# Compilation de mangoapp (build-mangoapp.sh, côté utilisateur) : compteur d'IPS de Big Picture
+apt-get install -y meson ninja-build pkgconf glslang-tools python3-mako \
+  libx11-dev libxkbcommon-dev libdbus-1-dev libglfw3-dev
 # /usr/games (gamescope) n'est pas dans le secure_path de sudo
 PATH=$PATH:/usr/games
 for cmd in gamescope wpctl python3; do

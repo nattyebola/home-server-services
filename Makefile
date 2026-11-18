@@ -36,6 +36,9 @@ help: ## — liste les cibles disponibles et leurs arguments
 # Kodi profile of the user running make (a media client, not a stack) — see the
 # kodi-install target and kodi/README.md. Overridable for a Kodi running under
 # another user or a non-default profile path: make kodi-install KODI_HOME=...
+# sudo : en terminal, invite classique ; sans terminal (prompt `!` de Claude Code),
+# fenêtre de mot de passe sur l'écran GNOME (scripts/askpass.sh, zenity).
+SUDO = $(if $(shell [ -t 0 ] && echo tty),sudo,SUDO_ASKPASS=$(CURDIR)/scripts/askpass.sh sudo -A)
 KODI_HOME ?= $(HOME)/.kodi
 # same for gnome-install: make gnome-install GNOME_EXT_DIR=...
 GNOME_EXT_DIR ?= $(HOME)/.local/share/gnome-shell/extensions
@@ -461,8 +464,8 @@ gnome-install: ## [GNOME_EXT_DIR=<chemin>] — installe l'extension GNOME Shell 
 
 # Steam Big Picture alone on tty3 under gamescope (steam-tv/README.md). User part
 # here (launcher symlinked like gnome-install, ~/.zprofile hook appended once),
-# root part in steam-tv/install-root.sh — run from a real terminal, sudo prompts.
-steam-tv-install: ## — Steam Big Picture sur tty3 (gamescope HDR, autologin, AZERTY, touches multimédia) ; demande sudo
+# root part in steam-tv/install-root.sh — sudo prompts (terminal, or GNOME dialog without one).
+steam-tv-install: ## — Steam Big Picture sur tty3 (gamescope HDR, autologin, AZERTY, touches multimédia, compteur d'IPS) ; demande sudo
 	@mkdir -p "$(HOME)/.local/bin"
 	@dest="$(HOME)/.local/bin/steam-tv"; \
 	if [ -e "$$dest" ] && [ ! -L "$$dest" ]; then \
@@ -476,4 +479,5 @@ steam-tv-install: ## — Steam Big Picture sur tty3 (gamescope HDR, autologin, A
 		{ echo; cat steam-tv/zprofile.snippet; } >> "$(HOME)/.zprofile"; \
 		echo "appended tty3 hook to ~/.zprofile"; \
 	fi
-	sudo steam-tv/install-root.sh "$$(id -un)"
+	$(SUDO) steam-tv/install-root.sh "$$(id -un)"
+	steam-tv/build-mangoapp.sh

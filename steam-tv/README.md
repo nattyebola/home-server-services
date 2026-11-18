@@ -27,8 +27,8 @@ flowchart LR
 
 ## Installation
 
-Depuis un **vrai terminal** (SSH ou terminal GNOME), car `sudo` demande le mot
-de passe :
+`sudo` demande le mot de passe dans le terminal, ou, sans terminal (prompt `!`
+de Claude Code), dans une fenêtre sur l'écran GNOME (`scripts/askpass.sh`) :
 
 ```sh
 make steam-tv-install
@@ -39,6 +39,8 @@ make steam-tv-install
 | utilisateur | `~/.local/bin/steam-tv` (lien) | `steam-tv` |
 | utilisateur | bloc ajouté une fois à `~/.zprofile` | `zprofile.snippet` |
 | utilisateur | presse-papiers partagé, lancé par `steam-tv` depuis le dépôt | `steam-tv-clipboard` |
+| utilisateur | pont coin / masquer → `mangoapp`, lancé par `steam-tv` depuis le dépôt | `steam-tv-fps` |
+| utilisateur | `~/.local/bin/mangoapp` (**compilé**) | `build-mangoapp.sh` |
 | root | `/etc/systemd/system/getty@tty3.service.d/autologin.conf` | `systemd/getty@tty3-autologin.conf` |
 | root | `/etc/systemd/system/triggerhappy.service.d/root.conf` | `systemd/triggerhappy-root.conf` |
 | root | `/etc/systemd/system/triggerhappy.socket.d/datagram.conf` | `systemd/triggerhappy-datagram.conf` |
@@ -46,7 +48,7 @@ make steam-tv-install
 | root | `/usr/local/bin/steam-tv-key` (**copie**) | `steam-tv-key` |
 
 La partie root est dans `install-root.sh` (paquets `triggerhappy`,
-`x11-utils` et `xclip`). Elle se relance sans risque après une modification du dépôt.
+`x11-utils`, `xclip` et de quoi compiler `mangoapp`). Elle se relance sans risque après une modification du dépôt.
 `steam-tv-key` est **copié**, pas lié : triggerhappy l'exécute en root, il ne
 doit pas rester modifiable par l'utilisateur.
 
@@ -111,7 +113,7 @@ flowchart LR
 
 | | |
 |---|---|
-| Ce qui est gelé | le scope systemd `steam-tv.scope` : gamescope, Steam, ses sous-processus, le jeu en cours, le presse-papiers partagé |
+| Ce qui est gelé | le scope systemd `steam-tv.scope` (gamescope, Steam, le presse-papiers partagé) **et** les scopes de jeu `app-steam-app<id>-<pid>.scope` : depuis sa mise à jour du 2026-11-13, Steam lance chaque jeu dans son propre scope |
 | Mécanisme | cgroup freezer, comme une mise en veille : tout s'arrête d'un bloc |
 | Gel | **2 s après la bascule** (`settle`) : `poll()` sur `/sys/class/tty/tty0/active`, que le noyau signale à chaque changement de console (repli : sondage à la seconde). Les 2 s laissent gamescope rendre l'écran ; un aller-retour plus rapide ne gèle rien |
 | Reprise | **instantanée** : ioctl `VT_WAITACTIVE` sur tty3, qui rend la main dès la bascule (repli : sondage à la seconde) |
@@ -209,6 +211,23 @@ FSR 4 en jeu. Le couper pour un jeu : `PROTON_FSR4_UPGRADE=0 %command%`.
 Une touche maintenue répète. Pas d'indicateur à l'écran. Le curseur de Steam
 ne suit pas les touches, et le bouger écrase leur réglage.
 
+## Compteur d'IPS
+
+Sous gamescope, Steam **n'injecte pas son overlay classique** dans les jeux :
+l'option *compteur d'IPS en jeu* n'existe pas dans Big Picture, et l'activer
+depuis le Steam de GNOME ne change rien sur tty3. Comme sur un Steam Deck, le
+compteur passe par le menu **Performances** (bouton `…` → icône batterie),
+dessiné par `mangoapp`. Ce menu ne propose ici que le coin où l'afficher.
+
+| | |
+|---|---|
+| Qui le dessine | `mangoapp` (MangoHud), lancé par `gamescope --mangoapp`, qui annonce à Steam qu'il est là (`STEAM_USE_MANGOAPP`) |
+| D'où il vient | **compilé** par `build-mangoapp.sh` (version et SHA-256 fixés dans le script) : ni le paquet Ubuntu `mangohud` ni le binaire officiel ne le contiennent |
+| Monter de version | changer `version` et `sha256` dans `build-mangoapp.sh`, `make steam-tv-install`, relancer `steam-tv` |
+| Absent | `steam-tv` lance gamescope sans `--mangoapp` et le signale |
+| Affichage | **IPS seuls, police 48 px** : `MANGOHUD_CONFIG=read_cfg,fps_only,font_size=48` dans `steam-tv` |
+| Coin, Masquer | le menu ne règle que l'ancien compteur de Steam (`InGameOverlayShowFPSCorner` de `localconfig.vdf`) : `steam-tv-fps` (lancé par `steam-tv`) le recopie dans le fichier de `mangoapp` (`MANGOHUD_CONFIGFILE`), relu à chaque modification. Délai : 2 s, plus le temps que Steam enregistre le réglage |
+
 ## Presse-papiers partagé
 
 GNOME et gamescope sont deux compositeurs distincts, chacun avec son
@@ -237,13 +256,16 @@ fichiers).
 | Touches multimédia sans effet sur tty3 | rien ne les gère hors de GNOME | triggerhappy (cette page) |
 | Une touche ne fait rien | le clavier envoie un autre code | `sudo thd --dump /dev/input/event*`, puis adapter `triggers.conf` |
 | Touches luminosité mortes après un redémarrage (volume OK) | socket du paquet en flux, `th-cmd` en datagrammes : l'ajout à chaud par udev échoue, thd ignore le clavier virtuel qu'input-remapper crée après lui. Trace : `journalctl -b \| grep th-cmd` (`failed with exit code 1`) | drop-in `triggerhappy-datagram.conf` (`make steam-tv-install`) |
-| `sudo: A terminal is required` | `make steam-tv-install` lancé sans vrai terminal (ex. prompt `!` de Claude Code) | le lancer en SSH ou dans un terminal |
+| `sudo: A terminal is required` ou `no askpass program` | `sudo` lancé sans terminal hors du Makefile, ou en SSH sans écran GNOME | `make steam-tv-install` (fenêtre GNOME), ou depuis un vrai terminal |
 | Steam refuse de démarrer sur tty3 | Steam déjà ouvert dans GNOME | `steam-tv` le ferme ; sinon le quitter depuis GNOME |
 | Copier-coller absent entre GNOME et Big Picture | deux compositeurs, deux presse-papiers ; ou `xclip` manquant | `steam-tv-clipboard` (lancé par `steam-tv`), `make steam-tv-install` |
 | Option HDR grisée dans un jeu Proton | `DXVK_HDR` absent : le jeu ne voit pas l'écran HDR | posé par `steam-tv` ; relancer `steam-tv` si Big Picture tournait avant |
 | FSR 4 absent (pas de filigrane avec `PROTON_FSR4_INDICATOR=1`) | jeu sous un Proton de Valve, ou jeu en FSR 2.x/3.0 | GE-Proton dans *Propriétés → Compatibilité* ; sinon rien à faire |
 | Steam ne s'ouvre pas (ou reste figé) dans GNOME | l'instance de tty3 est gelée | `Ctrl+Alt+F3`, quitter Steam depuis Big Picture |
 | Big Picture figé au retour sur tty3 | le dégel n'a pas eu lieu (surveillance arrêtée) | `systemctl --user thaw steam-tv.scope` depuis GNOME ou SSH |
+| Pas de compteur d'IPS sur tty3, option absente de Big Picture | Steam n'injecte pas son overlay sous gamescope ; `mangoapp` manquant | menu Performances ; `make steam-tv-install` puis relancer `steam-tv` |
+| Icône Steam de GNOME sans effet | le Steam de tty3 est gelé | `systemctl --user thaw steam-tv.scope && steam -shutdown` (Big Picture n'a pas d'option « Quitter Steam » hors SteamOS) |
+| Le son du jeu continue hors de tty3 | jeu hors de `steam-tv.scope` (Steam ≥ 13/11/2026 : un scope par jeu) | `steam-tv` gèle aussi les `app-steam-app*.scope` ; relancer `steam-tv` |
 | Retour au shell de tty3 après une mise à jour | Steam s'est arrêté au lieu de se relancer, gamescope avec lui | `steam-tv` |
 
 > [!NOTE]
