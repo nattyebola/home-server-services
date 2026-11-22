@@ -519,6 +519,16 @@ MEDIA_MANAGEMENT_OVERRIDES = {"copyUsingHardlinks": True,
 SONARR_NAMING_OVERRIDES = {"renameEpisodes": True}
 RADARR_NAMING_OVERRIDES = {"renameMovies": True}
 
+# Intervalle de RSS sync (minutes), commun à tous les indexeurs : ni les arr ni
+# Prowlarr ne le règlent par indexeur. 15 min sur les deux arr depuis le
+# 2026-11-22. Radarr était à 30 : la page RSS films de V3X (100 releases, pas
+# de pagination, `offset=100` vide) ne couvrait que ~40 min aux heures
+# chargées, d'où ~16 `rss sync didn't cover the period` par jour (trous de 1 à
+# 3 min, depuis au moins août). Coût : 2× plus de requêtes RSS de Radarr vers
+# chaque indexeur (~96/jour au lieu de 48). Ne pas remonter sans revérifier
+# la fenêtre couverte par la page la plus courte.
+INDEXER_CONFIG_OVERRIDES = {"rssSyncInterval": 15}
+
 # Section /config/host des trois arr : de quoi rendre à
 # `authenticationRequired: disabledForLocalAddresses` le comportement que son
 # nom annonce quand on est derrière un reverse proxy (constaté le 2026-09-17,
@@ -1275,6 +1285,10 @@ def main():
     run("Radarr (naming)", lambda: apply_config_overrides(
         "Radarr", RADARR_CONTAINER, RADARR_URL, radarr_api_key, "naming",
         RADARR_NAMING_OVERRIDES))
+    for label, container, url, key in (("Sonarr", SONARR_CONTAINER, SONARR_URL, sonarr_api_key),
+                                       ("Radarr", RADARR_CONTAINER, RADARR_URL, radarr_api_key)):
+        run(f"{label} (indexer)", lambda: apply_config_overrides(
+            label, container, url, key, "indexer", INDEXER_CONFIG_OVERRIDES))
     # Ne dépend pas de Prowlarr, contrairement aux deux passes seedRatio qui
     # suivent : le champ n'existe que côté arr et Prowlarr ne l'écrase pas
     # (voir le commentaire de INDEXER_FAIL_DOWNLOADS), donc cette passe tourne
