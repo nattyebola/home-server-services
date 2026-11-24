@@ -351,6 +351,14 @@ ou aux connexions arr → Jellyfin.
 
 ## Scripts de provisioning arr
 
+- **Décidé le 2026-11-23, ne pas reproposer** : (1) ne pas couper le RSS de
+  Radarr × Nyaa.si (0 grab) — impossible côté arr (`fullSync` le rétablit au
+  sync suivant, vérifié), et l'app profile Prowlarr couperait aussi Sonarr ;
+  tags / `addOnly` écartés par l'utilisateur. (2) Pas de script « pack de
+  saison d'abord » pour les ajouts d'anime : la recherche épisode par épisode
+  de Sonarr (codée en dur pour le type anime, même après un pack trouvé) est
+  acceptée. Détail : `docs/telechargement.md`, « Pièges connus ».
+
 - **`scripts/provision.py` (`make api-keys` / `make provision`)** automatise
   la configuration d'installation qui se faisait à la main dans les UI :
   bibliothèques Jellyfin, clés API arr + cross-seed + Jellyfin, applications

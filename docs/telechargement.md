@@ -489,6 +489,19 @@ folders, tags…) peut être ajusté librement dans les UI.
   [Architecture](architecture.md#réseaux)). Depuis le WAN, le filtre LAN de
   Traefik répond 403 avant. Preuve : `make check-isolation`.
   Réglage relu au démarrage seulement : redémarrer l'arr après un changement.
+- **Un indexeur se règle dans Prowlarr, pas dans l'arr.** Les applications
+  Prowlarr sont en `fullSync` : toutes les 6 h, Prowlarr réécrit les
+  indexeurs de Sonarr/Radarr depuis les siens. Un RSS coupé dans Radarr
+  revient au sync suivant (testé le 2026-11-23 sur Nyaa.si). Le RSS se règle
+  dans le profil de synchro de l'indexeur, donc pour **toutes** les apps à la
+  fois. Radarr × Nyaa.si (0 grab, ~100 requêtes/jour) : laissé tel quel, par
+  choix.
+- **Ajouter un anime cherche chaque épisode, même si un pack de saison
+  existe.** Pour un anime, Sonarr cherche la saison complète, puis chaque
+  épisode quoi qu'il ait trouvé, et ne grabe qu'à la fin (codé en dur, aucun
+  réglage). Ajout de *Slime* le 2026-11-22 : ~5 800 requêtes en 2 h, pack S01
+  trouvé à la 1re requête mais grabé 48 min plus tard. Aucun 429 : accepté
+  tel quel.
 - **`trustedNetworks` = le réseau Docker du proxy**, pas le LAN : il désigne
   les proxies dont on croit le `X-Forwarded-For` (l'IP réelle du client dans
   les journaux).
