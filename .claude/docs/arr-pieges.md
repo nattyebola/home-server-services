@@ -6,6 +6,22 @@ score de profil, cross-seed ou Seerr.
 
 ## Sonarr / Radarr / Prowlarr
 
+- **Radarr 7 + Transmission 4 : la catégorie n'est plus qu'un label.**
+  `TransmissionBase.GetDownloadDirectory()` renvoie `null` dès que
+  `SupportsLabels` (Transmission >= 4) si `movieDirectory` est vide : le
+  torrent part dans le `download-dir` de la session (`/data/completed`), avec
+  le label `radarr`. En 6.4.4, il ajoutait `/radarr`. Vu après la montée
+  6.4.4 → 7.0.3 du 2026-11-16 : 3 films à la racine les 24-25/11, importés
+  quand même, mais « inconnu » dans clearr (`ARR_CATEGORY_KINDS` lit le
+  dossier). Fix : `movieDirectory: /data/completed/radarr` dans
+  `ARR_DOWNLOAD_CLIENT`, réaligné sur le client existant par
+  `align_download_client`. **En 7, la file de Radarr ignore tout torrent hors
+  de `movieDirectory`**, même avec le bon label : ranger un torrent égaré avec
+  `transmission-remote -t <id> --move` **avant** de poser le dossier (inode
+  conservé, vérifié). **Sonarr 4.0.20 refuse `tvDirectory` + `tvCategory`**
+  (400 « Cannot use Category and Directory ») et range encore lui-même : quand
+  un `make update` le passe à un majeur, vérifier où atterrissent ses grabs.
+
 - **Sonarr/Radarr recréés « tout seuls »** (vu à `00:00:01` le 2026-10-04 et
   le 2026-10-06) : pas une panne. `arr/.env` modifié dans la journée + `make
   restart` (qui ne recrée pas) → la commande compose suivante recrée les deux

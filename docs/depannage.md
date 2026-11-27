@@ -22,6 +22,7 @@ touchent toutes les stacks.
 | Anime **`MULTi` sans audio français**, compté comme VF | groupe pas encore dans la liste noire des MULTi (accepté par défaut). Skill `multi-groupes` pour l'exclure, puis `remplacer-release` ; `/server-report` le détecte | [Téléchargement](telechargement.md#règles-de-sélection) |
 | Série sortie d'un bloc, **aucun épisode** | seules des releases en pack de saison existent, la recherche par épisode ne les voit pas ; `search-missing` cherche la saison au passage suivant | [Téléchargement](telechargement.md#pièges-connus-1) |
 | Imports **en copie** au lieu de hardlinks, disque qui se remplit | deux bind-mounts séparés, ou `library/` sur un autre disque | [Téléchargement](telechargement.md#hardlinks--un-fichier-deux-chemins) |
+| Film grabé par Radarr **à la racine de `completed/`** au lieu de `completed/radarr/`, « inconnu » dans clearr | `movieDirectory` vide dans le client Transmission de Radarr (Radarr 7 n'ajoute plus la catégorie au dossier) ; `make provision` | [Téléchargement](telechargement.md#pièges-connus-1) |
 | Le **même torrent regrabé** en boucle | custom format qui matche le titre du post mais pas le nom de fichier | [Téléchargement](telechargement.md#pièges-connus-1) |
 | Torrent **ABS** dans clearr juste après un import manuel | `ManualImport` sans `downloadId` : fichier déplacé, pas hardlinké | [Téléchargement](telechargement.md#pièges-connus-1) |
 | Recherches cross-seed toujours à `Found 0 torrents` | ID d'indexeur obsolète dans `CROSS_SEED_INDEXER_IDS` | [Téléchargement](telechargement.md#cross-seed) |

@@ -18,11 +18,12 @@ Chargé à la demande depuis `CLAUDE.md`. À lire avant de toucher à
   /data/completed/anime`) était vert — normal, le défaut venait justement de
   basculer — et le dégât est resté invisible 5 h.
   **Deux raisons pour lesquelles ça ne reste pas local à Transmission** :
-  - Sonarr/Radarr n'envoient **pas** de chemin absolu quand une catégorie est
-    configurée (`tvCategory=sonarr` / `movieCategory=radarr`, cf.
-    `scripts/provision.py`) : à chaque grab ils font un `session-get`, lisent le
-    `download-dir` courant et y collent la catégorie. Tout ce qu'ils ont grabé
-    ensuite a atterri dans `completed/anime/{sonarr,radarr}`.
+  - Sonarr n'envoie **pas** de chemin absolu quand une catégorie est
+    configurée (`tvCategory=sonarr`, cf. `scripts/provision.py`) : à chaque
+    grab il fait un `session-get`, lit le `download-dir` courant et y colle la
+    catégorie. Radarr faisait pareil à l'époque, d'où
+    `completed/anime/{sonarr,radarr}`. **Radarr en est sorti le 2026-11-27**
+    (`movieDirectory` absolu, voir le piège Radarr 7 dans `arr-pieges.md`).
   - La bibliothèque « Animés » de Jellyfin scanne `/media/anime`
     (= `completed/anime`) en plus de `/library/anime` : les deux dossiers de
     catégorie y sont devenus **deux séries nommées « sonarr » et « radarr »**,

@@ -190,8 +190,9 @@ remote be3.vpn.airdns.org 443
   puis `make up STACK=vpn`.
 - **`transmission-remote -w <dir>` avant `-a` change le dossier par défaut de
   la session**, pas celui du torrent ajouté. Toujours écrire
-  `-a <magnet> -w <dir>`. Sonarr/Radarr collant leur catégorie au dossier par
-  défaut courant, l'erreur se propage à tous les grabs suivants.
+  `-a <magnet> -w <dir>`. Sonarr collant sa catégorie au dossier par défaut
+  courant, l'erreur se propage à tous ses grabs suivants (Radarr, qui a un
+  dossier fixe depuis le 2026-11-27, n'est plus touché).
 - **`settings.json` n'est réécrit qu'à l'arrêt du daemon** : lire l'état réel
   par `session-get`, jamais dans le fichier ; une édition à chaud est perdue.
 - **Déplacer des données** : `torrent-set-location … move=true`, jamais `mv`.
@@ -387,9 +388,27 @@ custom formats des guides TRaSH ne changeaient le choix que dans 3 % des cas,
 modification faite à la main dans l'UI sur son périmètre est annulée la nuit
 suivante. `provision.py` fait l'inverse : il **crée ce qui manque et ne
 réécrit jamais**, donc ce qu'il a créé (client de téléchargement, root
-folders, tags…) peut être ajusté librement dans les UI.
+folders, tags…) peut être ajusté librement dans les UI. Seule exception :
+l'hôte, la catégorie et le dossier du client Transmission, réalignés à chaque
+`make provision` (clearr et le rangement de `completed/` en dépendent).
 
 ### Pièges connus
+
+- **Radarr 7 dépose ses films à la racine de `completed/`.** Depuis Radarr
+  7.0 (installé le 2026-11-16), avec Transmission 4 qui gère les labels, la
+  catégorie `radarr` devient **seulement un label** : Radarr n'ajoute plus
+  `/radarr` au dossier par défaut de Transmission. Trois films ont atterri à
+  la racine les 24 et 25/11, importés quand même. Effet visible : clearr ne
+  sait plus classer un film grabé mais pas encore importé (« inconnu »). Fix
+  (2026-11-27) : dossier explicite `movieDirectory: /data/completed/radarr`,
+  posé par `make provision`. Sonarr 4.0 range encore lui-même et **refuse**
+  catégorie + dossier ensemble (HTTP 400) : à reprendre quand il changera
+  comme Radarr.
+
+  > [!WARNING]
+  > Un torrent Radarr hors de `completed/radarr` n'est plus suivi par
+  > Radarr. Pour en ranger un : `transmission-remote -t <id> --move
+  > /data/completed/radarr` (l'inode est conservé), jamais `mv`.
 
 - **`NO-VF` contient `VF`.** Jusqu'au 2026-11-13, un titre
   `MULTI.NO-VF` (groupe Anime-DL) était lu comme une VF : 8 épisodes sans

@@ -259,8 +259,9 @@ Crée ce qui se faisait à la main dans les UI :
   Sonarr/Radarr avec les profils de l'étape 16, premier scan).
 
 **Après l'étape 16**, parce que Seerr désigne les profils par leur nom.
-**Additif et relançable** : ne réécrit jamais un objet existant, et un
-service arrêté ne fait échouer que ce qui le concerne.
+**Additif et relançable** : ne réécrit jamais un objet existant (sauf
+l'hôte, la catégorie et le dossier du client Transmission des arr, réalignés),
+et un service arrêté ne fait échouer que ce qui le concerne.
 
 ### 18. Indexeurs Prowlarr
 

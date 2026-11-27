@@ -110,9 +110,19 @@ ARR_ROOT_FOLDERS = {
 # transmission-proxy sur traefik-restricted, plus par transmission-vpn:9091 sur
 # vpn-internal (2026-11-16) : les arr ont quitté ce réseau, où le client
 # BitTorrent pouvait les appeler (voir le bloc `networks:` de sonarr,
-# arr/docker-compose.yml). RPC non authentifié, d'où l'absence d'identifiants. Les catégories donnent les sous-dossiers
-# completed/<catégorie> côté Transmission, sur lesquels s'appuie le remote path
-# mapping.
+# arr/docker-compose.yml). RPC non authentifié, d'où l'absence d'identifiants.
+#
+# Catégorie = label Transmission ; dossier = completed/<catégorie>, sur lequel
+# s'appuient clearr (core.ARR_CATEGORY_KINDS) et le rangement de completed/.
+# Le dossier est EXPLICITE (2026-11-27) : avec Transmission >= 4 (labels),
+# Radarr 7 n'ajoute plus la catégorie au dossier par défaut de la session et
+# déposait ses grabs à la racine de completed/. Bonus : un chemin absolu ne
+# dépend plus du download-dir de la session (piège `transmission-remote -w`,
+# .claude/docs/transmission.md).
+# Sonarr 4.0 ajoute encore la catégorie lui-même, et REFUSE les deux champs
+# ensemble (HTTP 400 « Cannot use Category and Directory », vu sur 4.0.20) :
+# pas de tvDirectory tant qu'il n'a pas changé comme Radarr 7.
+# Réconcilié sur le client existant par align_download_client.
 TRANSMISSION_HOST = "transmission-proxy"
 TRANSMISSION_PORT = 8080
 # Ancienne cible, migrée sur place par migrate_transmission_client (le client
@@ -120,7 +130,7 @@ TRANSMISSION_PORT = 8080
 LEGACY_TRANSMISSION = ("transmission-vpn", 9091)
 ARR_DOWNLOAD_CLIENT = {
     "sonarr": {"tvCategory": "sonarr"},
-    "radarr": {"movieCategory": "radarr"},
+    "radarr": {"movieCategory": "radarr", "movieDirectory": "/data/completed/radarr"},
 }
 
 # 12e (suite) — Catégorie `bd` du client de téléchargement de Prowlarr, qui
@@ -524,11 +534,29 @@ def migrate_transmission_client(name, api_key, client, done):
     return updated if isinstance(updated, dict) and "id" in updated else client
 
 
+def align_download_client(name, api_key, client, done):
+    """Pose sur un client Transmission existant les champs de
+    ARR_DOWNLOAD_CLIENT qui diffèrent (catégorie, dossier). Sans ça, un
+    changement de ARR_DOWNLOAD_CLIENT ne valait que pour une installation
+    neuve. Ne touche qu'aux champs listés."""
+    wanted = ARR_DOWNLOAD_CLIENT[name]
+    changes = {k: v for k, v in wanted.items() if field_value(client, k) != v}
+    if not changes:
+        return
+    for f in client["fields"]:
+        if f["name"] in changes:
+            f["value"] = changes[f["name"]]
+    arr_request(name, f"/downloadclient/{client['id']}", "PUT", client, api_key)
+    done.append(f"{name} : client Transmission, "
+                + ", ".join(f"{k}={v}" for k, v in changes.items()))
+
+
 def provision_download_client(name, api_key, done, skipped):
     existing = arr_request(name, "/downloadclient", api_key=api_key)
     current = [c for c in existing if c["implementation"] == "Transmission"]
     for client in current:
-        migrate_transmission_client(name, api_key, client, done)
+        client = migrate_transmission_client(name, api_key, client, done)
+        align_download_client(name, api_key, client, done)
     if current:
         return
     fields = {"host": TRANSMISSION_HOST, "port": TRANSMISSION_PORT, "useSsl": False,
