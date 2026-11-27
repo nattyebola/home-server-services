@@ -154,10 +154,16 @@ dans plusieurs fichiers.
 ## 4 bis. Ce qui a réussi depuis le WAN
 
 Les 404 et 401 des scanners ne disent que ce qui a **échoué** (biais du
-survivant, relevé le 2026-11-27). On regarde donc aussi l'inverse :
+survivant, relevé le 2026-11-27). On regarde donc aussi l'inverse.
+
+**Seulement si `.env.shared` contient `WAN_AUDIT=1`** (opt-in propre à un
+déploiement, décidé le 2026-11-27 : le repo est public, cet audit ne doit
+pas tourner sur les autres instances). Sinon, ne pas lancer le script et
+écrire « audit WAN désactivé (`WAN_AUDIT`) » dans la ligne de couverture.
+Le script fait le même contrôle et sort en 0 avec un mot sur stderr.
 
 ```bash
-python3 scripts/wan-audit.py
+grep -qx 'WAN_AUDIT=1' .env.shared && python3 scripts/wan-audit.py
 ```
 
 Lecture seule (la seule requête émise est un chemin témoin rejoué en local

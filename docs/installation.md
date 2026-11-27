@@ -99,6 +99,7 @@ cp .env.shared.example .env.shared
 | `LAN_CIDR` | plage du réseau local : c'est elle qui restreint les services LAN-only |
 | `DNS_PRIMARY` / `DNS_SECONDARY` | résolveurs forcés (Cloudflare par défaut) |
 | `UPDATE_JOURNAL` | `1` pour journaliser les montées de version (skill `/changelogs` de Claude Code), vide sinon |
+| `WAN_AUDIT` | `1` pour que `/server-report` (Claude Code) lance `scripts/wan-audit.py`, vide sinon |
 
 ### 3. Réseaux Docker partagés
 

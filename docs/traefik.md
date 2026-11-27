@@ -77,6 +77,10 @@ relecture de la sortie, `python3 scripts/wan-audit.py --accept` y inscrit
 tout ce qui est visible (14 jours d'access log). `/server-report` le lance
 sans jamais accepter.
 
+> [!NOTE]
+> Opt-in : actif seulement avec `WAN_AUDIT=1` dans `.env.shared`. Sans elle,
+> le script s'arrête aussitôt et `/server-report` saute cette vérification.
+
 > [!WARNING]
 > **Un 200 ne prouve pas qu'un fichier a fuité.** Komga renvoie sa page
 > d'index sur n'importe quel chemin : `/.env` répond 200. D'où le témoin :

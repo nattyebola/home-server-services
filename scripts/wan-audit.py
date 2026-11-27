@@ -389,6 +389,12 @@ def main():
     args = parser.parse_args()
 
     env = load_env_file(os.path.join(REPO_ROOT, ".env.shared"))
+    # Opt-in, comme UPDATE_JOURNAL : la référence et ce qui est « attendu »
+    # depuis le WAN sont propres à un déploiement, le repo public n'impose
+    # pas cet audit aux autres. Sortie 0 : ce n'est pas une erreur.
+    if env.get("WAN_AUDIT", "").strip() != "1":
+        print("wan-audit: désactivé (WAN_AUDIT=1 dans .env.shared pour l'activer)", file=sys.stderr)
+        return
     data_root = env.get("DATA_ROOT")
     if not data_root:
         sys.exit("ERREUR : DATA_ROOT absent de .env.shared")
