@@ -17,8 +17,12 @@
 #         de `make switch-lan-only-middleware` est en cours).
 #      c. une requête AUTHENTIFIÉE réussie depuis un préfixe /16 jamais vu.
 #   2. SSH : une connexion acceptée depuis un préfixe /16 WAN jamais vu.
-#   3. Nextcloud : un jeton d'authentification (appareil, mot de passe
-#      d'application) jamais vu. Nextcloud n'en garde pas l'IP.
+#   3. Nextcloud : un jeton permanent (appareil, mot de passe d'application)
+#      jamais vu. Nextcloud n'en garde pas l'IP. Les jetons de session web
+#      (type 0) sont ignorés : chaque connexion par navigateur en crée un,
+#      qui expire seul, et chacun ressortait comme inconnu (décidé le
+#      2026-11-27). Une session web volée ne se voit donc que par son
+#      préfixe (1c).
 #   4. Jellyfin : un appareil jamais vu, ou une session ouverte depuis un
 #      préfixe WAN jamais vu (journal d'activité, IP réelle grâce à
 #      KnownProxies, voir docs/medias.md).
@@ -307,7 +311,9 @@ class Audit:
     def check_nextcloud(self):
         for user in self.occ_json("user:list"):
             known = self.known("nextcloud_tokens", user)
-            tokens = self.occ_json("user:auth-tokens:list", user)
+            # type 1 = permanent ; type 0 = session web temporaire, ignorée
+            # (voir l'en-tête).
+            tokens = [t for t in self.occ_json("user:auth-tokens:list", user) if t.get("type") == 1]
             for tok in tokens:
                 if str(tok["id"]) not in known:
                     last = datetime.datetime.fromtimestamp(tok["lastActivity"]).strftime("%d/%m %H:%M")
@@ -397,7 +403,8 @@ def main():
     if args.accept:
         # Les sondes et fuites LAN-only ne s'acceptent pas : elles restent
         # affichées sans « + » et ne comptent pas.
-        print(f"Référence mise à jour ({audit.added} éléments ajoutés, marqués « + »).")
+        plural = "s" if audit.added > 1 else ""
+        print(f"Référence mise à jour ({audit.added} élément{plural} ajouté{plural}, marqué{plural} « + »).")
     sys.exit(1 if audit.errors else 0)
 
 

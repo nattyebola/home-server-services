@@ -69,7 +69,7 @@ défaut (`--hours N`) :
 | access log Traefik | routeur LAN-only qui répond < 400 à une IP du WAN |
 | access log Traefik | requêtes authentifiées (DAV Nextcloud, API Jellyfin, Seerr, Komga) depuis un préfixe /16 inconnu |
 | journal SSH | connexion acceptée depuis un préfixe /16 inconnu |
-| `occ user:auth-tokens:list` | jeton Nextcloud inconnu (appareil, mot de passe d'application) |
+| `occ user:auth-tokens:list` | jeton Nextcloud permanent inconnu (appareil, mot de passe d'application) ; les sessions web, recréées à chaque connexion par navigateur, sont ignorées |
 | API Jellyfin | appareil inconnu, session depuis un préfixe inconnu |
 
 « Inconnu » = absent de `${DATA_ROOT}/.wan-audit/connus.json`. Après
@@ -85,7 +85,9 @@ sans jamais accepter.
 > [!NOTE]
 > **Angle mort** : un identifiant volé utilisé depuis un préfixe déjà connu
 > (même opérateur mobile) ressemble à un usage légitime. Nextcloud ne garde
-> pas l'IP de ses jetons, et son audit (`admin_audit`) est désactivé.
+> pas l'IP de ses jetons, et son audit (`admin_audit`) est désactivé. Une
+> session web ouverte avec un mot de passe volé ne ressort que si elle vient
+> d'un préfixe inconnu.
 
 ## Le dashboard
 
