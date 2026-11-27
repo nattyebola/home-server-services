@@ -124,6 +124,7 @@ class Audit:
             self.baseline = {}
         self.first_run = not self.baseline
         self.findings = []
+        self.added = 0
         self.errors = False
 
     # --- utilitaires
@@ -155,8 +156,15 @@ class Audit:
             node = node.setdefault(key, {})
         node[path[-1]] = sorted(set(node.get(path[-1], [])) | set(values))
 
-    def report(self, source, text):
-        self.findings.append(f"[{source}] {text}")
+    def report(self, source, text, novel=False):
+        """novel=True : élément absent de la référence. En mode --accept il
+        vient d'y être inscrit : le libellé « inconnu » serait faux, la ligne
+        est marquée « + » à la place."""
+        if novel and self.accept:
+            self.added += 1
+            self.findings.append(f"+ [{source}] {text.replace(' inconnu', '', 1)}")
+        else:
+            self.findings.append(f"[{source}] {text}")
 
     def error(self, source, exc):
         print(f"ERREUR {source} : {exc}", file=sys.stderr)
@@ -257,7 +265,7 @@ class Audit:
             known = self.known("traefik", router)
             for prefix, (n, first, last) in sorted(prefixes.items()):
                 if prefix not in known:
-                    self.report("traefik", f"{router} : requêtes authentifiées depuis un préfixe inconnu {prefix} ({n}×, du {fmt(first)} au {fmt(last)})")
+                    self.report("traefik", f"{router} : requêtes authentifiées depuis un préfixe inconnu {prefix} ({n}×, du {fmt(first)} au {fmt(last)})", novel=True)
             self.remember(prefixes, "traefik", router)
 
     # --- 2. SSH
@@ -284,7 +292,7 @@ class Audit:
             known = self.known("ssh", user)
             for prefix, (method, n, last) in prefixes.items():
                 if prefix not in known:
-                    self.report("ssh", f"{user} : connexion acceptée ({method}) depuis un préfixe inconnu {prefix} ({n}×, dernière {last})")
+                    self.report("ssh", f"{user} : connexion acceptée ({method}) depuis un préfixe inconnu {prefix} ({n}×, dernière {last})", novel=True)
             self.remember(prefixes, "ssh", user)
 
     # --- 3. Nextcloud
@@ -303,7 +311,7 @@ class Audit:
             for tok in tokens:
                 if str(tok["id"]) not in known:
                     last = datetime.datetime.fromtimestamp(tok["lastActivity"]).strftime("%d/%m %H:%M")
-                    self.report("nextcloud", f"{user} : jeton inconnu « {tok.get('name', '')[:60]} » (dernière activité {last})")
+                    self.report("nextcloud", f"{user} : jeton inconnu « {tok.get('name', '')[:60]} » (dernière activité {last})", novel=True)
             self.remember([str(t["id"]) for t in tokens], "nextcloud_tokens", user)
 
     # --- 4. Jellyfin
@@ -328,7 +336,7 @@ class Audit:
         known = self.known("jellyfin", "devices")
         for dev in devices:
             if dev["Id"] not in known:
-                self.report("jellyfin", f"appareil inconnu « {dev.get('Name', '')} » / {dev.get('AppName', '')} ({dev.get('LastUserName', '?')}, {dev.get('DateLastActivity', '')[:10]})")
+                self.report("jellyfin", f"appareil inconnu « {dev.get('Name', '')} » / {dev.get('AppName', '')} ({dev.get('LastUserName', '?')}, {dev.get('DateLastActivity', '')[:10]})", novel=True)
         self.remember([d["Id"] for d in devices], "jellyfin", "devices")
 
         min_date = self.since if not self.accept else datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=14)
@@ -347,7 +355,7 @@ class Audit:
                 seen.setdefault(prefix, []).append(f"{e['Date'][:16].replace('T', ' ')} {e.get('Name', '')[:50]}")
         for prefix, hits in seen.items():
             if prefix not in known_ip:
-                self.report("jellyfin", f"session depuis un préfixe inconnu {prefix} ({len(hits)}×, ex. {hits[0]})")
+                self.report("jellyfin", f"session depuis un préfixe inconnu {prefix} ({len(hits)}×, ex. {hits[0]})", novel=True)
         self.remember(seen, "jellyfin", "ip")
 
     # ---
@@ -387,7 +395,9 @@ def main():
     for line in audit.findings:
         print(line)
     if args.accept:
-        print(f"Référence mise à jour ({len(audit.findings)} éléments ajoutés).")
+        # Les sondes et fuites LAN-only ne s'acceptent pas : elles restent
+        # affichées sans « + » et ne comptent pas.
+        print(f"Référence mise à jour ({audit.added} éléments ajoutés, marqués « + »).")
     sys.exit(1 if audit.errors else 0)
 
 
