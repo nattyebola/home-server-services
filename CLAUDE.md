@@ -199,6 +199,7 @@ server/
 │                           transmission-stats.py, lan-only-middleware.sh,
 │                           require-running.sh, vpn-bench.py, image-versions.py,
 │                           askpass.sh (sudo sans terminal : fenêtre GNOME),
+│                           wan-audit.py (ce qui a réussi depuis le WAN),
 │                           check-isolation.sh
 ├── traefik/ jellyfin/ nextcloud/ vpn/ arr/ seerr/ komga/   une stack par dossier
 │   └── arr/{clearr,profiles,cross-seed,scripts}/

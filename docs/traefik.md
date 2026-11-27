@@ -57,6 +57,36 @@ pour pouvoir les ouvrir sans recréer aucun conteneur (dépannage à distance
 avec seulement un accès SSH). Mode d'emploi :
 [Exploitation](exploitation.md#ouvrir-temporairement-les-services-lan-only).
 
+### Détecter ce qui passe depuis le WAN
+
+Compter les 404 des scanners ne montre que les tentatives ratées.
+`scripts/wan-audit.py` cherche l'inverse, en lecture seule, sur 48 h par
+défaut (`--hours N`) :
+
+| Source | Signal |
+|---|---|
+| access log Traefik | sonde (`.env`, `.git`, `wp-login`…) servie en 2xx **et** différente d'un chemin témoin inexistant |
+| access log Traefik | routeur LAN-only qui répond < 400 à une IP du WAN |
+| access log Traefik | requêtes authentifiées (DAV Nextcloud, API Jellyfin, Seerr, Komga) depuis un préfixe /16 inconnu |
+| journal SSH | connexion acceptée depuis un préfixe /16 inconnu |
+| `occ user:auth-tokens:list` | jeton Nextcloud inconnu (appareil, mot de passe d'application) |
+| API Jellyfin | appareil inconnu, session depuis un préfixe inconnu |
+
+« Inconnu » = absent de `${DATA_ROOT}/.wan-audit/connus.json`. Après
+relecture de la sortie, `python3 scripts/wan-audit.py --accept` y inscrit
+tout ce qui est visible (14 jours d'access log). `/server-report` le lance
+sans jamais accepter.
+
+> [!WARNING]
+> **Un 200 ne prouve pas qu'un fichier a fuité.** Komga renvoie sa page
+> d'index sur n'importe quel chemin : `/.env` répond 200. D'où le témoin :
+> même statut et même taille qu'un chemin bidon = page de repli.
+
+> [!NOTE]
+> **Angle mort** : un identifiant volé utilisé depuis un préfixe déjà connu
+> (même opérateur mobile) ressemble à un usage légitime. Nextcloud ne garde
+> pas l'IP de ses jetons, et son audit (`admin_audit`) est désactivé.
+
 ## Le dashboard
 
 Page d'accueil sur le domaine nu et `www.`, publique : les sous-domaines

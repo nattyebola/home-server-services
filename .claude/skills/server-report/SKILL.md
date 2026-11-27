@@ -1,6 +1,6 @@
 ---
 name: server-report
-description: Passe en revue l'état complet du serveur (containers, cron, disque, sauvegarde, imports arr en attente, titres suivis sans fichier, MULTi anime sans audio français, montées de version en attente, logs de tous les services) et rapporte en français uniquement ce qui ne va pas, en écartant le bruit déjà résolu. À utiliser quand l'utilisateur demande un rapport d'état, un check de santé du serveur, ou de repasser sur les logs/l'état du projet.
+description: Passe en revue l'état complet du serveur (containers, cron, disque, sauvegarde, imports arr en attente, titres suivis sans fichier, MULTi anime sans audio français, montées de version en attente, ce qui a réussi depuis le WAN, logs de tous les services) et rapporte en français uniquement ce qui ne va pas, en écartant le bruit déjà résolu. À utiliser quand l'utilisateur demande un rapport d'état, un check de santé du serveur, ou de repasser sur les logs/l'état du projet.
 ---
 
 # server-report — audit d'état + logs du serveur
@@ -150,6 +150,41 @@ Servarr) sont plus fiables que `docker logs` quand il faut une fenêtre
 horaire précise : horodatés à la seconde et non tronqués par
 `max-size`/`max-file`. Ils tournent, donc dédupliquer les occurrences vues
 dans plusieurs fichiers.
+
+## 4 bis. Ce qui a réussi depuis le WAN
+
+Les 404 et 401 des scanners ne disent que ce qui a **échoué** (biais du
+survivant, relevé le 2026-11-27). On regarde donc aussi l'inverse :
+
+```bash
+python3 scripts/wan-audit.py
+```
+
+Lecture seule (la seule requête émise est un chemin témoin rejoué en local
+sur Traefik). Le script couvre quatre sources. Côté Traefik : une sonde
+servie en 2xx qui n'est pas la page de repli, un routeur LAN-only qui
+répond au WAN, des requêtes authentifiées depuis un préfixe /16 inconnu.
+Côté SSH : une connexion acceptée depuis un préfixe inconnu. Côté
+Nextcloud : un jeton inconnu. Côté Jellyfin : un appareil ou une session
+depuis un préfixe inconnu. « Inconnu » = absent de
+`DATA_ROOT/.wan-audit/connus.json`.
+
+| Ligne | Statut |
+|---|---|
+| `sonde servie en 2xx` | action requise : vérifier à la main ce que le chemin renvoie |
+| `(LAN-only) : … réponses < 400 au WAN` | action requise, sauf si l'ouverture temporaire (`make switch-lan-only-middleware`) couvre la fenêtre |
+| préfixe, jeton ou appareil inconnu | à surveiller : la liste à l'utilisateur, qui reconnaît ou non |
+| `Pas encore de référence` | à surveiller : ne pas lister tout, une ligne « référence à créer » suffit |
+| `ERREUR <source>` sur stderr | anomalie, ligne de tableau |
+
+**Ne jamais lancer `--accept` depuis le rapport** : il inscrit tout ce qui
+est visible comme connu, c'est l'utilisateur qui valide. Lui donner la
+commande s'il reconnaît tout :
+`python3 scripts/wan-audit.py --accept`. La sortie ne contient ni IP
+complète ni domaine ; la recopier telle quelle.
+
+Aucune ligne → « rien d'inconnu n'a réussi depuis le WAN » dans la ligne de
+couverture.
 
 ## 5. Imports en attente (Sonarr/Radarr)
 
